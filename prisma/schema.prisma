@@ -1,0 +1,47 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model AdInsight {
+  id               Int      @id @default(autoincrement())
+  accountId        String
+  date             String
+  accountName      String
+  reach            Int      @default(0)
+  impressions      Int      @default(0)
+  clicks           Int      @default(0)
+  spend            Float    @default(0)
+  addToCart        Int      @default(0)
+  initiateCheckout Int      @default(0)
+  purchases        Int      @default(0)
+  purchaseValue    Float    @default(0)
+  cpc              Float    @default(0)
+  ctr              Float    @default(0)
+  atcRate          Float    @default(0)
+  checkoutRate     Float    @default(0)
+  cpp              Float    @default(0)
+  roas             Float    @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([accountId, date])
+}
+
+model Setting {
+  key   String @id
+  value String
+}
+
+model AccountMapping {
+  accountId   String   @id
+  accountName String
+  project     String?
+  store       String?
+  owner       String?
+  updatedAt   DateTime @updatedAt
+}
