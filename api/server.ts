@@ -277,6 +277,53 @@ app.post("/api/settings", async (req, res) => {
 
 // --- NEW ACCOUNT MAPPING ENDPOINTS ---
 
+// 获取数据库中已保存的账户映射
+app.get("/api/mappings", async (req, res) => {
+  try {
+    const mappings = await prisma.accountMapping.findMany();
+    res.json(mappings);
+  } catch (err) {
+    console.error("Fetch mappings error:", err);
+    res.status(500).json({ error: "Failed to fetch mappings from DB" });
+  }
+});
+
+// 批量保存/更新账户映射
+app.post("/api/mappings/batch", async (req, res) => {
+  const { mappings } = req.body;
+  if (!Array.isArray(mappings)) {
+    return res.status(400).json({ error: "Mappings array is required" });
+  }
+
+  try {
+    const results = await Promise.all(
+      mappings.map((mapping: any) =>
+        prisma.accountMapping.upsert({
+          where: { accountId: mapping.accountId },
+          update: {
+            accountName: mapping.accountName,
+            project: mapping.project,
+            store: mapping.store,
+            owner: mapping.owner,
+            updatedAt: new Date(),
+          },
+          create: {
+            accountId: mapping.accountId,
+            accountName: mapping.accountName,
+            project: mapping.project,
+            store: mapping.store,
+            owner: mapping.owner,
+          },
+        })
+      )
+    );
+    res.json({ success: true, count: results.length });
+  } catch (err: any) {
+    console.error("Batch save mappings error:", err);
+    res.status(500).json({ error: "Failed to save mappings to DB", details: err.message });
+  }
+});
+
 // 获取本地已有的去重账户列表 (用于设置页面分配)
 app.get("/api/accounts/list", async (req, res) => {
   try {

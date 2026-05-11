@@ -80,6 +80,48 @@ export function Dashboard({ onLogout }: DashboardProps) {
   const [data, setData] = useState<AdInsight[]>([]);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [mappings, setMappings] = useState<Record<string, any>>({});
+
+  const fetchMappings = async () => {
+    try {
+      const response = await axios.get("/api/mappings");
+      if (Array.isArray(response.data)) {
+        const mappingMap: Record<string, any> = {};
+        response.data.forEach((m: any) => {
+          mappingMap[m.accountId] = m;
+        });
+        setMappings(mappingMap);
+        // Also sync to localStorage as a local cache/fallback
+        try {
+          localStorage.setItem("META_ACCOUNT_MAPPINGS", JSON.stringify(mappingMap));
+        } catch (e) {}
+      }
+    } catch (error) {
+      console.error("Failed to fetch mappings:", error);
+      // Fallback to local storage if API fails
+      try {
+        const stored = localStorage.getItem("META_ACCOUNT_MAPPINGS");
+        if (stored) setMappings(JSON.parse(stored));
+      } catch (e) {}
+    }
+  };
+
+  const syncMappingsToDb = async (newMappings: Record<string, any>) => {
+    try {
+      // Sync to local storage immediately for UI responsiveness
+      setMappings(newMappings);
+      try {
+        localStorage.setItem("META_ACCOUNT_MAPPINGS", JSON.stringify(newMappings));
+      } catch (e) {}
+
+      // Send to server
+      const mappingList = Object.values(newMappings);
+      await axios.post("/api/mappings/batch", { mappings: mappingList });
+    } catch (error) {
+      console.error("Failed to sync mappings to server:", error);
+      toast.error("同步映射到服务器失败，仅保存到本地");
+    }
+  };
 
   const fetchData = async () => {
     setLoading(true);
@@ -115,6 +157,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
 
   useEffect(() => {
     fetchData();
+    fetchMappings();
   }, [startDate, endDate]);
 
   const handleSync = async () => {
@@ -618,9 +661,9 @@ export function Dashboard({ onLogout }: DashboardProps) {
             </Card>
           </>
         ) : currentTab === "category" ? (
-          <CategoryDashboard />
+          <CategoryDashboard mappings={mappings} />
         ) : currentTab === "accounts" ? (
-          <AccountManagementPage />
+          <AccountManagementPage mappings={mappings} onMappingsChange={syncMappingsToDb} />
         ) : (
           <SettingsPage />
         )}
@@ -629,7 +672,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
   );
 }
 
-function AccountManagementPage() {
+function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Record<string, any>, onMappingsChange: (m: Record<string, any>) => void }) {
   const [fetching, setFetching] = useState(true);
   const [accounts, setAccounts] = useState<any[]>([]);
   const [batchProject, setBatchProject] = useState("");
@@ -656,14 +699,12 @@ function AccountManagementPage() {
   };
 
   const handleExportMappings = () => {
-    const stored = localStorage.getItem("META_ACCOUNT_MAPPINGS");
-    if (!stored) {
+    if (Object.keys(mappings).length === 0) {
       toast.error("当前无映射配置可导出");
       return;
     }
 
-    const mappingMap = JSON.parse(stored);
-    const dataToExport = Object.values(mappingMap).map((m: any) => ({
+    const dataToExport = Object.values(mappings).map((m: any) => ({
       账户ID: m.accountId,
       账户名称: m.accountName || "",
       项目: m.project || "",
@@ -687,7 +728,7 @@ function AccountManagementPage() {
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       try {
         const bstr = event.target?.result;
         const wb = XLSX.read(bstr, { type: "binary" });
@@ -695,7 +736,7 @@ function AccountManagementPage() {
         const ws = wb.Sheets[wsname];
         const data = XLSX.utils.sheet_to_json(ws) as any[];
 
-        const newMappings: any = {};
+        const newMappings: any = { ...mappings };
         let count = 0;
 
         data.forEach((row) => {
@@ -713,14 +754,8 @@ function AccountManagementPage() {
         });
 
         if (count > 0) {
-          try {
-            localStorage.setItem(
-              "META_ACCOUNT_MAPPINGS",
-              JSON.stringify(newMappings),
-            );
-          } catch(e) {}
-          toast.success(`成功导入 ${count} 条账户映射记录！`);
-          setTimeout(() => window.location.reload(), 1500);
+          await onMappingsChange(newMappings);
+          toast.success(`成功导入 ${count} 条账户映射记录！已同步到服务器。`);
         } else {
           toast.error(
             "未在文件中找到有效的映射数据（请检查列名：账户ID, 项目, 店铺, 负责人）",
@@ -734,35 +769,26 @@ function AccountManagementPage() {
     reader.readAsBinaryString(file);
   };
 
-  const getLocalMappings = () => {
+  const init = async () => {
     try {
-      const stored = localStorage.getItem("META_ACCOUNT_MAPPINGS");
-      if (stored) return JSON.parse(stored);
-    } catch (e) {
-      console.warn("Could not read from local storage", e);
+      const accountsRes = await axios.get("/api/accounts/list");
+      if (Array.isArray(accountsRes.data)) {
+        setAccounts(accountsRes.data);
+      } else {
+        console.error("Invalid accounts format, got:", accountsRes.data);
+        toast.error("账户数据加载失败，请检查数据库连接或确认数据格式");
+        setAccounts([]);
+      }
+    } catch (err) {
+      console.error("Account list fetch failed:", err);
+      toast.error("系统繁忙或数据库连接失败，无法获取账户");
+      setAccounts([]);
+    } finally {
+      setFetching(false);
     }
-    return {};
   };
 
   useEffect(() => {
-    const init = async () => {
-      try {
-        const accountsRes = await axios.get("/api/accounts/list");
-        if (Array.isArray(accountsRes.data)) {
-          setAccounts(accountsRes.data);
-        } else {
-          console.error("Invalid accounts format, got:", accountsRes.data);
-          toast.error("账户数据加载失败，请检查数据库连接或确认数据格式");
-          setAccounts([]);
-        }
-      } catch (err) {
-        console.error("Account list fetch failed:", err);
-        toast.error("系统繁忙或数据库连接失败，无法获取账户");
-        setAccounts([]);
-      } finally {
-        setFetching(false);
-      }
-    };
     init();
   }, []);
 
@@ -848,34 +874,30 @@ function AccountManagementPage() {
     }
   };
 
-  const handleBatchSubmit = () => {
+  const handleBatchSubmit = async () => {
     if (selectedAccountsForBatch.length === 0) {
       toast.error("请至少选择一个广告账户");
       return;
     }
     setSubmittingBatch(true);
     try {
-      const stored = localStorage.getItem("META_ACCOUNT_MAPPINGS");
-      const currentMappings = stored ? JSON.parse(stored) : {};
+      const newMappings = { ...mappings };
 
       selectedAccountsForBatch.forEach((acc) => {
-        currentMappings[acc.accountId] = {
+        newMappings[acc.accountId] = {
           accountId: acc.accountId,
           accountName: acc.accountName,
           project:
-            batchProject || currentMappings[acc.accountId]?.project || "",
-          store: batchStore || currentMappings[acc.accountId]?.store || "",
-          owner: batchOwner || currentMappings[acc.accountId]?.owner || "",
+            batchProject || mappings[acc.accountId]?.project || "",
+          store: batchStore || mappings[acc.accountId]?.store || "",
+          owner: batchOwner || mappings[acc.accountId]?.owner || "",
         };
       });
 
-      localStorage.setItem(
-        "META_ACCOUNT_MAPPINGS",
-        JSON.stringify(currentMappings),
-      );
+      await onMappingsChange(newMappings);
 
       toast.success(
-        `成功更新 ${selectedAccountsForBatch.length} 个账户的绑定关系`,
+        `成功更新 ${selectedAccountsForBatch.length} 个账户的绑定关系，已同步至服务器。`,
       );
       setBatchProject("");
       setBatchStore("");
@@ -1367,10 +1389,10 @@ function SettingsPage() {
   );
 }
 
-function CategoryDashboard() {
+function CategoryDashboard({ mappings }: { mappings: Record<string, any> }) {
   const [startDate, setStartDate] = useState<Date>(subDays(new Date(), 7));
   const [endDate, setEndDate] = useState<Date>(new Date());
-  const [data, setData] = useState<any[]>([]);
+  const [rawInsights, setRawInsights] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
   const [projectFilter, setProjectFilter] = useState("all");
@@ -1397,50 +1419,12 @@ function CategoryDashboard() {
         },
       });
 
-      const rawInsights = Array.isArray(res.data) ? res.data : [];
+      const data = Array.isArray(res.data) ? res.data : [];
       if (!Array.isArray(res.data)) {
         console.error("API Error: Expected array, got", res.data);
         toast.error("数据加载失败，请检查数据库连接或确认数据格式");
       }
-      let mappingMap = {};
-      try {
-        const stored = localStorage.getItem("META_ACCOUNT_MAPPINGS");
-        mappingMap = stored ? JSON.parse(stored) : {};
-      } catch (e) {}
-
-      const grouped = rawInsights.reduce((acc: any, curr: any) => {
-        const key = curr.accountId;
-        if (!acc[key]) {
-          acc[key] = {
-            accountId: curr.accountId,
-            accountName: curr.accountName,
-            spend: 0,
-            purchaseValue: 0,
-            purchases: 0,
-          };
-        }
-        acc[key].spend += curr.spend;
-        acc[key].purchaseValue += curr.purchaseValue;
-        acc[key].purchases += curr.purchases;
-        return acc;
-      }, {});
-
-      const result = Object.values(grouped).map((item: any) => {
-        const mapping = mappingMap[item.accountId];
-        const spend = item.spend || 0;
-        const purchaseValue = item.purchaseValue || 0;
-        const roas = spend > 0 ? purchaseValue / spend : 0;
-
-        return {
-          ...item,
-          project: mapping?.project || "未分配",
-          store: mapping?.store || "未分配",
-          owner: mapping?.owner || "未分配",
-          roas,
-        };
-      });
-
-      setData(result);
+      setRawInsights(data);
     } catch (err) {
       toast.error("数据加载失败，请检查数据库连接");
     } finally {
@@ -1451,6 +1435,40 @@ function CategoryDashboard() {
   useEffect(() => {
     fetchCategoryData();
   }, [startDate, endDate]);
+
+  const data = useMemo(() => {
+    const grouped = rawInsights.reduce((acc: any, curr: any) => {
+      const key = curr.accountId;
+      if (!acc[key]) {
+        acc[key] = {
+          accountId: curr.accountId,
+          accountName: curr.accountName,
+          spend: 0,
+          purchaseValue: 0,
+          purchases: 0,
+        };
+      }
+      acc[key].spend += curr.spend;
+      acc[key].purchaseValue += curr.purchaseValue;
+      acc[key].purchases += curr.purchases;
+      return acc;
+    }, {});
+
+    return Object.values(grouped).map((item: any) => {
+      const mapping = mappings[item.accountId];
+      const spend = item.spend || 0;
+      const purchaseValue = item.purchaseValue || 0;
+      const roas = spend > 0 ? purchaseValue / spend : 0;
+
+      return {
+        ...item,
+        project: mapping?.project || "未分配",
+        store: mapping?.store || "未分配",
+        owner: mapping?.owner || "未分配",
+        roas,
+      };
+    });
+  }, [rawInsights, mappings]);
 
   const projects = useMemo(() => {
     const safeData = Array.isArray(data) ? data : [];
