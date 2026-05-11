@@ -31,7 +31,7 @@ app.get("/api/health", (req, res) => {
   res.json({ 
     status: "ok", 
     env: process.env.NODE_ENV, 
-    hasDbUrl: !!dbUrl,
+    vercel: !!process.env.VERCEL,
     dbUrlPrefix: dbUrl ? dbUrl.substring(0, 20) + "..." : null
   });
 });
@@ -661,4 +661,7 @@ async function startServer() {
 
 if (!process.env.VERCEL) {
   startServer();
+} else {
+  // Always trigger DB connection check on startup in serverless mode too
+  checkDb();
 }
