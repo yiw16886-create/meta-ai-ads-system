@@ -2,9 +2,10 @@ import React, { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { format, subDays } from "date-fns";
 import axios from "axios";
-import { ArrowLeft, RefreshCcw, Calendar as CalendarIcon, ArrowUpDown } from "lucide-react";
+import { ArrowLeft, RefreshCcw, Calendar as CalendarIcon, ArrowUpDown, Search, Check, ChevronsUpDown } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -16,6 +17,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { HierarchyFilter } from "@/components/HierarchyFilter";
@@ -30,10 +32,16 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
 
   const [startDate, setStartDate] = useState<Date>(subDays(new Date(), 7));
   const [endDate, setEndDate] = useState<Date>(new Date());
+  const [tempDateRange, setTempDateRange] = useState<{from: Date, to: Date}>({ from: subDays(new Date(), 7), to: new Date() });
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
   
   const [level, setLevel] = useState<"campaigns" | "adsets" | "ads">("campaigns");
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [accounts, setAccounts] = useState<any[]>([]);
+  const [accountSearch, setAccountSearch] = useState("");
+  const [tableSearch, setTableSearch] = useState("");
+  const [accountSelectorOpen, setAccountSelectorOpen] = useState(false);
   const dataCache = useRef<Record<string, { data: any[], timestamp: number }>>({});
 
   // Hierarchy Filters State
@@ -137,6 +145,15 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
   };
 
   useEffect(() => {
+    // Fetch account list for the switcher once on mount
+    axios.get("/api/accounts/list").then(res => {
+      if (Array.isArray(res.data)) {
+        setAccounts(res.data);
+      }
+    });
+  }, []);
+
+  useEffect(() => {
     fetchData();
   }, [accountId, startDate, endDate, level]);
 
@@ -204,6 +221,11 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
 
   const filteredData = React.useMemo(() => {
     return data.filter(item => {
+      // Search filter
+      if (tableSearch && !item.name.toLowerCase().includes(tableSearch.toLowerCase())) {
+        return false;
+      }
+
       // Coupling: Only filter by PARENT selections, not CURRENT level selection.
       // This allows the user to see all items at the current level and pick multiple ones.
       
@@ -278,193 +300,239 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
          ? hierarchy.ads.filter(a => selectedCampaignIds.includes(a.campaign_id))
          : hierarchy.ads);
 
+  const currentAccountName = accounts.find(a => a.accountId === accountId)?.accountName || accountId;
+
   return (
     <div className="min-h-screen bg-[#f3f4f6]">
       {/* Top Navbar */}
-      <nav className="bg-white border-b border-[#e5e7eb] px-6 py-4 flex justify-between items-center sticky top-0 z-50">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" onClick={() => navigate("/")} className="gap-2">
+      <nav className="bg-white border-b border-[#e5e7eb] px-6 h-16 flex items-center sticky top-0 z-50">
+        <div className="flex-1">
+          <Button variant="ghost" onClick={() => navigate("/")} className="gap-2 px-0 hover:bg-transparent text-gray-700 font-normal">
             <ArrowLeft className="w-4 h-4" /> 返回工作台
           </Button>
-          <div className="w-px h-6 bg-gray-200"></div>
-          <h1 className="text-xl font-bold text-[#1c2b33]">账户详情: <span className="text-meta-blue font-mono">{accountId}</span></h1>
         </div>
         
-        <div className="flex items-center gap-4">
-          {/* Date Picker */}
-          <Popover>
-            <PopoverTrigger className={cn("pl-8 pr-3 py-2 border border-[#e5e7eb] rounded-[6px] text-[13px] bg-white flex items-center font-normal", !startDate && "text-muted-foreground")}>
-                <CalendarIcon className="mr-2 h-4 w-4 text-[#6b7280]" />
-                {startDate ? (
-                  endDate ? (
-                    <>
-                      {format(startDate, "LLL dd, y")} -{" "}
-                      {format(endDate, "LLL dd, y")}
-                    </>
-                  ) : (
-                    format(startDate, "LLL dd, y")
-                  )
-                ) : (
-                  <span>Pick a date</span>
-                )}
+        {/* Date Picker - Centered (Dashboard Style Two-Box) */}
+        <div className="flex-1 flex justify-center">
+          <Popover open={datePickerOpen} onOpenChange={(open) => {
+            setDatePickerOpen(open);
+            if (open) {
+               setTempDateRange({ from: startDate, to: endDate });
+            }
+          }}>
+            <PopoverTrigger>
+              <div className="flex items-center gap-2 cursor-pointer group">
+                <div className="relative">
+                  <CalendarIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 group-hover:text-meta-blue transition-colors z-10" />
+                  <div className="pl-9 pr-3 py-2 border border-[#e5e7eb] rounded-[6px] text-[13px] w-[130px] text-left bg-white flex items-center font-medium text-gray-700 hover:border-meta-blue/50 transition-colors">
+                    {format(startDate, "yyyy-MM-dd")}
+                  </div>
+                </div>
+                <span className="text-gray-400 text-[13px] font-medium">至</span>
+                <div className="relative">
+                  <CalendarIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 group-hover:text-meta-blue transition-colors z-10" />
+                  <div className="pl-9 pr-3 py-2 border border-[#e5e7eb] rounded-[6px] text-[13px] w-[130px] text-left bg-white flex items-center font-medium text-gray-700 hover:border-meta-blue/50 transition-colors">
+                    {format(endDate, "yyyy-MM-dd")}
+                  </div>
+                </div>
+              </div>
             </PopoverTrigger>
-            <PopoverContent className="w-auto p-0" align="end">
-              <Calendar
-                initialFocus
-                mode="range"
-                defaultMonth={startDate}
-                selected={{
-                  from: startDate,
-                  to: endDate,
-                }}
-                onSelect={(range) => {
-                  if (range?.from) setStartDate(range.from);
-                  if (range?.to) setEndDate(range.to);
-                }}
-                numberOfMonths={2}
-              />
+            <PopoverContent className="w-auto p-0" align="center" sideOffset={12}>
+              <div className="flex flex-col">
+                <Calendar
+                  initialFocus
+                  mode="range"
+                  defaultMonth={tempDateRange.from}
+                  selected={{
+                    from: tempDateRange.from,
+                    to: tempDateRange.to,
+                  }}
+                  onSelect={(range) => {
+                    if (range?.from) setTempDateRange(prev => ({ ...prev, from: range.from! }));
+                    if (range?.to) setTempDateRange(prev => ({ ...prev, to: range.to! }));
+                  }}
+                  numberOfMonths={2}
+                  className="rounded-t-md"
+                />
+                <div className="p-3 border-t bg-gray-50 flex justify-between items-center rounded-b-md">
+                   <div className="text-[12px] text-gray-500">
+                      已选: <span className="font-bold text-gray-700">{format(tempDateRange.from, "yyyy-MM-dd")}</span>
+                      {tempDateRange.to && <> 至 <span className="font-bold text-gray-700">{format(tempDateRange.to, "yyyy-MM-dd")}</span></>}
+                   </div>
+                   <div className="flex gap-2">
+                     <Button 
+                       variant="ghost" 
+                       size="sm" 
+                       className="h-8 text-[12px]" 
+                       onClick={() => setDatePickerOpen(false)}
+                     >
+                       取消
+                     </Button>
+                     <Button 
+                       size="sm" 
+                       className="h-8 text-[12px] bg-meta-blue hover:bg-blue-600"
+                       onClick={() => {
+                         setStartDate(tempDateRange.from);
+                         setEndDate(tempDateRange.to || tempDateRange.from);
+                         setDatePickerOpen(false);
+                       }}
+                     >
+                       确定
+                     </Button>
+                   </div>
+                </div>
+              </div>
             </PopoverContent>
           </Popover>
+        </div>
 
-          <Button onClick={fetchData} disabled={loading} className="bg-meta-blue hover:bg-blue-700">
-            {loading ? <RefreshCcw className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCcw className="w-4 h-4 mr-2" />}
-            刷新数据
-          </Button>
+        <div className="flex-1 flex justify-end">
+           {/* Placeholder */}
         </div>
       </nav>
 
-      <main className="p-6 max-w-7xl mx-auto space-y-6">
-        {/* Filters */}
-        <Card className="rounded-xl shadow-sm border border-gray-100 bg-white overflow-hidden">
-          <CardContent className="p-4 flex flex-wrap items-center gap-4">
-             <div className="flex flex-col gap-1">
-                <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">广告系列 (Campaign)</span>
-                <HierarchyFilter 
-                  label="所有系列" 
-                  items={campaignOptions} 
-                  selectedIds={selectedCampaignIds} 
-                  onChange={setSelectedCampaignIds} 
-                />
-             </div>
-             <div className="flex flex-col gap-1">
-                <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">广告组 (Ad Set)</span>
-                <HierarchyFilter 
-                  label="所有广告组" 
-                  items={adSetOptions} 
-                  selectedIds={selectedAdSetIds} 
-                  onChange={setSelectedAdSetIds} 
-                />
-             </div>
-             <div className="flex flex-col gap-1">
-                <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">广告 (Ad)</span>
-                <HierarchyFilter 
-                  label="所有广告" 
-                  items={adOptions} 
-                  selectedIds={selectedAdIds} 
-                  onChange={setSelectedAdIds} 
-                />
-             </div>
-             
-             {(selectedCampaignIds.length > 0 || selectedAdSetIds.length > 0 || selectedAdIds.length > 0) && (
-               <Button 
-                variant="ghost" 
-                size="sm" 
-                onClick={() => {
-                  setSelectedCampaignIds([]);
-                  setSelectedAdSetIds([]);
-                  setSelectedAdIds([]);
-                }}
-                className="mt-5 text-gray-400 hover:text-meta-blue"
-               >
-                 清除筛选
-               </Button>
-             )}
-          </CardContent>
-        </Card>
-
-        {/* KPI Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
-           {/* Spend */}
-           <Card className="rounded-xl shadow-sm border border-gray-100 bg-white">
-            <CardHeader className="p-4 pb-2">
-              <CardDescription className="font-semibold text-gray-500">总花费 (Spend)</CardDescription>
-              <CardTitle className="text-2xl font-bold text-[#1c2b33]">${totalSpend.toFixed(2)}</CardTitle>
-            </CardHeader>
-           </Card>
-           
-           <Card className="rounded-xl shadow-sm border border-gray-100 bg-white">
-            <CardHeader className="p-4 pb-2">
-              <CardDescription className="font-semibold text-gray-500">展示次数</CardDescription>
-              <CardTitle className="text-2xl font-bold text-[#1c2b33]">{totalImpressions.toLocaleString()}</CardTitle>
-            </CardHeader>
-           </Card>
-
-           <Card className="rounded-xl shadow-sm border border-gray-100 bg-white">
-            <CardHeader className="p-4 pb-2">
-              <CardDescription className="font-semibold text-gray-500">点击次数</CardDescription>
-              <CardTitle className="text-2xl font-bold text-[#1c2b33]">{topLevelClicks.toLocaleString()}</CardTitle>
-            </CardHeader>
-           </Card>
-
-           <Card className="rounded-xl shadow-sm border border-gray-100 bg-white">
-             <CardHeader className="p-4 pb-2">
-              <CardDescription className="font-semibold text-gray-500">成效 (Purchases)</CardDescription>
-              <CardTitle className="text-2xl font-bold text-[#1c2b33]">{totalPurchases.toLocaleString()}</CardTitle>
-             </CardHeader>
-           </Card>
-
-           <Card className="rounded-xl shadow-sm border border-gray-100 bg-white">
-             <CardHeader className="p-4 pb-2">
-              <CardDescription className="font-semibold text-gray-500">平均 CPC</CardDescription>
-              <CardTitle className="text-2xl font-bold text-[#1c2b33]">${avgCpc.toFixed(2)}</CardTitle>
-             </CardHeader>
-           </Card>
-
-           <Card className="rounded-xl shadow-sm border border-gray-100 bg-white">
-             <CardHeader className="p-4 pb-2">
-              <CardDescription className="font-semibold text-gray-500">平均 CTR</CardDescription>
-              <CardTitle className="text-2xl font-bold text-[#1c2b33]">{avgCtr.toFixed(2)}%</CardTitle>
-             </CardHeader>
-           </Card>
-
-           <Card className="rounded-xl shadow-sm border border-gray-100 bg-white">
-             <CardHeader className="p-4 pb-2">
-              <CardDescription className="font-semibold text-gray-500">ROI (ROAS)</CardDescription>
-              <CardTitle className="text-2xl font-bold text-[#1c2b33]">{roi.toFixed(2)}</CardTitle>
-             </CardHeader>
-           </Card>
-        </div>
-
-        {/* Level Switcher & Table */}
-        <Card className="shadow-sm border-0 border-t-4 border-t-meta-blue">
-          <CardHeader className="bg-white pb-0 border-b relative">
-             <div className="flex space-x-8 -mb-px">
+      <main className="p-6 max-w-[1500px] mx-auto space-y-6">
+        {/* Level Switcher, Filters & Action row */}
+        <Card className="shadow-sm border border-gray-200 bg-white overflow-visible">
+          <CardHeader className="py-0 px-6 border-b bg-white flex flex-row items-center justify-between space-y-0 relative z-20 min-h-[56px]">
+             <div className="flex items-center space-x-8 self-end">
                 <button
-                  className={cn("pb-4 text-sm font-semibold transition-colors border-b-2", level === "campaigns" ? "border-meta-blue text-meta-blue" : "border-transparent text-gray-500 hover:text-gray-700")}
+                  className={cn("pb-3 text-[14px] font-bold transition-all border-b-2 relative", level === "campaigns" ? "border-meta-blue text-meta-blue" : "border-transparent text-gray-500 hover:text-gray-700")}
                   onClick={() => setLevel("campaigns")}
                 >
                   广告系列 (Campaigns)
                 </button>
                 <button
-                  className={cn("pb-4 text-sm font-semibold transition-colors border-b-2", level === "adsets" ? "border-meta-blue text-meta-blue" : "border-transparent text-gray-500 hover:text-gray-700")}
+                  className={cn("pb-3 text-[14px] font-bold transition-all border-b-2 relative", level === "adsets" ? "border-meta-blue text-meta-blue" : "border-transparent text-gray-500 hover:text-gray-700")}
                   onClick={() => setLevel("adsets")}
                 >
                   广告组 (Ad Sets)
                 </button>
                 <button
-                  className={cn("pb-4 text-sm font-semibold transition-colors border-b-2", level === "ads" ? "border-meta-blue text-meta-blue" : "border-transparent text-gray-500 hover:text-gray-700")}
+                  className={cn("pb-3 text-[14px] font-bold transition-all border-b-2 relative", level === "ads" ? "border-meta-blue text-meta-blue" : "border-transparent text-gray-500 hover:text-gray-700")}
                   onClick={() => setLevel("ads")}
                 >
                   广告 (Ads)
                 </button>
              </div>
+
+             <div className="flex items-center gap-3 py-2">
+                {/* Account Selector - Name box as trigger (Moved to Search position) */}
+                <Popover open={accountSelectorOpen} onOpenChange={setAccountSelectorOpen}>
+                   <PopoverTrigger className="px-3 py-1.5 bg-gray-50 border border-dashed border-gray-300 rounded-md text-[13px] font-bold text-[#1c2b33] hover:bg-gray-100 hover:border-meta-blue/50 transition-all cursor-pointer flex items-center gap-1 min-w-[150px] max-w-[240px]">
+                      <span className="truncate">{currentAccountName}</span>
+                      <ChevronsUpDown className="w-3 h-3 text-gray-400 shrink-0" />
+                   </PopoverTrigger>
+                   <PopoverContent className="w-[300px] p-0" align="start">
+                     <div className="flex flex-col">
+                       <div className="p-2 border-b">
+                         <div className="relative">
+                           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                           <Input 
+                              placeholder="搜索账户..." 
+                              value={accountSearch}
+                              onChange={(e) => setAccountSearch(e.target.value)}
+                              className="pl-8 h-8 text-[13px]"
+                           />
+                         </div>
+                       </div>
+                       <ScrollArea className="h-[300px]">
+                         <div className="p-1">
+                           {accounts
+                             .filter(a => a.accountName?.toLowerCase().includes(accountSearch.toLowerCase()) || a.accountId.includes(accountSearch))
+                             .map(acc => (
+                               <button
+                                 key={acc.accountId}
+                                 onClick={() => {
+                                   navigate(`/account/${acc.accountId}`);
+                                   setAccountSelectorOpen(false);
+                                   setAccountSearch("");
+                                 }}
+                                 className={cn(
+                                   "w-full text-left px-3 py-2 rounded-md text-sm flex items-center justify-between hover:bg-blue-50 transition-colors",
+                                   acc.accountId === accountId ? "bg-blue-50 text-meta-blue font-semibold" : "text-gray-700"
+                                 )}
+                               >
+                                 <span className="truncate flex-1 pr-2">{acc.accountName || acc.accountId}</span>
+                                 {acc.accountId === accountId && <Check className="w-4 h-4" />}
+                               </button>
+                             ))
+                           }
+                         </div>
+                       </ScrollArea>
+                     </div>
+                   </PopoverContent>
+                </Popover>
+
+                {/* Hierarchy Filters inline */}
+                <div className="flex items-center gap-2">
+                   <HierarchyFilter 
+                     label="广告系列" 
+                     items={campaignOptions} 
+                     selectedIds={selectedCampaignIds} 
+                     onChange={setSelectedCampaignIds} 
+                   />
+                   <HierarchyFilter 
+                     label="广告组" 
+                     items={adSetOptions} 
+                     selectedIds={selectedAdSetIds} 
+                     onChange={setSelectedAdSetIds} 
+                   />
+                   <HierarchyFilter 
+                     label="广告" 
+                     items={adOptions} 
+                     selectedIds={selectedAdIds} 
+                     onChange={setSelectedAdIds} 
+                   />
+                </div>
+
+                <Button onClick={fetchData} disabled={loading} size="sm" className="bg-meta-blue hover:bg-blue-700 h-9 px-4 font-bold flex items-center gap-2">
+                  {loading ? <RefreshCcw className="w-4 h-4 animate-spin" /> : <RefreshCcw className="w-4 h-4" />}
+                  刷新数据
+                </Button>
+             </div>
           </CardHeader>
+
+          {/* Compact KPI Stats - Refined Labels and Styling */}
+          <div className="bg-[#f9fafb]/50 border-b py-4 px-6">
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-6">
+              <div className="bg-white p-3 rounded-lg border border-gray-100 shadow-sm flex flex-col justify-between h-20">
+                <div className="text-[11px] text-gray-500 font-bold uppercase tracking-tight">总花费 (SPEND)</div>
+                <div className="text-lg font-bold text-[#1c2b33]">${totalSpend.toFixed(2)}</div>
+              </div>
+              <div className="bg-white p-3 rounded-lg border border-gray-100 shadow-sm flex flex-col justify-between h-20">
+                <div className="text-[11px] text-gray-500 font-bold uppercase tracking-tight">展示次数</div>
+                <div className="text-lg font-bold text-[#1c2b33]">{totalImpressions.toLocaleString()}</div>
+              </div>
+              <div className="bg-white p-3 rounded-lg border border-gray-100 shadow-sm flex flex-col justify-between h-20">
+                <div className="text-[11px] text-gray-500 font-bold uppercase tracking-tight">点击次数</div>
+                <div className="text-lg font-bold text-[#1c2b33]">{topLevelClicks.toLocaleString()}</div>
+              </div>
+              <div className="bg-white p-3 rounded-lg border border-gray-100 shadow-sm flex flex-col justify-between h-20">
+                <div className="text-[11px] text-gray-500 font-bold uppercase tracking-tight">成效 (PURCHASES)</div>
+                <div className="text-lg font-bold text-[#1c2b33]">{totalPurchases.toLocaleString()}</div>
+              </div>
+              <div className="bg-white p-3 rounded-lg border border-gray-100 shadow-sm flex flex-col justify-between h-20">
+                <div className="text-[11px] text-gray-500 font-bold uppercase tracking-tight">平均 CPC</div>
+                <div className="text-lg font-bold text-[#1c2b33]">${avgCpc.toFixed(2)}</div>
+              </div>
+              <div className="bg-white p-3 rounded-lg border border-gray-100 shadow-sm flex flex-col justify-between h-20">
+                <div className="text-[11px] text-gray-500 font-bold uppercase tracking-tight">平均 CTR</div>
+                <div className="text-lg font-bold text-[#1c2b33]">{avgCtr.toFixed(2)}%</div>
+              </div>
+              <div className="bg-white p-3 rounded-lg border border-gray-100 shadow-sm flex flex-col justify-between h-20">
+                <div className="text-[11px] text-gray-500 font-bold uppercase tracking-tight">ROI (ROAS)</div>
+                <div className="text-lg font-bold text-[#1c2b33]">{roi.toFixed(2)}</div>
+              </div>
+            </div>
+          </div>
+
           <CardContent className="p-0 bg-white">
-            <div className="overflow-x-auto max-h-[600px] relative">
+            <div className="overflow-x-auto max-h-[800px] relative">
               <Table>
-                <TableHeader className="bg-[#f9fafb] sticky top-0 z-20">
-                  <TableRow>
-                     <TableHead className="w-[50px] text-center border-r border-[#e5e7eb] px-0">
+                <TableHeader className="bg-[#fbfcff] sticky top-0 z-20 border-b">
+                  <TableRow className="hover:bg-transparent">
+                     <TableHead className="w-[50px] text-center border-r border-[#e5e7eb] px-0 h-12">
                         <div className="flex items-center justify-center h-full">
                           <Checkbox 
                             checked={sortedData.length > 0 && sortedData.every(i => isSelected(i.id))}
@@ -472,31 +540,31 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                           />
                         </div>
                      </TableHead>
-                     <TableHead className="w-[200px] border-r border-[#e5e7eb] cursor-pointer hover:bg-gray-100" onClick={() => requestSort("name")}>
+                     <TableHead className="w-[280px] border-r border-[#e5e7eb] cursor-pointer hover:bg-gray-100 h-12 text-[#374151] font-bold" onClick={() => requestSort("name")}>
                        名称 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'name' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                      </TableHead>
-                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb]" onClick={() => requestSort("effective_status")}>
+                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold" onClick={() => requestSort("effective_status")}>
                        投放状态 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'effective_status' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                      </TableHead>
-                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb]" onClick={() => requestSort("results")}>
+                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold" onClick={() => requestSort("results")}>
                        成效 (Purchases) <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'results' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                      </TableHead>
-                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb]" onClick={() => requestSort("cpr")}>
+                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold" onClick={() => requestSort("cpr")}>
                        单次成效费用 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'cpr' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                      </TableHead>
-                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb]" onClick={() => requestSort("budget")}>
+                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold" onClick={() => requestSort("budget")}>
                        预算 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'budget' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                      </TableHead>
-                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb]" onClick={() => requestSort("spend")}>
+                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold" onClick={() => requestSort("spend")}>
                        已花费金额 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'spend' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                      </TableHead>
-                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb]" onClick={() => requestSort("impressions")}>
+                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold" onClick={() => requestSort("impressions")}>
                        展示次数 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'impressions' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                      </TableHead>
-                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb]" onClick={() => requestSort("reach")}>
+                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold" onClick={() => requestSort("reach")}>
                        覆盖人数 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'reach' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                      </TableHead>
-                     <TableHead className="cursor-pointer hover:bg-gray-100" onClick={() => requestSort("frequency")}>
+                     <TableHead className="cursor-pointer hover:bg-gray-100 h-12 text-[#374151] font-bold" onClick={() => requestSort("frequency")}>
                        频次 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'frequency' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                      </TableHead>
                   </TableRow>

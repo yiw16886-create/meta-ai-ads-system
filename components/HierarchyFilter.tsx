@@ -46,10 +46,10 @@ export function HierarchyFilter({ label, items, selectedIds, onChange, disabled 
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         disabled={disabled}
-        className="w-[200px] flex px-4 h-10 items-center justify-between rounded-md text-[#374151] border border-[#e5e7eb] bg-white text-sm font-normal relative disabled:opacity-50 disabled:cursor-not-allowed"
+        className="w-[120px] flex px-3 h-9 items-center justify-between rounded-md text-gray-700 border border-gray-200 bg-white text-[13px] font-normal relative disabled:opacity-50 disabled:cursor-not-allowed hover:border-meta-blue transition-colors"
       >
-        <span>{selectedIds.length > 0 ? `已选择 ${selectedIds.length} 项` : label}</span>
-        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        <span className="truncate">{selectedIds.length > 0 ? `已选 ${selectedIds.length}` : label}</span>
+        <ChevronsUpDown className="ml-1 h-3 w-3 shrink-0 opacity-50" />
       </PopoverTrigger>
       <PopoverContent className="w-[300px] p-0" align="start">
         <div className="flex flex-col h-full max-h-[300px]">
