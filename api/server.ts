@@ -19,6 +19,15 @@ async function checkDb() {
   }
 }
 
+// Global error handlers to prevent silent crashes
+process.on('uncaughtException', (err) => {
+  console.error("🔥 UNCAUGHT EXCEPTION:", err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error("🔥 UNHANDLED REJECTION:", reason);
+});
+
 const app = express();
 export default app;
 const PORT = 3000;
@@ -76,7 +85,7 @@ app.get("/api/accounts", async (req, res) => {
   } catch (error: any) {
     const msg = extractMetaError(error);
     console.error("Fetch accounts error:", error.response?.data || error.message);
-    res.status(500).json({ error: msg });
+    res.status(500).json({ error: msg, details: error.message, stack: error.stack });
   }
 });
 
@@ -282,9 +291,13 @@ app.get("/api/mappings", async (req, res) => {
   try {
     const mappings = await prisma.accountMapping.findMany();
     res.json(mappings);
-  } catch (err) {
+  } catch (err: any) {
     console.error("Fetch mappings error:", err);
-    res.status(500).json({ error: "Failed to fetch mappings from DB" });
+    res.status(500).json({ 
+      error: "Failed to fetch mappings from DB", 
+      details: err.message,
+      code: err.code 
+    });
   }
 });
 
@@ -296,23 +309,26 @@ app.post("/api/mappings/batch", async (req, res) => {
   }
 
   try {
+    // Filter out invalid mappings before updating DB
+    const validMappings = mappings.filter((m: any) => m && m.accountId != null);
+    
     const results = await Promise.all(
-      mappings.map((mapping: any) =>
+      validMappings.map((mapping: any) =>
         prisma.accountMapping.upsert({
-          where: { accountId: mapping.accountId },
+          where: { accountId: String(mapping.accountId) },
           update: {
-            accountName: mapping.accountName,
-            project: mapping.project,
-            store: mapping.store,
-            owner: mapping.owner,
+            accountName: mapping.accountName ? String(mapping.accountName) : "Unknown",
+            project: mapping.project ? String(mapping.project) : null,
+            store: mapping.store ? String(mapping.store) : null,
+            owner: mapping.owner ? String(mapping.owner) : null,
             updatedAt: new Date(),
           },
           create: {
-            accountId: mapping.accountId,
-            accountName: mapping.accountName,
-            project: mapping.project,
-            store: mapping.store,
-            owner: mapping.owner,
+            accountId: String(mapping.accountId),
+            accountName: mapping.accountName ? String(mapping.accountName) : "Unknown",
+            project: mapping.project ? String(mapping.project) : null,
+            store: mapping.store ? String(mapping.store) : null,
+            owner: mapping.owner ? String(mapping.owner) : null,
           },
         })
       )
@@ -331,8 +347,13 @@ app.get("/api/accounts/list", async (req, res) => {
       by: ['accountId', 'accountName'],
     });
     res.json(accounts);
-  } catch (err) {
-    res.status(500).json({ error: "Failed to fetch unique accounts from DB" });
+  } catch (err: any) {
+    console.error("Fetch unique accounts error:", err);
+    res.status(500).json({ 
+      error: "Failed to fetch unique accounts from DB", 
+      details: err.message,
+      code: err.code
+    });
   }
 });
 
@@ -648,7 +669,7 @@ async function startServer() {
         console.log(`📍 Binding: http://0.0.0.0:${PORT}`);
         
         // --- 启动后台静默同步 ---
-        runBackgroundSync(); // 立即触发一次
+        // runBackgroundSync(); // Disable immediate run to prevent startup crashes
         setInterval(runBackgroundSync, 2 * 60 * 60 * 1000); // 之后每 2 小时执行一次
         console.log("[后台任务] 已开启自动同步，频率: 每 2 小时");
       });

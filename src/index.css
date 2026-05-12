@@ -1,1 +1,8 @@
 @import "tailwindcss";
+
+@theme {
+  --color-meta-blue: #0866ff;
+  --color-meta-dark: #1c1e21;
+  --color-meta-bg: #f0f2f5;
+  --color-meta-text-muted: #65676b;
+}

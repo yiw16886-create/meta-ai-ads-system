@@ -1,24 +1,18 @@
 import { PrismaClient } from "@prisma/client";
 
 const prismaClientSingleton = () => {
-  let url = process.env.DATABASE_URL || process.env.POSTGRES_URL;
-  
-  if (url) {
-    try {
-      const parsedUrl = new URL(url);
-      
-      // Auto-append pgbouncer=true for neon/pooler URLs on serverless environments
-      if (parsedUrl.hostname.includes('pooler') || parsedUrl.hostname.includes('neon.tech') || parsedUrl.hostname.includes('supabase.com')) {
-        parsedUrl.searchParams.set('pgbouncer', 'true');
-        parsedUrl.searchParams.delete('channel_binding');
-        url = parsedUrl.toString();
-      }
-    } catch (e) {
-      console.warn("Could not parse database URL.");
-    }
+  const url = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+  if (!url) {
+    console.warn("⚠️ DATABASE_URL is not set. Prisma might fail.");
+    return new PrismaClient();
   }
-
-  return new PrismaClient(url ? { datasources: { db: { url } } } : undefined);
+  
+  // Use standard Prisma Client
+  return new PrismaClient({
+    datasources: {
+      db: { url }
+    }
+  });
 };
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
