@@ -72,6 +72,70 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
   // Sorting
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: "asc" | "desc" } | null>(null);
 
+  // Sticky Scrollbar Refs
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+  const dummyScrollRef = useRef<HTMLDivElement>(null);
+  const [tableScrollWidth, setTableScrollWidth] = useState(0);
+  const [showStickyScroll, setShowStickyScroll] = useState(false);
+
+  // Sync scroll positions and dimensions
+  useEffect(() => {
+    const tableContainer = tableContainerRef.current;
+    const dummyScroll = dummyScrollRef.current;
+
+    if (!tableContainer || !dummyScroll) return;
+
+    const handleTableScroll = () => {
+      if (Math.abs(dummyScroll.scrollLeft - tableContainer.scrollLeft) > 1) {
+        dummyScroll.scrollLeft = tableContainer.scrollLeft;
+      }
+    };
+
+    const handleDummyScroll = () => {
+      if (Math.abs(tableContainer.scrollLeft - dummyScroll.scrollLeft) > 1) {
+        tableContainer.scrollLeft = dummyScroll.scrollLeft;
+      }
+    };
+
+    tableContainer.addEventListener("scroll", handleTableScroll, { passive: true });
+    dummyScroll.addEventListener("scroll", handleDummyScroll, { passive: true });
+
+    const updateDimensions = () => {
+      if (tableContainer) {
+        const width = tableContainer.scrollWidth;
+        const clientWidth = tableContainer.clientWidth;
+        setTableScrollWidth(width);
+        setShowStickyScroll(width > clientWidth + 1); // +1 for rounding errors
+      }
+    };
+
+    // Reset scroll positions on level change
+    tableContainer.scrollLeft = 0;
+    dummyScroll.scrollLeft = 0;
+
+    const resizeObserver = new ResizeObserver(() => {
+      updateDimensions();
+    });
+    
+    resizeObserver.observe(tableContainer);
+    
+    // Also observe the inner table to detect content changes
+    const tableElement = tableContainer.querySelector('table');
+    if (tableElement) {
+      resizeObserver.observe(tableElement);
+    }
+
+    // Initial check after a short delay for layout
+    const timer = setTimeout(updateDimensions, 100);
+
+    return () => {
+      tableContainer.removeEventListener("scroll", handleTableScroll);
+      dummyScroll.removeEventListener("scroll", handleDummyScroll);
+      resizeObserver.disconnect();
+      clearTimeout(timer);
+    };
+  }, [loading, level, data]);
+
   const toggleSelection = (id: string) => {
     if (level === "campaigns") {
       setSelectedCampaignIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
@@ -184,6 +248,25 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
     if (key === 'reach') return parseInt(insight.reach || 0, 10);
     if (key === 'frequency') return parseFloat(insight.frequency || 0);
     
+    if (key === 'cpm') return parseFloat(insight.cpm || 0);
+    if (key === 'clicks') return parseInt(insight.inline_link_clicks || insight.clicks || 0, 10);
+    if (key === 'ctr') return parseFloat(insight.inline_link_click_ctr || insight.ctr || 0);
+    if (key === 'cpc') return parseFloat(insight.cost_per_inline_link_click || insight.cpc || 0);
+    
+    // All clicks/ctr/cpc (if distinct from inline)
+    if (key === 'all_clicks') return parseInt(insight.clicks || 0, 10);
+    if (key === 'all_ctr') return parseFloat(insight.ctr || 0);
+    if (key === 'all_cpc') return parseFloat(insight.cpc || 0);
+
+    if (key === 'link_clicks') return parseInt(insight.inline_link_clicks || 0, 10);
+    if (key === 'link_ctr') return parseFloat(insight.inline_link_click_ctr || 0);
+    if (key === 'link_cpc') return parseFloat(insight.cost_per_inline_link_click || 0);
+
+    if (key === 'add_to_cart') {
+       const atc = insight.actions?.find((a: any) => a.action_type === 'add_to_cart' || a.action_type === 'offsite_conversion.fb_pixel_add_to_cart');
+       return atc ? parseInt(atc.value, 10) : 0;
+    }
+
     if (key === 'results') {
        // Look for purchase action
        const purchase = insight.actions?.find((a: any) => a.action_type === 'purchase');
@@ -253,7 +336,10 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
     let bVal: any = b[key];
 
     // Handle derived fields
-    const insightKeys = ['spend', 'impressions', 'reach', 'frequency', 'results', 'cpr'];
+    const insightKeys = [
+      'spend', 'impressions', 'reach', 'frequency', 'results', 'cpr',
+      'cpm', 'link_clicks', 'link_ctr', 'link_cpc', 'clicks', 'ctr', 'cpc', 'add_to_cart'
+    ];
     if (insightKeys.includes(key)) {
       aVal = getInsightValue(a, key);
       bVal = getInsightValue(b, key);
@@ -527,44 +613,76 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
             </div>
           </div>
 
-          <CardContent className="p-0 bg-white">
-            <div className="overflow-x-auto max-h-[800px] relative">
-              <Table>
-                <TableHeader className="bg-[#fbfcff] sticky top-0 z-20 border-b">
+          <CardContent className="p-0 bg-white relative">
+            <div 
+              ref={tableContainerRef}
+              className="overflow-x-auto relative border-x border-t rounded-t-md scrollbar-hide"
+            >
+              <Table className="min-w-max border-collapse">
+                <TableHeader className="bg-[#fbfcff] sticky top-0 z-30 border-b">
                   <TableRow className="hover:bg-transparent">
-                     <TableHead className="w-[50px] text-center border-r border-[#e5e7eb] px-0 h-12">
-                        <div className="flex items-center justify-center h-full">
+                     <TableHead className="w-[50px] text-center border-r border-[#e5e7eb] px-0 h-12 sticky left-0 z-40 bg-[#fbfcff]">
+                        <div className="flex items-center justify-center h-full min-w-[50px]">
                           <Checkbox 
                             checked={sortedData.length > 0 && sortedData.every(i => isSelected(i.id))}
                             onCheckedChange={toggleAll}
                           />
                         </div>
                      </TableHead>
-                     <TableHead className="w-[280px] border-r border-[#e5e7eb] cursor-pointer hover:bg-gray-100 h-12 text-[#374151] font-bold" onClick={() => requestSort("name")}>
-                       名称 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'name' ? 'text-meta-blue' : 'text-gray-300'}`}/>
+                     <TableHead className="w-[250px] border-r border-[#e5e7eb] cursor-pointer hover:bg-gray-100 h-12 text-[#374151] font-bold sticky left-[50px] z-40 bg-[#fbfcff]" onClick={() => requestSort("name")}>
+                       <div className="min-w-[250px] flex items-center px-4">
+                         名称 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'name' ? 'text-meta-blue' : 'text-gray-300'}`}/>
+                       </div>
                      </TableHead>
-                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold" onClick={() => requestSort("effective_status")}>
+                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold px-4" onClick={() => requestSort("effective_status")}>
                        投放状态 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'effective_status' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                      </TableHead>
-                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold" onClick={() => requestSort("results")}>
-                       成效 (Purchases) <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'results' ? 'text-meta-blue' : 'text-gray-300'}`}/>
+                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold px-4 md:min-w-[120px]" onClick={() => requestSort("results")}>
+                       购物次数 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'results' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                      </TableHead>
-                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold" onClick={() => requestSort("cpr")}>
-                       单次成效费用 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'cpr' ? 'text-meta-blue' : 'text-gray-300'}`}/>
+                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold px-4" onClick={() => requestSort("cpr")}>
+                       单次购物费用 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'cpr' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                      </TableHead>
-                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold" onClick={() => requestSort("budget")}>
+                     
+                     {/* New Metric Columns */}
+                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold px-4" onClick={() => requestSort("cpm")}>
+                       CPM (千次展示费用) <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'cpm' ? 'text-meta-blue' : 'text-gray-300'}`}/>
+                     </TableHead>
+                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold px-4" onClick={() => requestSort("link_clicks")}>
+                       链接点击量 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'link_clicks' ? 'text-meta-blue' : 'text-gray-300'}`}/>
+                     </TableHead>
+                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold px-4" onClick={() => requestSort("link_ctr")}>
+                       链接点击率 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'link_ctr' ? 'text-meta-blue' : 'text-gray-300'}`}/>
+                     </TableHead>
+                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold px-4" onClick={() => requestSort("link_cpc")}>
+                       单次链接点击费用 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'link_cpc' ? 'text-meta-blue' : 'text-gray-300'}`}/>
+                     </TableHead>
+                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold px-4" onClick={() => requestSort("clicks")}>
+                       点击量 (全部) <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'clicks' ? 'text-meta-blue' : 'text-gray-300'}`}/>
+                     </TableHead>
+                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold px-4" onClick={() => requestSort("ctr")}>
+                       点击率 (全部) <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'ctr' ? 'text-meta-blue' : 'text-gray-300'}`}/>
+                     </TableHead>
+                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold px-4" onClick={() => requestSort("cpc")}>
+                       单次点击费用 (全部) <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'cpc' ? 'text-meta-blue' : 'text-gray-300'}`}/>
+                     </TableHead>
+                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold px-4" onClick={() => requestSort("add_to_cart")}>
+                       加入购物车次数 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'add_to_cart' ? 'text-meta-blue' : 'text-gray-300'}`}/>
+                     </TableHead>
+
+                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold px-4" onClick={() => requestSort("budget")}>
                        预算 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'budget' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                      </TableHead>
-                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold" onClick={() => requestSort("spend")}>
+                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold px-4" onClick={() => requestSort("spend")}>
                        已花费金额 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'spend' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                      </TableHead>
-                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold" onClick={() => requestSort("impressions")}>
+                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold px-4" onClick={() => requestSort("impressions")}>
                        展示次数 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'impressions' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                      </TableHead>
-                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold" onClick={() => requestSort("reach")}>
+                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold px-4" onClick={() => requestSort("reach")}>
                        覆盖人数 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'reach' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                      </TableHead>
-                     <TableHead className="cursor-pointer hover:bg-gray-100 h-12 text-[#374151] font-bold" onClick={() => requestSort("frequency")}>
+                     <TableHead className="cursor-pointer hover:bg-gray-100 h-12 text-[#374151] font-bold px-4" onClick={() => requestSort("frequency")}>
                        频次 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'frequency' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                      </TableHead>
                   </TableRow>
@@ -572,14 +690,14 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                 <TableBody>
                   {loading ? (
                     <TableRow>
-                      <TableCell colSpan={10} className="h-32 text-center text-gray-500">
+                      <TableCell colSpan={20} className="h-32 text-center text-gray-500">
                         <RefreshCcw className="w-6 h-6 animate-spin mx-auto text-meta-blue mb-2" />
                         正在加载数据...
                       </TableCell>
                     </TableRow>
                   ) : sortedData.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={10} className="h-32 text-center text-gray-500">
+                      <TableCell colSpan={20} className="h-32 text-center text-gray-500">
                         暂无数据
                       </TableCell>
                     </TableRow>
@@ -587,44 +705,73 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                     sortedData.map((item) => (
                       <TableRow 
                         key={item.id} 
-                        className={cn("hover:bg-gray-50 border-b border-[#f3f4f6] cursor-pointer transition-colors", isSelected(item.id) && "bg-blue-50/50 shadow-inner")}
+                        className={cn("hover:bg-gray-50 border-b border-[#f3f4f6] cursor-pointer transition-colors group", isSelected(item.id) && "bg-blue-50/50")}
                         onClick={() => toggleSelection(item.id)}
                       >
-                        <TableCell className="text-center font-medium border-r border-[#e5e7eb] px-0" onClick={(e) => e.stopPropagation()}>
-                            <div className="flex items-center justify-center h-full py-2">
+                        <TableCell className="text-center font-medium border-r border-[#e5e7eb] px-0 sticky left-0 z-10 bg-white group-hover:bg-gray-50 transition-colors" onClick={(e) => e.stopPropagation()}>
+                            <div className="flex items-center justify-center h-full py-2 min-w-[50px]">
                               <Checkbox 
                                 checked={isSelected(item.id)} 
                                 onCheckedChange={() => toggleSelection(item.id)}
                               />
                             </div>
                         </TableCell>
-                        <TableCell className="font-medium text-meta-blue max-w-[200px] truncate border-r border-[#e5e7eb]" title={item.name}>
-                          {item.name}
+                        <TableCell className={cn("font-medium text-meta-blue border-r border-[#e5e7eb] sticky left-[50px] z-10 bg-white group-hover:bg-gray-50 transition-colors px-4")} title={item.name}>
+                          <div className="truncate max-w-[218px]">
+                            {item.name}
+                          </div>
                         </TableCell>
-                        <TableCell className="text-gray-600 border-r border-[#e5e7eb] max-w-[120px] truncate">
-                          <span className={cn("px-2 py-1 rounded text-xs font-semibold uppercase", item.effective_status === "ACTIVE" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-700")}>
+                        <TableCell className="text-gray-600 border-r border-[#e5e7eb] px-4">
+                          <span className={cn("px-2 py-1 rounded text-[10px] font-bold uppercase", item.effective_status === "ACTIVE" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-700")}>
                              {item.effective_status}
                           </span>
                         </TableCell>
-                        <TableCell className="font-bold border-r border-[#e5e7eb] text-gray-800">
+                        <TableCell className="font-bold border-r border-[#e5e7eb] text-gray-800 px-4">
                           {getInsightValue(item, 'results').toLocaleString()}
                         </TableCell>
-                        <TableCell className="text-gray-600 border-r border-[#e5e7eb]">
+                        <TableCell className="text-gray-600 border-r border-[#e5e7eb] px-4">
                           ${getInsightValue(item, 'cpr').toFixed(2)}
                         </TableCell>
-                        <TableCell className="text-gray-600 border-r border-[#e5e7eb]">
+
+                        {/* New Metric Cells */}
+                        <TableCell className="text-gray-600 border-r border-[#e5e7eb] px-4">
+                          ${getInsightValue(item, 'cpm').toFixed(2)}
+                        </TableCell>
+                        <TableCell className="text-gray-600 border-r border-[#e5e7eb] px-4">
+                          {getInsightValue(item, 'link_clicks').toLocaleString()}
+                        </TableCell>
+                        <TableCell className="text-gray-600 border-r border-[#e5e7eb] px-4">
+                          {getInsightValue(item, 'link_ctr').toFixed(2)}%
+                        </TableCell>
+                        <TableCell className="text-gray-600 border-r border-[#e5e7eb] px-4">
+                          ${getInsightValue(item, 'link_cpc').toFixed(2)}
+                        </TableCell>
+                        <TableCell className="text-gray-600 border-r border-[#e5e7eb] px-4">
+                          {getInsightValue(item, 'clicks').toLocaleString()}
+                        </TableCell>
+                        <TableCell className="text-gray-600 border-r border-[#e5e7eb] px-4">
+                          {getInsightValue(item, 'ctr').toFixed(2)}%
+                        </TableCell>
+                        <TableCell className="text-gray-600 border-r border-[#e5e7eb] px-4">
+                          ${getInsightValue(item, 'cpc').toFixed(2)}
+                        </TableCell>
+                        <TableCell className="text-gray-600 border-r border-[#e5e7eb] px-4">
+                          {getInsightValue(item, 'add_to_cart').toLocaleString()}
+                        </TableCell>
+
+                        <TableCell className="font-medium border-r border-[#e5e7eb] px-4 text-gray-700">
                           ${getBudgetValue(item).toFixed(2)}
                         </TableCell>
-                        <TableCell className="font-medium border-r border-[#e5e7eb]">
+                        <TableCell className="font-medium border-r border-[#e5e7eb] px-4 text-gray-900 text-right">
                           ${getInsightValue(item, 'spend').toFixed(2)}
                         </TableCell>
-                        <TableCell className="text-gray-600 border-r border-[#e5e7eb]">
+                        <TableCell className="text-gray-600 border-r border-[#e5e7eb] px-4">
                           {getInsightValue(item, 'impressions').toLocaleString()}
                         </TableCell>
-                        <TableCell className="text-gray-600 border-r border-[#e5e7eb]">
+                        <TableCell className="text-gray-600 border-r border-[#e5e7eb] px-4">
                           {getInsightValue(item, 'reach').toLocaleString()}
                         </TableCell>
-                        <TableCell className="text-gray-600">
+                        <TableCell className="text-gray-600 px-4">
                           {getInsightValue(item, 'frequency').toFixed(2)}
                         </TableCell>
                       </TableRow>
@@ -633,6 +780,16 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                 </TableBody>
               </Table>
             </div>
+
+            {/* Sticky Horizontal Scrollbar */}
+            {showStickyScroll && (
+              <div 
+                ref={dummyScrollRef}
+                className="overflow-x-auto sticky bottom-0 bg-[#f9fafb] border-t border-gray-200 z-[100] h-[18px] w-full shadow-[0_-4px_12px_rgba(0,0,0,0.12)] mb-[-1px] rounded-b-md"
+              >
+                <div style={{ width: tableScrollWidth, height: '1px' }} />
+              </div>
+            )}
           </CardContent>
         </Card>
       </main>
