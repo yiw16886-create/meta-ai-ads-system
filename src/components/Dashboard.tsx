@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { format, subDays } from "date-fns";
 import axios from "axios";
+import { useNavigate } from "react-router-dom";
 import {
   BarChart3,
   LayoutDashboard,
@@ -71,6 +72,7 @@ interface DashboardProps {
 }
 
 export function Dashboard({ onLogout }: DashboardProps) {
+  const navigate = useNavigate();
   const [currentTab, setCurrentTab] = useState<
     "dashboard" | "settings" | "category" | "accounts"
   >("dashboard");
@@ -470,7 +472,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                       onClick={() => requestSort("accountName")}
                     >
                       <div className="flex items-center gap-1">
-                        帐户名称 {sortConfig?.key === "accountName" && <ArrowUpDown className="w-3 h-3" />}
+                        帐户名称 <ArrowUpDown className={`w-3 h-3 ${sortConfig?.key === 'accountName' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                       </div>
                     </TableHead>
                     <TableHead 
@@ -478,7 +480,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                       onClick={() => requestSort("reach")}
                     >
                       <div className="flex items-center gap-1">
-                        抵达 {sortConfig?.key === "reach" && <ArrowUpDown className="w-3 h-3" />}
+                        抵达 <ArrowUpDown className={`w-3 h-3 ${sortConfig?.key === 'reach' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                       </div>
                     </TableHead>
                     <TableHead 
@@ -486,7 +488,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                       onClick={() => requestSort("impressions")}
                     >
                       <div className="flex items-center gap-1">
-                        印象 {sortConfig?.key === "impressions" && <ArrowUpDown className="w-3 h-3" />}
+                        印象 <ArrowUpDown className={`w-3 h-3 ${sortConfig?.key === 'impressions' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                       </div>
                     </TableHead>
                     <TableHead 
@@ -494,7 +496,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                       onClick={() => requestSort("clicks")}
                     >
                       <div className="flex items-center gap-1">
-                        点击 {sortConfig?.key === "clicks" && <ArrowUpDown className="w-3 h-3" />}
+                        点击 <ArrowUpDown className={`w-3 h-3 ${sortConfig?.key === 'clicks' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                       </div>
                     </TableHead>
                     <TableHead 
@@ -502,7 +504,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                       onClick={() => requestSort("cpc")}
                     >
                       <div className="flex items-center gap-1">
-                        CPC {sortConfig?.key === "cpc" && <ArrowUpDown className="w-3 h-3" />}
+                        CPC <ArrowUpDown className={`w-3 h-3 ${sortConfig?.key === 'cpc' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                       </div>
                     </TableHead>
                     <TableHead 
@@ -510,7 +512,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                       onClick={() => requestSort("ctr")}
                     >
                       <div className="flex items-center gap-1">
-                        点击率 % {sortConfig?.key === "ctr" && <ArrowUpDown className="w-3 h-3" />}
+                        点击率 % <ArrowUpDown className={`w-3 h-3 ${sortConfig?.key === 'ctr' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                       </div>
                     </TableHead>
                     <TableHead 
@@ -518,7 +520,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                       onClick={() => requestSort("spend")}
                     >
                       <div className="flex items-center gap-1">
-                        已花费金额 {sortConfig?.key === "spend" && <ArrowUpDown className="w-3 h-3" />}
+                        已花费金额 <ArrowUpDown className={`w-3 h-3 ${sortConfig?.key === 'spend' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                       </div>
                     </TableHead>
                     <TableHead 
@@ -526,7 +528,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                       onClick={() => requestSort("addToCart")}
                     >
                       <div className="flex items-center gap-1">
-                        加购 {sortConfig?.key === "addToCart" && <ArrowUpDown className="w-3 h-3" />}
+                        加购 <ArrowUpDown className={`w-3 h-3 ${sortConfig?.key === 'addToCart' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                       </div>
                     </TableHead>
                     <TableHead 
@@ -534,7 +536,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                       onClick={() => requestSort("atcRate")}
                     >
                       <div className="flex items-center gap-1">
-                        加购率 {sortConfig?.key === "atcRate" && <ArrowUpDown className="w-3 h-3" />}
+                        加购率 <ArrowUpDown className={`w-3 h-3 ${sortConfig?.key === 'atcRate' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                       </div>
                     </TableHead>
                     <TableHead 
@@ -542,7 +544,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                       onClick={() => requestSort("initiateCheckout")}
                     >
                       <div className="flex items-center gap-1">
-                        结账发起 {sortConfig?.key === "initiateCheckout" && <ArrowUpDown className="w-3 h-3" />}
+                        结账发起 <ArrowUpDown className={`w-3 h-3 ${sortConfig?.key === 'initiateCheckout' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                       </div>
                     </TableHead>
                     <TableHead 
@@ -550,7 +552,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                       onClick={() => requestSort("checkoutRate")}
                     >
                       <div className="flex items-center gap-1">
-                        结账率 {sortConfig?.key === "checkoutRate" && <ArrowUpDown className="w-3 h-3" />}
+                        结账率 <ArrowUpDown className={`w-3 h-3 ${sortConfig?.key === 'checkoutRate' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                       </div>
                     </TableHead>
                     <TableHead 
@@ -558,7 +560,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                       onClick={() => requestSort("purchases")}
                     >
                       <div className="flex items-center gap-1">
-                        成效 {sortConfig?.key === "purchases" && <ArrowUpDown className="w-3 h-3" />}
+                        成效 <ArrowUpDown className={`w-3 h-3 ${sortConfig?.key === 'purchases' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                       </div>
                     </TableHead>
                     <TableHead 
@@ -566,7 +568,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                       onClick={() => requestSort("cpp")}
                     >
                       <div className="flex items-center gap-1">
-                        单次费用 {sortConfig?.key === "cpp" && <ArrowUpDown className="w-3 h-3" />}
+                        单次费用 <ArrowUpDown className={`w-3 h-3 ${sortConfig?.key === 'cpp' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                       </div>
                     </TableHead>
                     <TableHead 
@@ -574,7 +576,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                       onClick={() => requestSort("purchaseValue")}
                     >
                       <div className="flex items-center gap-1">
-                        转化价值 {sortConfig?.key === "purchaseValue" && <ArrowUpDown className="w-3 h-3" />}
+                        转化价值 <ArrowUpDown className={`w-3 h-3 ${sortConfig?.key === 'purchaseValue' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                       </div>
                     </TableHead>
                     <TableHead 
@@ -582,7 +584,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                       onClick={() => requestSort("roas")}
                     >
                       <div className="flex items-center gap-1">
-                        ROAS {sortConfig?.key === "roas" && <ArrowUpDown className="w-3 h-3" />}
+                        ROAS <ArrowUpDown className={`w-3 h-3 ${sortConfig?.key === 'roas' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                       </div>
                     </TableHead>
                       </TableRow>
@@ -604,7 +606,12 @@ export function Dashboard({ onLogout }: DashboardProps) {
                             className="hover:bg-gray-50 transition-colors border-b border-[#f3f4f6]"
                           >
                             <TableCell className="sticky left-0 z-10 bg-white border-r-2 border-[#f3f4f6] px-4 py-[10px] whitespace-nowrap font-medium text-meta-dark">
-                              {item.accountName}
+                              <button
+                                onClick={() => navigate(`/account/${item.accountId}`)}
+                                className="hover:text-blue-600 hover:underline text-left outline-none"
+                              >
+                                {item.accountName}
+                              </button>
                             </TableCell>
                             <TableCell className="px-4 py-[10px] whitespace-nowrap text-[#374151]">
                               {item.reach.toLocaleString()}
@@ -1052,12 +1059,12 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
                           </TableHead>
                           <TableHead className="cursor-pointer hover:bg-gray-100" onClick={() => requestSort('accountName')}>
                             <div className="flex items-center gap-1">
-                              账户名称 {sortConfig?.key === 'accountName' && <ArrowUpDown className="w-3 h-3" />}
+                              账户名称 <ArrowUpDown className={`w-3 h-3 ${sortConfig?.key === 'accountName' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                             </div>
                           </TableHead>
                           <TableHead className="cursor-pointer hover:bg-gray-100" onClick={() => requestSort('accountId')}>
                             <div className="flex items-center gap-1">
-                              账户 ID {sortConfig?.key === 'accountId' && <ArrowUpDown className="w-3 h-3" />}
+                              账户 ID <ArrowUpDown className={`w-3 h-3 ${sortConfig?.key === 'accountId' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                             </div>
                           </TableHead>
                         </TableRow>
@@ -1132,12 +1139,12 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
                   <TableRow>
                     <TableHead className="cursor-pointer hover:bg-gray-100" onClick={() => requestSort('accountName')}>
                       <div className="flex items-center gap-1">
-                        账户名称 {sortConfig?.key === 'accountName' && <ArrowUpDown className="w-3 h-3" />}
+                        账户名称 <ArrowUpDown className={`w-3 h-3 ${sortConfig?.key === 'accountName' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                       </div>
                     </TableHead>
                     <TableHead className="cursor-pointer hover:bg-gray-100" onClick={() => requestSort('accountId')}>
                       <div className="flex items-center gap-1">
-                        账户 ID {sortConfig?.key === 'accountId' && <ArrowUpDown className="w-3 h-3" />}
+                        账户 ID <ArrowUpDown className={`w-3 h-3 ${sortConfig?.key === 'accountId' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                       </div>
                     </TableHead>
                     <TableHead className="text-right">操作</TableHead>
@@ -1390,6 +1397,7 @@ function SettingsPage() {
 }
 
 function CategoryDashboard({ mappings }: { mappings: Record<string, any> }) {
+  const navigate = useNavigate();
   const [startDate, setStartDate] = useState<Date>(subDays(new Date(), 7));
   const [endDate, setEndDate] = useState<Date>(new Date());
   const [rawInsights, setRawInsights] = useState<any[]>([]);
@@ -1672,37 +1680,37 @@ function CategoryDashboard({ mappings }: { mappings: Record<string, any> }) {
               <TableRow>
                 <TableHead className="font-semibold text-[#374151] cursor-pointer hover:bg-gray-100" onClick={() => requestSort('project')}>
                   <div className="flex items-center gap-1">
-                    项目 {sortConfig?.key === 'project' && <ArrowUpDown className="w-3 h-3" />}
+                    项目 <ArrowUpDown className={`w-3 h-3 ${sortConfig?.key === 'project' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                   </div>
                 </TableHead>
                 <TableHead className="font-semibold text-[#374151] cursor-pointer hover:bg-gray-100" onClick={() => requestSort('store')}>
                   <div className="flex items-center gap-1">
-                    店铺 {sortConfig?.key === 'store' && <ArrowUpDown className="w-3 h-3" />}
+                    店铺 <ArrowUpDown className={`w-3 h-3 ${sortConfig?.key === 'store' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                   </div>
                 </TableHead>
                 <TableHead className="font-semibold text-[#374151] cursor-pointer hover:bg-gray-100" onClick={() => requestSort('owner')}>
                   <div className="flex items-center gap-1">
-                    负责人 {sortConfig?.key === 'owner' && <ArrowUpDown className="w-3 h-3" />}
+                    负责人 <ArrowUpDown className={`w-3 h-3 ${sortConfig?.key === 'owner' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                   </div>
                 </TableHead>
                 <TableHead className="font-semibold text-[#374151] cursor-pointer hover:bg-gray-100" onClick={() => requestSort('accountName')}>
                   <div className="flex items-center gap-1">
-                    广告账户 {sortConfig?.key === 'accountName' && <ArrowUpDown className="w-3 h-3" />}
+                    广告账户 <ArrowUpDown className={`w-3 h-3 ${sortConfig?.key === 'accountName' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                   </div>
                 </TableHead>
                 <TableHead className="font-semibold text-[#374151] cursor-pointer hover:bg-gray-100" onClick={() => requestSort('spend')}>
                   <div className="flex items-center gap-1">
-                    已花费金额 {sortConfig?.key === 'spend' && <ArrowUpDown className="w-3 h-3" />}
+                    已花费金额 <ArrowUpDown className={`w-3 h-3 ${sortConfig?.key === 'spend' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                   </div>
                 </TableHead>
                 <TableHead className="font-semibold text-[#374151] cursor-pointer hover:bg-gray-100" onClick={() => requestSort('purchaseValue')}>
                   <div className="flex items-center gap-1">
-                    购物转化价值 {sortConfig?.key === 'purchaseValue' && <ArrowUpDown className="w-3 h-3" />}
+                    购物转化价值 <ArrowUpDown className={`w-3 h-3 ${sortConfig?.key === 'purchaseValue' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                   </div>
                 </TableHead>
                 <TableHead className="font-semibold text-[#374151] cursor-pointer hover:bg-gray-100" onClick={() => requestSort('roas')}>
                   <div className="flex items-center gap-1">
-                    ROAS {sortConfig?.key === 'roas' && <ArrowUpDown className="w-3 h-3" />}
+                    ROAS <ArrowUpDown className={`w-3 h-3 ${sortConfig?.key === 'roas' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                   </div>
                 </TableHead>
               </TableRow>
@@ -1745,7 +1753,12 @@ function CategoryDashboard({ mappings }: { mappings: Record<string, any> }) {
                       className="text-gray-500 font-mono text-[11px] truncate max-w-[150px]"
                       title={item.accountName}
                     >
-                      {item.accountName}
+                      <button
+                        onClick={() => navigate(`/account/${item.accountId}`)}
+                        className="hover:text-blue-600 hover:underline text-left outline-none"
+                      >
+                        {item.accountName}
+                      </button>
                     </TableCell>
                     <TableCell className="font-medium font-mono">
                       $

@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from "react";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Dashboard } from "./components/Dashboard";
 import { LoginPage } from "./components/LoginPage";
+import { AccountDetailsPage } from "./components/AccountDetailsPage";
 import { Toaster } from "sonner";
 
 export default function App() {
@@ -41,13 +43,17 @@ export default function App() {
   }
 
   return (
-    <>
+    <BrowserRouter>
       <Toaster position="top-center" richColors />
       {!isAuthenticated ? (
         <LoginPage onLogin={handleLogin} />
       ) : (
-        <Dashboard onLogout={handleLogout} />
+        <Routes>
+          <Route path="/" element={<Dashboard onLogout={handleLogout} />} />
+          <Route path="/account/:accountId" element={<AccountDetailsPage onLogout={handleLogout} />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
       )}
-    </>
+    </BrowserRouter>
   );
 }

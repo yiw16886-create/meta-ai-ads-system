@@ -115,107 +115,94 @@ app.post("/api/sync", async (req, res) => {
     let stopSync = false;
     let lastError = "";
 
-    for (const account of accounts) {
+    // 使用分批同步逻辑 (每5个一组) 避免 Meta API 限流
+    const chunkSize = 5;
+    for (let i = 0; i < accounts.length; i += chunkSize) {
       if (stopSync) break;
-      const accountId = account.account_id || account.id;
-      try {
-        const insightsResponse = await axios.get(`https://graph.facebook.com/v19.0/act_${accountId}/insights`, {
-          params: {
-            time_range: JSON.stringify({ since: startDate, until: endDate }),
-            time_increment: 1,
-            fields: "account_id,account_name,date_start,reach,impressions,clicks,spend,actions,purchase_roas,action_values",
-            access_token: token,
-          },
-        });
-
-        const insights = insightsResponse.data.data;
-
-        for (const day of insights) {
-          const actions = day.actions || [];
-          const getActionValue = (type: string) => {
-            const action = actions.find((a: any) => a.action_type === type);
-            return action ? parseFloat(action.value) : 0;
-          };
-
-          const actionValues = day.action_values || [];
-          const getActionVal = (type: string) => {
-            const action = actionValues.find((a: any) => a.action_type === type);
-            return action ? parseFloat(action.value) : 0;
-          };
-
-          const carts = getActionValue("add_to_cart");
-          const checkouts = getActionValue("initiate_checkout");
-          const purchases = getActionValue("purchase");
-          const purchaseValue = getActionVal("purchase") || getActionVal("omni_purchase");
-
-          const spend = parseFloat(day.spend || "0");
-          const clicks = parseInt(day.clicks || "0");
-          const impressions = parseInt(day.impressions || "0");
-          const reach = parseInt(day.reach || "0");
-
-          const cpc = clicks > 0 ? spend / clicks : 0;
-          const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
-          const atcRate = clicks > 0 ? (carts / clicks) * 100 : 0;
-          const checkoutRate = clicks > 0 ? (checkouts / clicks) * 100 : 0;
-          const cpp = purchases > 0 ? spend / purchases : 0;
-          const roas = spend > 0 ? purchaseValue / spend : 0;
-
-          console.log(`Upserting data for account ${accountId} on date ${day.date_start}`);
-          await prisma.adInsight.upsert({
-            where: {
-              accountId_date: {
-                accountId: accountId,
-                date: day.date_start,
-              },
-            },
-            update: {
-              accountName: day.account_name,
-              reach,
-              impressions,
-              clicks,
-              spend,
-              addToCart: carts,
-              initiateCheckout: checkouts,
-              purchases,
-              purchaseValue,
-              cpc,
-              ctr,
-              atcRate,
-              checkoutRate,
-              cpp,
-              roas,
-            },
-            create: {
-              accountId: accountId,
-              date: day.date_start,
-              accountName: day.account_name,
-              reach,
-              impressions,
-              clicks,
-              spend,
-              addToCart: carts,
-              initiateCheckout: checkouts,
-              purchases,
-              purchaseValue,
-              cpc,
-              ctr,
-              atcRate,
-              checkoutRate,
-              cpp,
-              roas,
+      const chunk = accounts.slice(i, i + chunkSize);
+      
+      await Promise.all(chunk.map(async (account: any) => {
+        const accountId = account.account_id || account.id;
+        try {
+          const insightsResponse = await axios.get(`https://graph.facebook.com/v19.0/act_${accountId}/insights`, {
+            params: {
+              time_range: JSON.stringify({ since: startDate, until: endDate }),
+              time_increment: 1,
+              fields: "account_id,account_name,date_start,reach,impressions,clicks,spend,actions,purchase_roas,action_values",
+              access_token: token,
             },
           });
-          totalSynced++;
+
+          const insights = insightsResponse.data.data || [];
+
+          for (const day of insights) {
+            const actions = day.actions || [];
+            const getActionValue = (type: string) => {
+              const action = actions.find((a: any) => a.action_type === type);
+              return action ? parseFloat(action.value) : 0;
+            };
+
+            const actionValues = day.action_values || [];
+            const getActionVal = (type: string) => {
+              const action = actionValues.find((a: any) => a.action_type === type);
+              return action ? parseFloat(action.value) : 0;
+            };
+
+            const carts = getActionValue("add_to_cart");
+            const checkouts = getActionValue("initiate_checkout");
+            const purchases = getActionValue("purchase");
+            const purchaseValue = getActionVal("purchase") || getActionVal("omni_purchase");
+
+            const spend = parseFloat(day.spend || "0");
+            const clicks = parseInt(day.clicks || "0");
+            const impressions = parseInt(day.impressions || "0");
+            const reach = parseInt(day.reach || "0");
+
+            const cpc = clicks > 0 ? spend / clicks : 0;
+            const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
+            const atcRate = clicks > 0 ? (carts / clicks) * 100 : 0;
+            const checkoutRate = clicks > 0 ? (checkouts / clicks) * 100 : 0;
+            const cpp = purchases > 0 ? spend / purchases : 0;
+            const roas = spend > 0 ? purchaseValue / spend : 0;
+
+            await prisma.adInsight.upsert({
+              where: {
+                accountId_date: {
+                  accountId: accountId,
+                  date: day.date_start,
+                },
+              },
+              update: {
+                accountName: day.account_name,
+                reach, impressions, clicks, spend,
+                addToCart: carts, initiateCheckout: checkouts, purchases, purchaseValue,
+                cpc, ctr, atcRate, checkoutRate, cpp, roas,
+              },
+              create: {
+                accountId: accountId,
+                date: day.date_start,
+                accountName: day.account_name,
+                reach, impressions, clicks, spend,
+                addToCart: carts, initiateCheckout: checkouts, purchases, purchaseValue,
+                cpc, ctr, atcRate, checkoutRate, cpp, roas,
+              },
+            });
+            totalSynced++;
+          }
+        } catch (err: any) {
+          lastError = extractMetaError(err);
+          const status = err.response?.status;
+          if (status === 403) {
+            console.warn(`[Manual API Sync] ⚠️ Account ${accountId} access restricted (403): ${lastError}`);
+          } else {
+            console.error(`[Manual API Sync] ❌ Error syncing account ${accountId}:`, err.response?.data || err.message);
+          }
         }
-      } catch (err: any) {
-        lastError = extractMetaError(err);
-        // Do not abort all accounts if one fails, just log it
-        const status = err.response?.status;
-        if (status === 403) {
-          console.warn(`[API Sync] ⚠️ Account ${accountId} access restricted (403): ${lastError}`);
-        } else {
-          console.error(`[API Sync] ❌ Error syncing account ${accountId}:`, err.response?.data || err.message);
-        }
+      }));
+
+      // 每批处理后延迟 1.5 秒
+      if (i + chunkSize < accounts.length) {
+        await new Promise(resolve => setTimeout(resolve, 1500));
       }
     }
 
@@ -228,6 +215,111 @@ app.post("/api/sync", async (req, res) => {
     const msg = extractMetaError(error);
     console.error("Sync error:", error.response?.data || error.message);
     res.status(500).json({ error: msg });
+  }
+});
+
+// --- CACHING LOGIC ---
+const cache = new Map<string, { data: any; expiry: number }>();
+const CACHE_TTL = 10 * 60 * 1000; // Increased to 10 minutes
+
+function getCachedData(key: string) {
+  const cached = cache.get(key);
+  if (cached && cached.expiry > Date.now()) {
+    return cached.data;
+  }
+  return null;
+}
+
+function setCachedData(key: string, data: any) {
+  cache.set(key, { data, expiry: Date.now() + CACHE_TTL });
+}
+
+// [NEW API] 单个账户层级详情 (Campaigns, AdSets, Ads)
+app.get("/api/accounts/:accountId/details", async (req, res) => {
+  const { accountId } = req.params;
+  const { startDate, endDate, level } = req.query; // level: 'campaigns', 'adsets', 'ads'
+
+  if (!accountId || !startDate || !endDate) {
+    return res.status(400).json({ error: "Missing required parameters" });
+  }
+
+  const validLevels = ["campaigns", "adsets", "ads"];
+  const targetLevel = validLevels.includes(level as string) ? level : "campaigns";
+  
+  const cacheKey = `details_${accountId}_${targetLevel}_${startDate}_${endDate}`;
+  const cached = getCachedData(cacheKey);
+  if (cached) return res.json(cached);
+
+  try {
+    const token = await getMetaToken();
+    if (!token) return res.status(400).json({ error: "Meta Token 未配置" });
+
+    // 组合时间范围
+    const timeRange = JSON.stringify({ since: startDate, until: endDate });
+    const insightsFields = "spend,impressions,reach,frequency,actions,cost_per_action_type,action_values";
+    
+    let extraFields = "";
+    if (targetLevel === "adsets") extraFields = ",campaign_id";
+    if (targetLevel === "ads") extraFields = ",campaign_id,adset_id";
+
+    // 我们在此请求该层级下的所有项目，包含 insights。
+    const fields = `name,status,effective_status,daily_budget,lifetime_budget${extraFields},insights.time_range(${timeRange}){${insightsFields}}`;
+
+    const response = await axios.get(`https://graph.facebook.com/v19.0/act_${accountId}/${targetLevel}`, {
+      params: {
+        fields,
+        limit: 100, // 可以支持翻页，这里先返回最多 100 条
+        access_token: token,
+      },
+    });
+
+    const result = {
+      data: response.data.data,
+      paging: response.data.paging
+    };
+    setCachedData(cacheKey, result);
+    res.json(result);
+  } catch (error: any) {
+    console.error(`Meta API Error for ${targetLevel}:`, error.response?.data || error.message);
+    res.status(500).json({ error: extractMetaError(error) });
+  }
+});
+
+// [NEW API] 获取账户层级结构 (用于级联过滤)
+app.get("/api/accounts/:accountId/hierarchy", async (req, res) => {
+  const { accountId } = req.params;
+  const cacheKey = `hierarchy_${accountId}`;
+  const cached = getCachedData(cacheKey);
+  if (cached) return res.json(cached);
+
+  try {
+    const token = await getMetaToken();
+    if (!token) return res.status(400).json({ error: "Meta Token 未配置" });
+
+    // 一次性获取三种资源，去掉 insights 以提升速度
+    const [campaignsRes, adsetsRes, adsRes] = await Promise.all([
+      axios.get(`https://graph.facebook.com/v19.0/act_${accountId}/campaigns`, {
+        params: { fields: "id,name", limit: 500, access_token: token }
+      }),
+      axios.get(`https://graph.facebook.com/v19.0/act_${accountId}/adsets`, {
+        params: { fields: "id,name,campaign_id", limit: 500, access_token: token }
+      }),
+      axios.get(`https://graph.facebook.com/v19.0/act_${accountId}/ads`, {
+        params: { fields: "id,name,adset_id,campaign_id", limit: 500, access_token: token }
+      })
+    ]);
+
+    const result = {
+      success: true,
+      campaigns: campaignsRes.data.data,
+      adSets: adsetsRes.data.data,
+      ads: adsRes.data.data,
+    };
+    setCachedData(cacheKey, result);
+    res.json(result);
+  } catch (error: any) {
+    console.error(`Meta API Error for hierarchy:`, error.response?.data || error.message);
+    res.status(500).json({ error: extractMetaError(error) });
   }
 });
 
