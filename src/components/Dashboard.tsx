@@ -306,7 +306,6 @@ export function Dashboard({ onLogout }: DashboardProps) {
           {[
             { id: "dashboard", icon: LayoutDashboard, label: "总览看板" },
             { id: "category", icon: LayoutGrid, label: "项目类别看板" },
-            { id: "accounts", icon: Settings, label: "账户管理" },
           ].map((item) => (
             <button
               key={item.id}
@@ -668,7 +667,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
             </Card>
           </>
         ) : currentTab === "category" ? (
-          <CategoryDashboard mappings={mappings} />
+          <CategoryDashboard mappings={mappings} onManageAccounts={() => setCurrentTab("accounts")} />
         ) : currentTab === "accounts" ? (
           <AccountManagementPage mappings={mappings} onMappingsChange={syncMappingsToDb} />
         ) : (
@@ -1396,7 +1395,7 @@ function SettingsPage() {
   );
 }
 
-function CategoryDashboard({ mappings }: { mappings: Record<string, any> }) {
+function CategoryDashboard({ mappings, onManageAccounts }: { mappings: Record<string, any>, onManageAccounts: () => void }) {
   const navigate = useNavigate();
   const [startDate, setStartDate] = useState<Date>(subDays(new Date(), 7));
   const [endDate, setEndDate] = useState<Date>(new Date());
@@ -1657,6 +1656,14 @@ function CategoryDashboard({ mappings }: { mappings: Record<string, any> }) {
         </div>
 
         <div className="flex-grow"></div>
+        <Button
+          variant="outline"
+          className="h-9 px-4 rounded-[6px] border-[#e5e7eb] text-[13px] text-[#374151] hover:bg-gray-50"
+          onClick={onManageAccounts}
+        >
+          <Settings className="w-4 h-4 mr-2" />
+          添加分组
+        </Button>
         <Button
           variant="outline"
           className="h-9 px-4 rounded-[6px] border-[#e5e7eb] text-[13px] text-[#374151]"
