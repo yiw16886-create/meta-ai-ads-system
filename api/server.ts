@@ -256,7 +256,7 @@ app.get("/api/accounts/:accountId/details", async (req, res) => {
 
     // 组合时间范围
     const timeRange = JSON.stringify({ since: startDate, until: endDate });
-    const insightsFields = "spend,impressions,reach,frequency,actions,cost_per_action_type,action_values";
+    const insightsFields = "spend,impressions,reach,frequency,actions,cost_per_action_type,action_values,cpm,inline_link_clicks,inline_link_click_ctr,cost_per_inline_link_click,clicks,ctr,cpc";
     
     let extraFields = "";
     if (targetLevel === "adsets") extraFields = ",campaign_id";
