@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { format, subDays } from "date-fns";
 import axios from "axios";
-import { ArrowLeft, RefreshCcw, Calendar as CalendarIcon, ArrowUpDown, Search, Check, ChevronsUpDown } from "lucide-react";
+import { ArrowLeft, RefreshCcw, Calendar as CalendarIcon, ArrowUpDown, Search, Check, ChevronsUpDown, Info } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -361,18 +361,26 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
 
   const totalSpend = itemsToSum.reduce((sum, item) => sum + getInsightValue(item, 'spend'), 0);
   const totalImpressions = itemsToSum.reduce((sum, item) => sum + getInsightValue(item, 'impressions'), 0);
-  const topLevelClicks = itemsToSum.reduce((sum, item) => {
-      const clickAction = item.insights?.data?.[0]?.actions?.find((a:any) => a.action_type === 'link_click');
-      return sum + (clickAction ? parseInt(clickAction.value, 10) : 0);
-  }, 0);
+  const totalReach = itemsToSum.reduce((sum, item) => sum + getInsightValue(item, 'reach'), 0);
+  
+  const linkClicks = itemsToSum.reduce((sum, item) => sum + getInsightValue(item, 'link_clicks'), 0);
+  const allClicks = itemsToSum.reduce((sum, item) => sum + getInsightValue(item, 'clicks'), 0);
   const totalPurchases = itemsToSum.reduce((sum, item) => sum + getInsightValue(item, 'results'), 0);
+  const totalAddToCart = itemsToSum.reduce((sum, item) => sum + getInsightValue(item, 'add_to_cart'), 0);
+  
   const totalPurchaseValue = itemsToSum.reduce((sum, item) => {
      const valAction = item.insights?.data?.[0]?.action_values?.find((a:any) => a.action_type === 'purchase');
      return sum + (valAction ? parseFloat(valAction.value) : 0);
   }, 0);
   
-  const avgCpc = topLevelClicks > 0 ? totalSpend / topLevelClicks : 0;
-  const avgCtr = totalImpressions > 0 ? (topLevelClicks / totalImpressions) * 100 : 0;
+  // Weighted averages
+  const avgCpm = totalImpressions > 0 ? (totalSpend / totalImpressions) * 1000 : 0;
+  const avgLinkCtr = totalImpressions > 0 ? (linkClicks / totalImpressions) * 100 : 0;
+  const avgLinkCpc = linkClicks > 0 ? totalSpend / linkClicks : 0;
+  const avgAllCtr = totalImpressions > 0 ? (allClicks / totalImpressions) * 100 : 0;
+  const avgAllCpc = allClicks > 0 ? totalSpend / allClicks : 0;
+  const avgCpr = totalPurchases > 0 ? totalSpend / totalPurchases : 0;
+  const avgFrequency = totalReach > 0 ? totalImpressions / totalReach : 0;
   const roi = totalSpend > 0 ? (totalPurchaseValue / totalSpend) : 0;
 
   // Derived Options for Filters
@@ -477,35 +485,38 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
         </div>
       </nav>
 
-      <main className="p-6 max-w-[1500px] mx-auto space-y-6">
+      <main className="p-6 max-w-[1700px] mx-auto space-y-6 flex flex-col h-[calc(100vh-64px)] overflow-hidden">
         {/* Level Switcher, Filters & Action row */}
-        <Card className="shadow-sm border border-gray-200 bg-white overflow-visible">
-          <CardHeader className="py-0 px-6 border-b bg-white flex flex-row items-center justify-between space-y-0 relative z-20 min-h-[56px]">
-             <div className="flex items-center space-x-8 self-end">
+        <Card className="shadow-sm border border-gray-200 bg-white overflow-hidden flex flex-col flex-1">
+          {/* Level Tabs Bar - FIXED */}
+          <div className="flex-shrink-0 px-6 border-b bg-white flex items-center h-[52px] z-50">
+             <div className="flex items-center space-x-6 h-full">
                 <button
-                  className={cn("pb-3 text-[14px] font-bold transition-all border-b-2 relative", level === "campaigns" ? "border-meta-blue text-meta-blue" : "border-transparent text-gray-500 hover:text-gray-700")}
+                  className={cn("h-full px-2 text-[14px] font-bold transition-all border-b-[3px] relative flex items-center", level === "campaigns" ? "border-meta-blue text-meta-blue" : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-200")}
                   onClick={() => setLevel("campaigns")}
                 >
                   广告系列 (Campaigns)
                 </button>
                 <button
-                  className={cn("pb-3 text-[14px] font-bold transition-all border-b-2 relative", level === "adsets" ? "border-meta-blue text-meta-blue" : "border-transparent text-gray-500 hover:text-gray-700")}
+                  className={cn("h-full px-2 text-[14px] font-bold transition-all border-b-[3px] relative flex items-center", level === "adsets" ? "border-meta-blue text-meta-blue" : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-200")}
                   onClick={() => setLevel("adsets")}
                 >
                   广告组 (Ad Sets)
                 </button>
                 <button
-                  className={cn("pb-3 text-[14px] font-bold transition-all border-b-2 relative", level === "ads" ? "border-meta-blue text-meta-blue" : "border-transparent text-gray-500 hover:text-gray-700")}
+                  className={cn("h-full px-2 text-[14px] font-bold transition-all border-b-[3px] relative flex items-center", level === "ads" ? "border-meta-blue text-meta-blue" : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-200")}
                   onClick={() => setLevel("ads")}
                 >
                   广告 (Ads)
                 </button>
              </div>
-
-             <div className="flex items-center gap-3 py-2">
-                {/* Account Selector - Name box as trigger (Moved to Search position) */}
+          </div>
+          
+          <div className="flex-shrink-0 px-6 py-2 border-b bg-[#f6f7f9] flex items-center justify-between z-40 min-h-[52px]">
+             <div className="flex items-center gap-3">
+                {/* Account Selector - Name box as trigger */}
                 <Popover open={accountSelectorOpen} onOpenChange={setAccountSelectorOpen}>
-                   <PopoverTrigger className="px-3 py-1.5 bg-gray-50 border border-dashed border-gray-300 rounded-md text-[13px] font-bold text-[#1c2b33] hover:bg-gray-100 hover:border-meta-blue/50 transition-all cursor-pointer flex items-center gap-1 min-w-[150px] max-w-[240px]">
+                   <PopoverTrigger className="px-3 py-1.5 bg-white border border-gray-300 rounded-md text-[13px] font-medium text-[#1c2b33] hover:bg-gray-50 hover:border-meta-blue/50 transition-all cursor-pointer flex items-center gap-1 min-w-[150px] max-w-[240px] shadow-sm">
                       <span className="truncate">{currentAccountName}</span>
                       <ChevronsUpDown className="w-3 h-3 text-gray-400 shrink-0" />
                    </PopoverTrigger>
@@ -577,215 +588,261 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                   刷新数据
                 </Button>
              </div>
-          </CardHeader>
-
-          {/* Compact KPI Stats - Refined Labels and Styling */}
-          <div className="bg-[#f9fafb]/50 border-b py-4 px-6">
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-6">
-              <div className="bg-white p-3 rounded-lg border border-gray-100 shadow-sm flex flex-col justify-between h-20">
-                <div className="text-[11px] text-gray-500 font-bold uppercase tracking-tight">总花费 (SPEND)</div>
-                <div className="text-lg font-bold text-[#1c2b33]">${totalSpend.toFixed(2)}</div>
-              </div>
-              <div className="bg-white p-3 rounded-lg border border-gray-100 shadow-sm flex flex-col justify-between h-20">
-                <div className="text-[11px] text-gray-500 font-bold uppercase tracking-tight">展示次数</div>
-                <div className="text-lg font-bold text-[#1c2b33]">{totalImpressions.toLocaleString()}</div>
-              </div>
-              <div className="bg-white p-3 rounded-lg border border-gray-100 shadow-sm flex flex-col justify-between h-20">
-                <div className="text-[11px] text-gray-500 font-bold uppercase tracking-tight">点击次数</div>
-                <div className="text-lg font-bold text-[#1c2b33]">{topLevelClicks.toLocaleString()}</div>
-              </div>
-              <div className="bg-white p-3 rounded-lg border border-gray-100 shadow-sm flex flex-col justify-between h-20">
-                <div className="text-[11px] text-gray-500 font-bold uppercase tracking-tight">成效 (PURCHASES)</div>
-                <div className="text-lg font-bold text-[#1c2b33]">{totalPurchases.toLocaleString()}</div>
-              </div>
-              <div className="bg-white p-3 rounded-lg border border-gray-100 shadow-sm flex flex-col justify-between h-20">
-                <div className="text-[11px] text-gray-500 font-bold uppercase tracking-tight">平均 CPC</div>
-                <div className="text-lg font-bold text-[#1c2b33]">${avgCpc.toFixed(2)}</div>
-              </div>
-              <div className="bg-white p-3 rounded-lg border border-gray-100 shadow-sm flex flex-col justify-between h-20">
-                <div className="text-[11px] text-gray-500 font-bold uppercase tracking-tight">平均 CTR</div>
-                <div className="text-lg font-bold text-[#1c2b33]">{avgCtr.toFixed(2)}%</div>
-              </div>
-              <div className="bg-white p-3 rounded-lg border border-gray-100 shadow-sm flex flex-col justify-between h-20">
-                <div className="text-[11px] text-gray-500 font-bold uppercase tracking-tight">ROI (ROAS)</div>
-                <div className="text-lg font-bold text-[#1c2b33]">{roi.toFixed(2)}</div>
-              </div>
-            </div>
           </div>
 
-          <CardContent className="p-0 bg-white relative">
+          <CardContent className="p-0 bg-white relative flex-1 flex flex-col overflow-hidden">
             <div 
               ref={tableContainerRef}
-              className="overflow-x-auto relative border-x border-t rounded-t-md scrollbar-hide"
+              className="flex-1 overflow-auto relative border-x border-t rounded-t-md scrollbar-hide max-h-[600px]"
             >
-              <Table className="min-w-max border-collapse">
-                <TableHeader className="bg-[#fbfcff] sticky top-0 z-30 border-b">
-                  <TableRow className="hover:bg-transparent">
-                     <TableHead className="w-[50px] text-center border-r border-[#e5e7eb] px-0 h-12 sticky left-0 z-40 bg-[#fbfcff]">
+              <table className="w-full caption-bottom text-sm min-w-max border-separate border-spacing-0">
+                <thead className="[&_tr]:border-b bg-[#fbfcff] sticky top-0 z-40 shadow-sm">
+                  <tr className="border-b transition-colors hover:bg-transparent">
+                     <th className="h-10 px-2 align-middle whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0 w-[50px] text-center border-r border-b border-[#e5e7eb] h-10 sticky left-0 z-[55] bg-[#fbfcff]">
                         <div className="flex items-center justify-center h-full min-w-[50px]">
                           <Checkbox 
                             checked={sortedData.length > 0 && sortedData.every(i => isSelected(i.id))}
                             onCheckedChange={toggleAll}
                           />
                         </div>
-                     </TableHead>
-                     <TableHead className="w-[250px] border-r border-[#e5e7eb] cursor-pointer hover:bg-gray-100 h-12 text-[#374151] font-bold sticky left-[50px] z-40 bg-[#fbfcff]" onClick={() => requestSort("name")}>
+                     </th>
+                     <th className="h-10 px-2 align-middle whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0 w-[250px] border-r border-b border-[#e5e7eb] cursor-pointer hover:bg-gray-100 text-[#4b5563] font-bold text-[12px] sticky left-[50px] z-[55] bg-[#fbfcff]" onClick={() => requestSort("name")}>
                        <div className="min-w-[250px] flex items-center px-4">
                          名称 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'name' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                        </div>
-                     </TableHead>
-                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold px-4" onClick={() => requestSort("effective_status")}>
+                     </th>
+                     <th className="h-10 px-2 align-middle whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:bg-gray-100 border-r border-b border-[#e5e7eb] text-[#4b5563] font-bold px-4 text-[12px]" onClick={() => requestSort("effective_status")}>
                        投放状态 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'effective_status' ? 'text-meta-blue' : 'text-gray-300'}`}/>
-                     </TableHead>
-                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold px-4 md:min-w-[120px]" onClick={() => requestSort("results")}>
+                     </th>
+
+                     <th className="h-10 px-2 align-middle whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:bg-gray-100 border-r border-b border-[#e5e7eb] text-[#4b5563] font-bold px-4 text-[12px] md:min-w-[120px]" onClick={() => requestSort("results")}>
                        购物次数 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'results' ? 'text-meta-blue' : 'text-gray-300'}`}/>
-                     </TableHead>
-                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold px-4" onClick={() => requestSort("cpr")}>
+                     </th>
+                     <th className="h-10 px-2 align-middle whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:bg-gray-100 border-r border-b border-[#e5e7eb] text-[#4b5563] font-bold px-4 text-[12px]" onClick={() => requestSort("cpr")}>
                        单次购物费用 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'cpr' ? 'text-meta-blue' : 'text-gray-300'}`}/>
-                     </TableHead>
+                     </th>
                      
                      {/* New Metric Columns */}
-                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold px-4" onClick={() => requestSort("cpm")}>
-                       CPM (千次展示费用) <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'cpm' ? 'text-meta-blue' : 'text-gray-300'}`}/>
-                     </TableHead>
-                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold px-4" onClick={() => requestSort("link_clicks")}>
+                     <th className="h-10 px-2 align-middle whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:bg-gray-100 border-r border-b border-[#e5e7eb] text-[#4b5563] font-bold px-4 text-[12px]" onClick={() => requestSort("cpm")}>
+                       CPM <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'cpm' ? 'text-meta-blue' : 'text-gray-300'}`}/>
+                     </th>
+                     <th className="h-10 px-2 align-middle whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:bg-gray-100 border-r border-b border-[#e5e7eb] text-[#4b5563] font-bold px-4 text-[12px]" onClick={() => requestSort("link_clicks")}>
                        链接点击量 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'link_clicks' ? 'text-meta-blue' : 'text-gray-300'}`}/>
-                     </TableHead>
-                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold px-4" onClick={() => requestSort("link_ctr")}>
+                     </th>
+                     <th className="h-10 px-2 align-middle whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:bg-gray-100 border-r border-b border-[#e5e7eb] text-[#4b5563] font-bold px-4 text-[12px]" onClick={() => requestSort("link_ctr")}>
                        链接点击率 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'link_ctr' ? 'text-meta-blue' : 'text-gray-300'}`}/>
-                     </TableHead>
-                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold px-4" onClick={() => requestSort("link_cpc")}>
+                     </th>
+                     <th className="h-10 px-2 align-middle whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:bg-gray-100 border-r border-b border-[#e5e7eb] text-[#4b5563] font-bold px-4 text-[12px]" onClick={() => requestSort("link_cpc")}>
                        单次链接点击费用 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'link_cpc' ? 'text-meta-blue' : 'text-gray-300'}`}/>
-                     </TableHead>
-                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold px-4" onClick={() => requestSort("clicks")}>
-                       点击量 (全部) <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'clicks' ? 'text-meta-blue' : 'text-gray-300'}`}/>
-                     </TableHead>
-                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold px-4" onClick={() => requestSort("ctr")}>
-                       点击率 (全部) <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'ctr' ? 'text-meta-blue' : 'text-gray-300'}`}/>
-                     </TableHead>
-                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold px-4" onClick={() => requestSort("cpc")}>
-                       单次点击费用 (全部) <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'cpc' ? 'text-meta-blue' : 'text-gray-300'}`}/>
-                     </TableHead>
-                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold px-4" onClick={() => requestSort("add_to_cart")}>
-                       加入购物车次数 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'add_to_cart' ? 'text-meta-blue' : 'text-gray-300'}`}/>
-                     </TableHead>
-
-                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold px-4" onClick={() => requestSort("budget")}>
+                     </th>
+                     <th className="h-10 px-2 align-middle whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:bg-gray-100 border-r border-b border-[#e5e7eb] text-[#4b5563] font-bold px-4 text-[12px]" onClick={() => requestSort("clicks")}>
+                       点击量 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'clicks' ? 'text-meta-blue' : 'text-gray-300'}`}/>
+                     </th>
+                     <th className="h-10 px-2 align-middle whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:bg-gray-100 border-r border-b border-[#e5e7eb] text-[#4b5563] font-bold px-4 text-[12px]" onClick={() => requestSort("ctr")}>
+                       点击率 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'ctr' ? 'text-meta-blue' : 'text-gray-300'}`}/>
+                     </th>
+                     <th className="h-10 px-2 align-middle whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:bg-gray-100 border-r border-b border-[#e5e7eb] text-[#4b5563] font-bold px-4 text-[12px]" onClick={() => requestSort("cpc")}>
+                       单次点击费用 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'cpc' ? 'text-meta-blue' : 'text-gray-300'}`}/>
+                     </th>
+                     <th className="h-10 px-2 align-middle whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:bg-gray-100 border-r border-b border-[#e5e7eb] text-[#4b5563] font-bold px-4 text-[12px]" onClick={() => requestSort("add_to_cart")}>
+                       加入购物车 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'add_to_cart' ? 'text-meta-blue' : 'text-gray-300'}`}/>
+                     </th>
+ 
+                     <th className="h-10 px-2 align-middle whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:bg-gray-100 border-r border-b border-[#e5e7eb] text-[#4b5563] font-bold px-4 text-[12px]" onClick={() => requestSort("budget")}>
                        预算 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'budget' ? 'text-meta-blue' : 'text-gray-300'}`}/>
-                     </TableHead>
-                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold px-4" onClick={() => requestSort("spend")}>
+                     </th>
+                     <th className="h-10 px-2 align-middle whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:bg-gray-100 border-r border-b border-[#e5e7eb] text-[#4b5563] font-bold px-4 text-[12px]" onClick={() => requestSort("spend")}>
                        已花费金额 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'spend' ? 'text-meta-blue' : 'text-gray-300'}`}/>
-                     </TableHead>
-                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold px-4" onClick={() => requestSort("impressions")}>
+                     </th>
+                     <th className="h-10 px-2 align-middle whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:bg-gray-100 border-r border-b border-[#e5e7eb] text-[#4b5563] font-bold px-4 text-[12px]" onClick={() => requestSort("impressions")}>
                        展示次数 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'impressions' ? 'text-meta-blue' : 'text-gray-300'}`}/>
-                     </TableHead>
-                     <TableHead className="cursor-pointer hover:bg-gray-100 border-r border-[#e5e7eb] h-12 text-[#374151] font-bold px-4" onClick={() => requestSort("reach")}>
+                     </th>
+                     <th className="h-10 px-2 align-middle whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:bg-gray-100 border-r border-b border-[#e5e7eb] text-[#4b5563] font-bold px-4 text-[12px]" onClick={() => requestSort("reach")}>
                        覆盖人数 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'reach' ? 'text-meta-blue' : 'text-gray-300'}`}/>
-                     </TableHead>
-                     <TableHead className="cursor-pointer hover:bg-gray-100 h-12 text-[#374151] font-bold px-4" onClick={() => requestSort("frequency")}>
+                     </th>
+                     <th className="h-10 px-2 align-middle whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:bg-gray-100 border-b border-[#e5e7eb] text-[#4b5563] font-bold px-4 text-[12px]" onClick={() => requestSort("frequency")}>
                        频次 <ArrowUpDown className={`w-3 h-3 inline-block ml-1 ${sortConfig?.key === 'frequency' ? 'text-meta-blue' : 'text-gray-300'}`}/>
-                     </TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
+                     </th>
+                  </tr>
+                </thead>
+                <tbody className="[&_tr:last-child]:border-0">
                   {loading ? (
-                    <TableRow>
-                      <TableCell colSpan={20} className="h-32 text-center text-gray-500">
+                    <tr className="border-b transition-colors">
+                      <td colSpan={20} className="p-2 align-middle h-32 text-center text-gray-500">
                         <RefreshCcw className="w-6 h-6 animate-spin mx-auto text-meta-blue mb-2" />
                         正在加载数据...
-                      </TableCell>
-                    </TableRow>
+                      </td>
+                    </tr>
                   ) : sortedData.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={20} className="h-32 text-center text-gray-500">
+                    <tr className="border-b transition-colors">
+                      <td colSpan={20} className="p-2 align-middle h-32 text-center text-gray-500">
                         暂无数据
-                      </TableCell>
-                    </TableRow>
+                      </td>
+                    </tr>
                   ) : (
                     sortedData.map((item) => (
-                      <TableRow 
+                      <tr 
                         key={item.id} 
-                        className={cn("hover:bg-gray-50 border-b border-[#f3f4f6] cursor-pointer transition-colors group", isSelected(item.id) && "bg-blue-50/50")}
+                        className={cn("border-b transition-colors hover:bg-gray-50 border-[#f3f4f6] cursor-pointer group", isSelected(item.id) && "bg-blue-50/50")}
                         onClick={() => toggleSelection(item.id)}
                       >
-                        <TableCell className="text-center font-medium border-r border-[#e5e7eb] px-0 sticky left-0 z-10 bg-white group-hover:bg-gray-50 transition-colors" onClick={(e) => e.stopPropagation()}>
+                        <td className="p-2 align-middle whitespace-nowrap text-center font-medium border-r border-[#e5e7eb] px-0 sticky left-0 z-10 bg-white group-hover:bg-gray-50 transition-colors" onClick={(e) => e.stopPropagation()}>
                             <div className="flex items-center justify-center h-full py-2 min-w-[50px]">
                               <Checkbox 
                                 checked={isSelected(item.id)} 
                                 onCheckedChange={() => toggleSelection(item.id)}
                               />
                             </div>
-                        </TableCell>
-                        <TableCell className={cn("font-medium text-meta-blue border-r border-[#e5e7eb] sticky left-[50px] z-10 bg-white group-hover:bg-gray-50 transition-colors px-4")} title={item.name}>
+                        </td>
+                        <td className={cn("p-2 align-middle whitespace-nowrap font-medium text-meta-blue border-r border-[#e5e7eb] sticky left-[50px] z-10 bg-white group-hover:bg-gray-50 transition-colors px-4")} title={item.name}>
                           <div className="truncate max-w-[218px]">
                             {item.name}
                           </div>
-                        </TableCell>
-                        <TableCell className="text-gray-600 border-r border-[#e5e7eb] px-4">
+                        </td>
+                        <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
                           <span className={cn("px-2 py-1 rounded text-[10px] font-bold uppercase", item.effective_status === "ACTIVE" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-700")}>
                              {item.effective_status}
                           </span>
-                        </TableCell>
-                        <TableCell className="font-bold border-r border-[#e5e7eb] text-gray-800 px-4">
+                        </td>
+                        <td className="p-2 align-middle whitespace-nowrap font-bold border-r border-[#e5e7eb] text-gray-800 px-4">
                           {getInsightValue(item, 'results').toLocaleString()}
-                        </TableCell>
-                        <TableCell className="text-gray-600 border-r border-[#e5e7eb] px-4">
+                        </td>
+                        <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
                           ${getInsightValue(item, 'cpr').toFixed(2)}
-                        </TableCell>
+                        </td>
 
                         {/* New Metric Cells */}
-                        <TableCell className="text-gray-600 border-r border-[#e5e7eb] px-4">
+                        <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
                           ${getInsightValue(item, 'cpm').toFixed(2)}
-                        </TableCell>
-                        <TableCell className="text-gray-600 border-r border-[#e5e7eb] px-4">
+                        </td>
+                        <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
                           {getInsightValue(item, 'link_clicks').toLocaleString()}
-                        </TableCell>
-                        <TableCell className="text-gray-600 border-r border-[#e5e7eb] px-4">
+                        </td>
+                        <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
                           {getInsightValue(item, 'link_ctr').toFixed(2)}%
-                        </TableCell>
-                        <TableCell className="text-gray-600 border-r border-[#e5e7eb] px-4">
+                        </td>
+                        <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
                           ${getInsightValue(item, 'link_cpc').toFixed(2)}
-                        </TableCell>
-                        <TableCell className="text-gray-600 border-r border-[#e5e7eb] px-4">
+                        </td>
+                        <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
                           {getInsightValue(item, 'clicks').toLocaleString()}
-                        </TableCell>
-                        <TableCell className="text-gray-600 border-r border-[#e5e7eb] px-4">
+                        </td>
+                        <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
                           {getInsightValue(item, 'ctr').toFixed(2)}%
-                        </TableCell>
-                        <TableCell className="text-gray-600 border-r border-[#e5e7eb] px-4">
+                        </td>
+                        <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
                           ${getInsightValue(item, 'cpc').toFixed(2)}
-                        </TableCell>
-                        <TableCell className="text-gray-600 border-r border-[#e5e7eb] px-4">
+                        </td>
+                        <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
                           {getInsightValue(item, 'add_to_cart').toLocaleString()}
-                        </TableCell>
+                        </td>
 
-                        <TableCell className="font-medium border-r border-[#e5e7eb] px-4 text-gray-700">
+                        <td className="p-2 align-middle whitespace-nowrap font-medium border-r border-[#e5e7eb] px-4 text-gray-700">
                           ${getBudgetValue(item).toFixed(2)}
-                        </TableCell>
-                        <TableCell className="font-medium border-r border-[#e5e7eb] px-4 text-gray-900 text-right">
+                        </td>
+                        <td className="p-2 align-middle whitespace-nowrap font-medium border-r border-[#e5e7eb] px-4 text-gray-900 text-right">
                           ${getInsightValue(item, 'spend').toFixed(2)}
-                        </TableCell>
-                        <TableCell className="text-gray-600 border-r border-[#e5e7eb] px-4">
+                        </td>
+                        <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
                           {getInsightValue(item, 'impressions').toLocaleString()}
-                        </TableCell>
-                        <TableCell className="text-gray-600 border-r border-[#e5e7eb] px-4">
+                        </td>
+                        <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
                           {getInsightValue(item, 'reach').toLocaleString()}
-                        </TableCell>
-                        <TableCell className="text-gray-600 px-4">
+                        </td>
+                        <td className="p-2 align-middle whitespace-nowrap text-gray-600 px-4">
                           {getInsightValue(item, 'frequency').toFixed(2)}
-                        </TableCell>
-                      </TableRow>
+                        </td>
+                      </tr>
                     ))
                   )}
-                </TableBody>
-              </Table>
+                </tbody>
+                
+                {/* Summary Footer Row */}
+                {!loading && sortedData.length > 0 && (
+                  <tfoot className="border-t bg-muted/50 font-medium [&>tr]:last:border-b-0">
+                    <tr className="border-b transition-colors bg-[#f0f2f5] sticky bottom-0 z-40 shadow-[0_-2px_10px_rgba(0,0,0,0.1)] border-t-[3px] border-[#ced0d4] h-[64px] hover:bg-[#f0f2f5]">
+                      <td className="p-2 align-middle whitespace-nowrap text-center font-medium border-r border-[#ced0d4] px-0 sticky left-0 z-50 bg-[#f0f2f5]">
+                        <div className="flex items-center justify-center h-full min-w-[50px]">
+                        </div>
+                      </td>
+                      <td className="p-2 align-middle whitespace-nowrap font-bold text-[#1c2b33] border-r border-[#ced0d4] sticky left-[50px] z-50 bg-[#f0f2f5] px-4">
+                        <div className="max-w-[218px] text-[13px] leading-tight">
+                          <div className="font-bold truncate flex items-center gap-1">
+                            {itemsToSum.length}个{level === 'campaigns' ? '广告系列' : level === 'adsets' ? '广告组' : '广告'}的汇总
+                            <Info className="w-3.5 h-3.5 text-gray-500 font-normal" />
+                          </div>
+                          <div className="text-[11px] text-gray-500 font-normal mt-0.5">成效汇总</div>
+                        </div>
+                      </td>
+                      <td className="p-2 align-middle whitespace-nowrap text-center text-gray-400 border-r border-[#ced0d4] px-4">—</td>
+                      <td className="p-2 align-middle whitespace-nowrap border-r border-[#ced0d4] text-[#1c2b33] px-4 leading-tight">
+                        <div className="font-bold text-[13px]">{totalPurchases.toLocaleString()}</div>
+                        <div className="text-[11px] text-gray-500">Meta 账户</div>
+                      </td>
+                      <td className="p-2 align-middle whitespace-nowrap text-[#1c2b33] border-r border-[#ced0d4] px-4 leading-tight">
+                        <div className="font-bold text-[13px]">${avgCpr.toFixed(2)}</div>
+                        <div className="text-[11px] text-gray-500">每个 Meta 账户</div>
+                      </td>
+                      <td className="p-2 align-middle whitespace-nowrap text-[#1c2b33] border-r border-[#ced0d4] px-4 leading-tight">
+                        <div className="font-bold text-[13px]">${avgCpm.toFixed(2)}</div>
+                        <div className="text-[11px] text-gray-500">每 1000 次展示</div>
+                      </td>
+                      <td className="p-2 align-middle whitespace-nowrap text-[#1c2b33] border-r border-[#ced0d4] px-4 leading-tight">
+                        <div className="font-bold text-[13px]">{linkClicks.toLocaleString()}</div>
+                        <div className="text-[11px] text-gray-500">共计</div>
+                      </td>
+                      <td className="p-2 align-middle whitespace-nowrap text-[#1c2b33] border-r border-[#ced0d4] px-4 leading-tight">
+                        <div className="font-bold text-[13px]">{avgLinkCtr.toFixed(2)}%</div>
+                        <div className="text-[11px] text-gray-500">平均</div>
+                      </td>
+                      <td className="p-2 align-middle whitespace-nowrap text-[#1c2b33] border-r border-[#ced0d4] px-4 leading-tight">
+                        <div className="font-bold text-[13px]">${avgLinkCpc.toFixed(2)}</div>
+                        <div className="text-[11px] text-gray-500">平均</div>
+                      </td>
+                      <td className="p-2 align-middle whitespace-nowrap text-[#1c2b33] border-r border-[#ced0d4] px-4 leading-tight">
+                        <div className="font-bold text-[13px]">{allClicks.toLocaleString()}</div>
+                        <div className="text-[11px] text-gray-500">共计</div>
+                      </td>
+                      <td className="p-2 align-middle whitespace-nowrap text-[#1c2b33] border-r border-[#ced0d4] px-4 leading-tight">
+                        <div className="font-bold text-[13px]">{avgAllCtr.toFixed(2)}%</div>
+                        <div className="text-[11px] text-gray-500">平均</div>
+                      </td>
+                      <td className="p-2 align-middle whitespace-nowrap text-[#1c2b33] border-r border-[#ced0d4] px-4 leading-tight">
+                        <div className="font-bold text-[13px]">${avgAllCpc.toFixed(2)}</div>
+                        <div className="text-[11px] text-gray-500">平均</div>
+                      </td>
+                      <td className="p-2 align-middle whitespace-nowrap text-[#1c2b33] border-r border-[#ced0d4] px-4 leading-tight">
+                        <div className="font-bold text-[13px]">{totalAddToCart.toLocaleString()}</div>
+                        <div className="text-[11px] text-gray-500">共计</div>
+                      </td>
+                      <td className="p-2 align-middle whitespace-nowrap text-center text-gray-400 border-r border-[#ced0d4] px-4">—</td>
+                      <td className="p-2 align-middle whitespace-nowrap text-[#1c2b33] border-r border-[#ced0d4] px-4 text-right leading-tight">
+                        <div className="font-bold text-[13px]">${totalSpend.toFixed(2)}</div>
+                        <div className="text-[11px] text-gray-500">总花费</div>
+                      </td>
+                      <td className="p-2 align-middle whitespace-nowrap text-[#1c2b33] border-r border-[#ced0d4] px-4 leading-tight">
+                        <div className="font-bold text-[13px]">{totalImpressions.toLocaleString()}</div>
+                        <div className="text-[11px] text-gray-500">共计</div>
+                      </td>
+                      <td className="p-2 align-middle whitespace-nowrap text-[#1c2b33] border-r border-[#ced0d4] px-4 leading-tight">
+                        <div className="font-bold text-[13px]">{totalReach.toLocaleString()}</div>
+                        <div className="text-[11px] text-gray-500">共计</div>
+                      </td>
+                      <td className="p-2 align-middle whitespace-nowrap text-[#1c2b33] px-4 leading-tight">
+                        <div className="font-bold text-[13px]">{avgFrequency.toFixed(2)}</div>
+                        <div className="text-[11px] text-gray-500">每个用户的平均频率</div>
+                      </td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
             </div>
 
             {/* Sticky Horizontal Scrollbar */}
             {showStickyScroll && (
               <div 
                 ref={dummyScrollRef}
-                className="overflow-x-auto sticky bottom-0 bg-[#f9fafb] border-t border-gray-200 z-[100] h-[18px] w-full shadow-[0_-4px_12px_rgba(0,0,0,0.12)] mb-[-1px] rounded-b-md"
+                className="overflow-x-auto bg-white border-t border-gray-200 z-[50] h-[18px] w-full shadow-[0_-8px_16px_rgba(0,0,0,0.08)] rounded-b-md flex-shrink-0"
               >
                 <div style={{ width: tableScrollWidth, height: '1px' }} />
               </div>
