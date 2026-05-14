@@ -46,3 +46,26 @@ model AccountMapping {
   owner       String?
   updatedAt   DateTime @updatedAt
 }
+
+model Store {
+  id             Int         @id @default(autoincrement())
+  name           String      @unique
+  shopline_token String?
+  shopify_token  String?
+  domain         String?
+  visitors       Int         @default(0)
+  accounts       AdAccount[]
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+}
+
+model AdAccount {
+  id              Int      @id @default(autoincrement())
+  fb_account_id   String   @unique
+  fb_account_name String?
+  fb_access_token String?
+  storeId         Int
+  store           Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}

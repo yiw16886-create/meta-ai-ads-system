@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { format, subDays } from "date-fns";
 import axios from "axios";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import {
   BarChart3,
   LayoutDashboard,
@@ -16,9 +16,11 @@ import {
   LogOut,
   ArrowUpDown,
   Upload,
+  Store,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
+import { StoresDashboard } from "./StoresDashboard";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -73,9 +75,27 @@ interface DashboardProps {
 
 export function Dashboard({ onLogout }: DashboardProps) {
   const navigate = useNavigate();
+  const location = useLocation();
+
+  const initialTab = new URLSearchParams(location.search).get("tab") as
+    | "dashboard"
+    | "settings"
+    | "category"
+    | "accounts"
+    | "stores"
+    || "dashboard";
+
   const [currentTab, setCurrentTab] = useState<
-    "dashboard" | "settings" | "category" | "accounts"
-  >("dashboard");
+    "dashboard" | "settings" | "category" | "accounts" | "stores"
+  >(initialTab);
+
+  useEffect(() => {
+    const tab = new URLSearchParams(location.search).get("tab") as any;
+    if (tab && tab !== currentTab) {
+      setCurrentTab(tab);
+    }
+  }, [location.search]);
+
   const [startDate, setStartDate] = useState<Date>(subDays(new Date(), 7));
   const [endDate, setEndDate] = useState<Date>(new Date());
   const [search, setSearch] = useState("");
@@ -306,6 +326,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
           {[
             { id: "dashboard", icon: LayoutDashboard, label: "总览看板" },
             { id: "category", icon: LayoutGrid, label: "项目类别看板" },
+            { id: "stores", icon: Store, label: "店铺" },
           ].map((item) => (
             <button
               key={item.id}
@@ -668,6 +689,8 @@ export function Dashboard({ onLogout }: DashboardProps) {
           </>
         ) : currentTab === "category" ? (
           <CategoryDashboard mappings={mappings} onManageAccounts={() => setCurrentTab("accounts")} />
+        ) : currentTab === "stores" ? (
+          <StoresDashboard />
         ) : currentTab === "accounts" ? (
           <AccountManagementPage mappings={mappings} onMappingsChange={syncMappingsToDb} />
         ) : (
@@ -1750,7 +1773,10 @@ function CategoryDashboard({ mappings, onManageAccounts }: { mappings: Record<st
                     <TableCell className="font-medium text-meta-blue">
                       {item.project}
                     </TableCell>
-                    <TableCell className="text-gray-600">
+                    <TableCell 
+                      className="text-blue-600 font-medium cursor-pointer"
+                      onClick={() => navigate(`/store/${encodeURIComponent(item.store)}`)}
+                    >
                       {item.store}
                     </TableCell>
                     <TableCell className="text-gray-600">
