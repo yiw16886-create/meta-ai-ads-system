@@ -967,7 +967,24 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                           className="p-0 align-middle whitespace-nowrap font-medium text-meta-blue border-r border-[#e5e7eb] sticky left-[50px] w-[250px] min-w-[250px] max-w-[250px] z-20 bg-white group-hover:bg-gray-50 transition-colors"
                           title={item.name}
                         >
-                          <div className="w-full truncate px-4 py-2">
+                          <div 
+                            className={`w-full truncate px-4 py-2 ${level !== "ads" ? "hover:underline cursor-pointer" : ""}`}
+                            onClick={(e) => {
+                              if (level === "campaigns" || level === "adsets") {
+                                e.stopPropagation();
+                                if (level === "campaigns") {
+                                  setLevel("adsets");
+                                  setSelectedCampaignIds([item.id]);
+                                  setSelectedAdSetIds([]);
+                                  setSelectedAdIds([]);
+                                } else if (level === "adsets") {
+                                  setLevel("ads");
+                                  setSelectedAdSetIds([item.id]);
+                                  setSelectedAdIds([]);
+                                }
+                              }
+                            }}
+                          >
                             {item.name}
                           </div>
                         </td>
