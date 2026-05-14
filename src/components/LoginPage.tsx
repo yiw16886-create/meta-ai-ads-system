@@ -50,15 +50,15 @@ export function LoginPage({ onLogin }: LoginPageProps) {
               <Lock className="text-white w-7 h-7" />
             </div>
           </div>
-          <CardTitle className="text-2xl font-bold tracking-tight">专属管理员登录</CardTitle>
-          <p className="text-sm text-muted-foreground">请输入应用 ID 和密钥以访问 Meta Insights Pro</p>
+          <CardTitle className="text-2xl font-bold tracking-tight">Meta Insights Pro</CardTitle>
+          <p className="text-sm text-muted-foreground">店铺多平台整合面板</p>
         </CardHeader>
         <CardContent className="pt-8">
           <form onSubmit={handleLogin} className="space-y-5">
             <div className="space-y-2">
-              <label className="text-sm font-semibold text-gray-700">应用 ID (App ID)</label>
+              <label className="text-sm font-semibold text-gray-700">账户名</label>
               <Input 
-                placeholder="请输入 App ID" 
+                placeholder="请输入账户/邮箱" 
                 value={appId} 
                 onChange={(e) => setAppId(e.target.value)} 
                 required
@@ -66,11 +66,11 @@ export function LoginPage({ onLogin }: LoginPageProps) {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-semibold text-gray-700">应用密钥 (App Secret)</label>
+              <label className="text-sm font-semibold text-gray-700">登录密码</label>
               <div className="relative">
                 <Input 
                   type={showSecret ? "text" : "password"} 
-                  placeholder="请输入 App Secret" 
+                  placeholder="请输入访问密码" 
                   value={appSecret} 
                   onChange={(e) => setAppSecret(e.target.value)} 
                   required
@@ -89,7 +89,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
               {loading ? <RefreshCcw className="animate-spin w-5 h-5 mr-2" /> : "立即登录"}
             </Button>
             <div className="text-center">
-              <p className="text-xs text-meta-text-muted">受安全协议保护，仅限内部人员访问</p>
+              <p className="text-xs text-meta-text-muted">受加密协议保护，仅限授权人员操作</p>
             </div>
           </form>
         </CardContent>
