@@ -20,8 +20,8 @@ export function StoresDashboard() {
         axios.get("/api/stores"),
         axios.get("/api/mappings")
       ]);
-      setStores(storesRes.data);
-      setMappings(mappingsRes.data);
+      setStores(Array.isArray(storesRes.data) ? storesRes.data : []);
+      setMappings(Array.isArray(mappingsRes.data) ? mappingsRes.data : []);
     } catch (err) {
       console.error(err);
     } finally {

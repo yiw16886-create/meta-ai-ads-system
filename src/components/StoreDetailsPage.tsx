@@ -225,7 +225,10 @@ export function StoreDetailsPage({
     }
   };
 
+  const isAdmin = JSON.parse(localStorage.getItem("user") || "{}").role === "admin";
+
   const handleSaveStore = async () => {
+    if (!isAdmin) return toast.error("仅管理员可修改店铺配置");
     if (!storeData.name) return toast.error("请输入店铺名称");
     setSaving(true);
     try {
@@ -327,7 +330,7 @@ export function StoreDetailsPage({
           </div>
 
           <div className="flex items-center gap-4">
-            {!isNew && (
+            {isAdmin && !isNew && (
               <Dialog>
                 <DialogTrigger render={<Button variant="outline" className="text-blue-600 border-blue-600 hover:bg-blue-50" />}>
                   <Settings className="w-4 h-4 mr-2" /> 设置

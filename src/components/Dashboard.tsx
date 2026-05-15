@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import { format, subDays } from "date-fns";
 import axios from "axios";
 import { useNavigate, useLocation } from "react-router-dom";
+import { motion } from "motion/react";
 import {
   BarChart3,
   LayoutDashboard,
@@ -17,6 +18,9 @@ import {
   ArrowUpDown,
   Upload,
   Store,
+  Users,
+  Trash2,
+  Mail,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
@@ -83,11 +87,15 @@ export function Dashboard({ onLogout }: DashboardProps) {
     | "category"
     | "accounts"
     | "stores"
+    | "users"
     || "dashboard";
 
   const [currentTab, setCurrentTab] = useState<
-    "dashboard" | "settings" | "category" | "accounts" | "stores"
+    "dashboard" | "settings" | "category" | "accounts" | "stores" | "users"
   >(initialTab);
+
+  const currentUser = JSON.parse(localStorage.getItem("user") || "{}");
+  const isAdmin = currentUser.role === "admin";
 
   useEffect(() => {
     const tab = new URLSearchParams(location.search).get("tab") as any;
@@ -326,8 +334,9 @@ export function Dashboard({ onLogout }: DashboardProps) {
           {[
             { id: "dashboard", icon: LayoutDashboard, label: "总览看板" },
             { id: "category", icon: LayoutGrid, label: "项目类别看板" },
-            { id: "stores", icon: Store, label: "店铺" },
-          ].map((item) => (
+            { id: "stores", icon: Store, label: "店铺管理" },
+            isAdmin && { id: "users", icon: Users, label: "成员管理" },
+          ].filter(Boolean).map((item: any) => (
             <button
               key={item.id}
               onClick={() => setCurrentTab(item.id as any)}
@@ -370,11 +379,11 @@ export function Dashboard({ onLogout }: DashboardProps) {
             退出登录
           </button>
           <div className="flex items-center gap-3 px-2 py-4 mt-2 border-t border-gray-800/50">
-            <div className="w-8 h-8 rounded-full bg-gray-700 flex items-center justify-center text-[10px]">
-              ADMIN
+            <div className={`w-8 h-8 rounded-full ${isAdmin ? 'bg-meta-blue' : 'bg-gray-700'} flex items-center justify-center text-[10px]`}>
+              {isAdmin ? 'ADMIN' : 'USER'}
             </div>
             <div className="flex-1 overflow-hidden">
-              <p className="text-[12px] font-medium truncate">Admin User</p>
+              <p className="text-[12px] font-medium truncate">{currentUser.email || 'Admin User'}</p>
             </div>
           </div>
         </div>
@@ -435,16 +444,18 @@ export function Dashboard({ onLogout }: DashboardProps) {
                   onChange={(e) => setSearch(e.target.value)}
                 />
               </div>
-              <Button
-                className="bg-meta-blue hover:bg-blue-600 text-white h-9 px-4 rounded-[6px] font-semibold text-[13px] flex items-center gap-[6px]"
-                onClick={handleSync}
-                disabled={syncing}
-              >
-                <RefreshCcw
-                  className={cn("w-4 h-4", syncing && "animate-spin")}
-                />
-                同步 Meta 数据
-              </Button>
+              {isAdmin && (
+                <Button
+                  className="bg-meta-blue hover:bg-blue-600 text-white h-9 px-4 rounded-[6px] font-semibold text-[13px] flex items-center gap-[6px]"
+                  onClick={handleSync}
+                  disabled={syncing}
+                >
+                  <RefreshCcw
+                    className={cn("w-4 h-4", syncing && "animate-spin")}
+                  />
+                  同步 Meta 数据
+                </Button>
+              )}
             </div>
             <div className="grid grid-cols-4 gap-[16px] mb-[20px]">
               <MetricCard
@@ -688,11 +699,16 @@ export function Dashboard({ onLogout }: DashboardProps) {
             </Card>
           </>
         ) : currentTab === "category" ? (
-          <CategoryDashboard mappings={mappings} onManageAccounts={() => setCurrentTab("accounts")} />
+          <CategoryDashboard
+            mappings={mappings}
+            onManageAccounts={() => setCurrentTab("accounts")}
+          />
         ) : currentTab === "stores" ? (
           <StoresDashboard />
         ) : currentTab === "accounts" ? (
           <AccountManagementPage mappings={mappings} onMappingsChange={syncMappingsToDb} />
+        ) : currentTab === "users" ? (
+          <UsersManagementPage />
         ) : (
           <SettingsPage />
         )}
@@ -1232,8 +1248,324 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
   );
 }
 
+function UsersManagementPage() {
+  const [users, setUsers] = useState<any[]>([]);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState("member");
+  const [inviting, setInviting] = useState(false);
+  const [fetching, setFetching] = useState(true);
+  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [lastInviteData, setLastInviteData] = useState<any>(null);
+  
+  // Custom delete confirmation state
+  const [deleteConfirm, setDeleteConfirm] = useState<{ open: boolean; id: string | number | null; email: string; isPending: boolean }>({
+    open: false,
+    id: null,
+    email: "",
+    isPending: false
+  });
+  const [isDeleting, setIsDeleting] = useState(false);
+  const currentUser = JSON.parse(localStorage.getItem("user") || "{}");
+
+  const fetchUsers = async () => {
+    setFetching(true);
+    try {
+      const res = await axios.get("/api/users");
+      if (res.data.success) {
+        setUsers(res.data.data);
+      }
+    } catch (e) {
+      console.error("Failed to fetch users", e);
+    } finally {
+      setFetching(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchUsers();
+  }, []);
+
+  const handleInvite = async () => {
+    if (!inviteEmail) return toast.error("请输入邀请邮箱");
+    setInviting(true);
+    setLastInviteData(null);
+    try {
+      const res = await axios.post("/api/users", { email: inviteEmail, role: inviteRole });
+      if (res.data.success) {
+        if (res.data.emailed) {
+          toast.success(`邀请已发送至 ${inviteEmail}`);
+          setInviteEmail("");
+          fetchUsers();
+        } else {
+          const detail = res.data.recommendation || res.data.emailError || "请检查 SMTP 设置";
+          toast.warning(`邀请已创建，但邮件发送失败: ${detail}`, { duration: 6000 });
+          setLastInviteData(res.data.data);
+          setShowInviteModal(true);
+          fetchUsers();
+        }
+      }
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || "邀请失败");
+    } finally {
+      setInviting(false);
+    }
+  };
+
+  const handleUpdateRole = async (userId: string | number, newRole: string) => {
+    // Cannot update role for pending invitations via this endpoint yet (server logic needs update)
+    if (typeof userId === 'string' && userId.startsWith('inv_')) {
+      return toast.info("请先撤销邀请后重新发送");
+    }
+    try {
+      const res = await axios.put(`/api/users/${userId}`, { role: newRole });
+      if (res.data.success) {
+        toast.success("权限已更新");
+        fetchUsers();
+      }
+    } catch (e) {
+      toast.error("更新权限失败");
+    }
+  };
+
+  const handleDeleteClick = (user: any) => {
+    const isPending = typeof user.id === 'string' && String(user.id).startsWith('inv_');
+    setDeleteConfirm({
+      open: true,
+      id: user.id,
+      email: user.email,
+      isPending
+    });
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deleteConfirm.id) return;
+    
+    const { id, isPending } = deleteConfirm;
+    setIsDeleting(true);
+    const toastId = toast.loading(isPending ? "正在撤销..." : "正在删除...");
+    
+    try {
+      console.log(`[Dashboard] 📤 Sending DELETE request for ID: ${id}`);
+      const res = await axios.delete(`/api/users/${id}`);
+      
+      if (res.data.success) {
+        toast.success(res.data.message || (isPending ? "邀请已撤回" : "删除成功"), { id: toastId });
+        setDeleteConfirm({ open: false, id: null, email: "", isPending: false });
+        fetchUsers();
+      } else {
+        toast.error(res.data.error || "操作被拒绝", { id: toastId });
+      }
+    } catch (err: any) {
+      console.error("[Dashboard] ❌ Deletion failed:", err);
+      toast.error(err.response?.data?.error || "操作失败", { id: toastId });
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleDeleteUser = async (userId: string | number) => {
+    // Kept for backward compatibility if needed, but we prefer handleConfirmDelete
+    console.warn("handleDeleteUser called directly, expected handleConfirmDelete flow");
+  };
+
+  if (fetching) {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-white rounded-[12px]">
+        <RefreshCcw className="w-6 h-6 text-meta-blue animate-spin" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex-1 overflow-y-auto space-y-6 pb-12">
+      <Card className="border-none shadow-sm rounded-[12px] overflow-hidden">
+        <CardHeader className="border-b pb-4 bg-gray-50/50">
+          <div className="flex items-center gap-2 mb-1">
+            <Users className="w-5 h-5 text-meta-blue" />
+            <CardTitle className="text-xl">成员与权限管理</CardTitle>
+          </div>
+          <p className="text-sm text-meta-text-muted">
+            邀请新成员通过邮箱注册并分配角色权限，控制多账户访问安全
+          </p>
+        </CardHeader>
+        <CardContent className="pt-6 space-y-8">
+          <div className="flex gap-4 items-end bg-gray-50 p-6 rounded-xl border border-gray-100">
+            <div className="space-y-2 flex-grow">
+              <label className="text-sm font-semibold text-gray-700">邀请邮箱</label>
+              <Input
+                placeholder="输入邀请成员的邮箱地址"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                className="bg-white h-11 border-gray-200"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-gray-700">分配权限</label>
+              <select
+                className="flex h-11 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm ring-offset-background focus:ring-2 focus:ring-meta-blue outline-none"
+                value={inviteRole}
+                onChange={(e) => setInviteRole(e.target.value)}
+              >
+                <option value="member">普通成员 (Member)</option>
+                <option value="admin">管理员 (Admin)</option>
+              </select>
+            </div>
+            <Button onClick={handleInvite} disabled={inviting} className="bg-meta-blue hover:bg-blue-600 h-11 px-8 shadow-sm text-white font-medium transition-all hover:translate-y-[-1px]">
+              {inviting ? "发送中..." : "发送邀请链接"}
+            </Button>
+          </div>
+
+          <div className="border rounded-xl bg-white overflow-hidden shadow-sm">
+            <Table>
+              <TableHeader className="bg-[#f9fafb]">
+                <TableRow className="border-b border-gray-100">
+                  <TableHead className="font-semibold px-6 py-4 text-gray-700">账号/邮箱</TableHead>
+                  <TableHead className="font-semibold text-gray-700">权限角色</TableHead>
+                  <TableHead className="font-semibold text-gray-700">加入时间</TableHead>
+                  <TableHead className="font-semibold text-right pr-6 text-gray-700">操作</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {users.map(u => (
+                  <TableRow key={u.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
+                    <TableCell className="px-6">
+                      <div className="flex flex-col">
+                        <span className="font-medium text-gray-900">{u.email}</span>
+                        {u.status === 'pending' && (
+                          <span className="text-[10px] text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded w-fit mt-1">等候激活 (Pending)</span>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <select
+                        className="bg-white border border-gray-200 text-sm rounded-md focus:ring-2 focus:ring-meta-blue block p-1.5 min-w-[120px] outline-none"
+                        value={u.role}
+                        onChange={(e) => handleUpdateRole(u.id, e.target.value)}
+                        disabled={(u.email === currentUser.email && u.role === "admin") || u.status === 'pending'}
+                      >
+                        <option value="member">成员 (Member)</option>
+                        <option value="admin">管理员 (Admin)</option>
+                      </select>
+                    </TableCell>
+                    <TableCell className="text-gray-500 font-mono text-xs">
+                      {new Date(u.createdAt).toLocaleDateString()}
+                    </TableCell>
+                    <TableCell className="text-right pr-6">
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        className={cn(
+                          "border-none px-4 font-medium",
+                          u.status === 'pending' 
+                            ? "bg-amber-50 text-amber-600 hover:bg-amber-100 hover:text-amber-700"
+                            : "bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700"
+                        )}
+                        onClick={() => handleDeleteClick(u)}
+                        disabled={u.email === currentUser.email}
+                      >
+                        {u.status === 'pending' ? "撤回邀请" : "移除"}
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Custom Delete Confirmation Modal */}
+      {deleteConfirm.open && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <motion.div 
+            initial={{ scale: 0.95, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden"
+          >
+            <div className="p-6">
+              <div className="flex items-center gap-4 mb-4">
+                <div className={cn(
+                  "w-12 h-12 rounded-full flex items-center justify-center",
+                  deleteConfirm.isPending ? "bg-amber-100 text-amber-600" : "bg-red-100 text-red-600"
+                )}>
+                  {deleteConfirm.isPending ? <Mail className="w-6 h-6" /> : <Trash2 className="w-6 h-6" />}
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">
+                    {deleteConfirm.isPending ? "撤销成员邀请" : "确认移除成员"}
+                  </h3>
+                  <p className="text-sm text-gray-500">此操作不可撤销</p>
+                </div>
+              </div>
+              
+              <div className="bg-gray-50 rounded-lg p-4 mb-6">
+                <p className="text-sm text-gray-600 mb-1">即将对以下账户执行操作：</p>
+                <code className="text-sm font-mono font-semibold text-gray-900 break-all">{deleteConfirm.email}</code>
+              </div>
+              
+              <p className="text-sm text-gray-600">
+                {deleteConfirm.isPending 
+                  ? "该邀请链接将失效，该成员将无法通过此渠道加入系统。" 
+                  : "该成员将立即失去所有系统访问权限，所有关联会话将被强制断开。"}
+              </p>
+            </div>
+            
+            <div className="flex items-center justify-end gap-3 p-6 bg-gray-50 border-t border-gray-100">
+              <Button 
+                variant="outline" 
+                onClick={() => setDeleteConfirm({ open: false, id: null, email: "", isPending: false })}
+                disabled={isDeleting}
+              >
+                取消
+              </Button>
+              <Button 
+                variant={deleteConfirm.isPending ? "default" : "destructive"}
+                className={cn(deleteConfirm.isPending && "bg-amber-600 hover:bg-amber-700")}
+                onClick={handleConfirmDelete}
+                disabled={isDeleting}
+              >
+                {isDeleting ? (
+                  <RefreshCcw className="w-4 h-4 animate-spin mr-2" />
+                ) : null}
+                {deleteConfirm.isPending ? "确认撤销" : "执行移除"}
+              </Button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      <Dialog open={showInviteModal} onOpenChange={setShowInviteModal}>
+        <DialogContent className="max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>手动发送邀请链接</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <p className="text-sm text-gray-600">由于邮箱服务未完全配置，请手动将以下链接发送给成员：</p>
+            <div className="p-4 bg-gray-100 rounded-lg break-all font-mono text-xs select-all">
+              {`${window.location.origin}/?token=${lastInviteData?.token}#/login`}
+            </div>
+            <Button className="w-full" onClick={() => {
+              navigator.clipboard.writeText(`${window.location.origin}/?token=${lastInviteData?.token}#/login`);
+              toast.success("链接已复制");
+            }}>
+              复制邀请链接
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
 function SettingsPage() {
-  const [token, setToken] = useState("");
+  const [metaToken, setMetaToken] = useState("");
+  const [smtpConfig, setSmtpConfig] = useState({
+    SMTP_HOST: "",
+    SMTP_PORT: "465",
+    SMTP_USER: "",
+    SMTP_PASS: "",
+    SMTP_FROM: ""
+  });
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(true);
 
@@ -1242,8 +1574,15 @@ function SettingsPage() {
       try {
         const settingsRes = await axios.get("/api/settings");
         if (settingsRes.data.META_ACCESS_TOKEN) {
-          setToken(settingsRes.data.META_ACCESS_TOKEN);
+          setMetaToken(settingsRes.data.META_ACCESS_TOKEN);
         }
+        setSmtpConfig({
+          SMTP_HOST: settingsRes.data.SMTP_HOST || "",
+          SMTP_PORT: settingsRes.data.SMTP_PORT || "465",
+          SMTP_USER: settingsRes.data.SMTP_USER || "",
+          SMTP_PASS: settingsRes.data.SMTP_PASS || "",
+          SMTP_FROM: settingsRes.data.SMTP_FROM || ""
+        });
       } catch (err) {
         toast.error("加载设置失败");
       } finally {
@@ -1253,14 +1592,24 @@ function SettingsPage() {
     init();
   }, []);
 
-  const handleSaveToken = async () => {
+  const handleSaveSetting = async (key: string, value: string) => {
+    try {
+      await axios.post("/api/settings", { key, value });
+    } catch (err) {
+      console.error(`Save ${key} failed`);
+    }
+  };
+
+  const handleSaveAll = async () => {
     setLoading(true);
     try {
-      await axios.post("/api/settings", {
-        key: "META_ACCESS_TOKEN",
-        value: token,
-      });
-      toast.success("配置已保存");
+      await handleSaveSetting("META_ACCESS_TOKEN", metaToken);
+      await handleSaveSetting("SMTP_HOST", smtpConfig.SMTP_HOST);
+      await handleSaveSetting("SMTP_PORT", smtpConfig.SMTP_PORT);
+      await handleSaveSetting("SMTP_USER", smtpConfig.SMTP_USER);
+      await handleSaveSetting("SMTP_PASS", smtpConfig.SMTP_PASS);
+      await handleSaveSetting("SMTP_FROM", smtpConfig.SMTP_FROM);
+      toast.success("所有配置已保存");
     } catch (err: any) {
       toast.error(err.response?.data?.error || "保存失败");
     } finally {
@@ -1278,38 +1627,98 @@ function SettingsPage() {
 
   return (
     <div className="flex-1 overflow-y-auto space-y-6 pb-12">
+      <div className="flex justify-between items-center bg-white p-6 rounded-[12px] shadow-sm sticky top-0 z-10">
+        <div>
+          <h2 className="text-xl font-bold">系统参数配置</h2>
+          <p className="text-sm text-meta-text-muted">管理 Meta API 与 邮件自动化设置</p>
+        </div>
+        <Button
+          onClick={handleSaveAll}
+          className="bg-meta-blue hover:bg-blue-600 px-8 h-11 font-bold"
+          disabled={loading}
+        >
+          {loading ? (
+            <RefreshCcw className="animate-spin w-4 h-4 mr-2" />
+          ) : (
+            "💾 保存所有更改"
+          )}
+        </Button>
+      </div>
+
       <Card className="border-none shadow-sm rounded-[12px]">
         <CardHeader>
-          <CardTitle className="text-xl">系统核心参数配置</CardTitle>
+          <CardTitle className="text-lg">Meta API 配置</CardTitle>
           <p className="text-sm text-meta-text-muted">
             Meta API 访问令牌将持久化存储在服务器数据库中，优先级高于环境变量
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
-            <label className="text-sm font-medium">
-              Meta Access Token (EAAP...)
-            </label>
-            <div className="flex gap-4">
-              <Input
-                type="password"
-                placeholder="请输入您的长效访问令牌"
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-                className="flex-1 h-11"
-              />
-              <Button
-                onClick={handleSaveToken}
-                className="bg-meta-blue hover:bg-blue-600 px-8 h-11"
-                disabled={loading}
-              >
-                {loading ? (
-                  <RefreshCcw className="animate-spin w-4 h-4 mr-2" />
-                ) : (
-                  "保存配置"
-                )}
-              </Button>
-            </div>
+            <label className="text-sm font-medium">Meta Access Token (EAAP...)</label>
+            <Input
+              type="password"
+              placeholder="请输入您的长效访问令牌"
+              value={metaToken}
+              onChange={(e) => setMetaToken(e.target.value)}
+              className="h-11"
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-none shadow-sm rounded-[12px]">
+        <CardHeader>
+          <CardTitle className="text-lg">SMTP 邮件服务配置 (邀请成员必填)</CardTitle>
+          <p className="text-sm text-meta-text-muted">
+            配置 SMTP 服务器以便系统自动发送邀请激活邮件
+          </p>
+        </CardHeader>
+        <CardContent className="grid grid-cols-2 gap-6">
+          <div className="space-y-2">
+            <label className="text-sm font-medium">SMTP 主机 (Host)</label>
+            <Input
+              placeholder="smtp.gmail.com"
+              value={smtpConfig.SMTP_HOST}
+              onChange={(e) => setSmtpConfig({...smtpConfig, SMTP_HOST: e.target.value})}
+              className="h-11"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium">端口 (Port)</label>
+            <Input
+              placeholder="465"
+              value={smtpConfig.SMTP_PORT}
+              onChange={(e) => setSmtpConfig({...smtpConfig, SMTP_PORT: e.target.value})}
+              className="h-11"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium">发件账号 (User)</label>
+            <Input
+              placeholder="your-email@example.com"
+              value={smtpConfig.SMTP_USER}
+              onChange={(e) => setSmtpConfig({...smtpConfig, SMTP_USER: e.target.value})}
+              className="h-11"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium">发件密码 (Password/App Password)</label>
+            <Input
+              type="password"
+              placeholder="••••••••"
+              value={smtpConfig.SMTP_PASS}
+              onChange={(e) => setSmtpConfig({...smtpConfig, SMTP_PASS: e.target.value})}
+              className="h-11"
+            />
+          </div>
+          <div className="space-y-2 col-span-2">
+            <label className="text-sm font-medium">发件人显示的邮箱 (From Address)</label>
+            <Input
+              placeholder="Meta Insights <no-reply@insights.com>"
+              value={smtpConfig.SMTP_FROM}
+              onChange={(e) => setSmtpConfig({...smtpConfig, SMTP_FROM: e.target.value})}
+              className="h-11"
+            />
           </div>
         </CardContent>
       </Card>

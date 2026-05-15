@@ -3,6 +3,90 @@ import path from "path";
 import axios from "axios";
 import prisma from "./db.js";
 import { subDays, format } from "date-fns";
+import bcrypt from "bcryptjs";
+import nodemailer from "nodemailer";
+import crypto from "crypto";
+
+// Helper to get SMTP config
+async function getSmtpConfig() {
+  const settings = await prisma.setting.findMany({
+    where: {
+      key: {
+        in: ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "SMTP_FROM"]
+      }
+    }
+  });
+  
+  const configMap: Record<string, string> = {};
+  settings.forEach(s => { configMap[s.key] = s.value; });
+  
+  if (!configMap.SMTP_HOST || !configMap.SMTP_USER || !configMap.SMTP_PASS) return null;
+  
+  return {
+    host: configMap.SMTP_HOST,
+    port: parseInt(configMap.SMTP_PORT || "465"),
+    secure: configMap.SMTP_PORT === "465",
+    auth: {
+      user: configMap.SMTP_USER,
+      pass: configMap.SMTP_PASS
+    },
+    from: configMap.SMTP_FROM || configMap.SMTP_USER
+  };
+}
+
+async function sendInvitationEmail(email: string, token: string, role: string) {
+  const config = await getSmtpConfig();
+  if (!config) {
+    console.warn("SMTP settings not configured, skipping email send. Token:", token);
+    return false;
+  }
+  
+  const transporter = nodemailer.createTransport({
+    host: config.host,
+    port: config.port,
+    secure: config.secure,
+    auth: config.auth
+  });
+  
+  const registerUrl = `${process.env.APP_URL || ''}/?token=${token}#/login`;
+  
+  const html = `
+    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
+      <div style="background-color: #2563eb; padding: 24px; text-align: center;">
+        <h1 style="color: white; margin: 0; font-size: 24px;">Meta Insights Pro 邀请函</h1>
+      </div>
+      <div style="padding: 32px; background-color: white;">
+        <p style="font-size: 16px; color: #1e293b; margin-top: 0;">您好！</p>
+        <p style="font-size: 16px; color: #475569; line-height: 1.6;">您已被邀请作为 <strong>${role === 'admin' ? '管理员' : '成员'}</strong> 加入 Meta Insights Pro 仪表板。请点击下方按钮设置您的登录密码并激活账户。</p>
+        <div style="text-align: center; margin: 32px 0;">
+          <a href="${registerUrl}" style="background-color: #2563eb; color: white; padding: 12px 32px; border-radius: 6px; text-decoration: none; font-weight: 600; display: inline-block;">激活账户</a>
+        </div>
+        <p style="font-size: 14px; color: #94a3b8; margin-bottom: 0;">此链接 24 小时内有效。如果按钮无法点击，请复制以下链接到浏览器访问：</p>
+        <p style="font-size: 14px; color: #2563eb; word-break: break-all;">${registerUrl}</p>
+      </div>
+      <div style="background-color: #f8fafc; padding: 16px; text-align: center; border-top: 1px solid #e2e8f0;">
+        <p style="font-size: 12px; color: #64748b; margin: 0;">&copy; 2026 Meta Insights Pro. All rights reserved.</p>
+      </div>
+    </div>
+  `;
+  
+  try {
+    await transporter.sendMail({
+      from: config.from,
+      to: email,
+      subject: "邀请您加入 Meta Insights Pro 团队",
+      html
+    });
+    return { success: true };
+  } catch (error: any) {
+    console.error("Failed to send invitation email:", error);
+    let recommendation = "";
+    if (error.message.includes("534-5.7.9")) {
+      recommendation = "Gmail 需要使用 '应用专用密码' (App Password)。请在 Google 账户设置中生成并使用它。";
+    }
+    return { success: false, error: error.message, recommendation };
+  }
+}
 
 // Log available models on startup to debug the "undefined" error
 async function checkDb() {
@@ -18,6 +102,37 @@ async function checkDb() {
         "⚠️ CRITICAL: 'adInsight' model not found on prisma object!",
       );
     }
+
+    // Ensure we have at least one admin user
+    const defaultEmail = process.env.VITE_ADMIN_ID || "admin";
+    const defaultPass = process.env.VITE_ADMIN_SECRET || "123456";
+    const hashedPass = await bcrypt.hash(defaultPass, 10);
+
+    await prisma.user.upsert({
+      where: { email: defaultEmail },
+      update: { role: "admin", password: hashedPass }, 
+      create: {
+        email: defaultEmail,
+        password: hashedPass,
+        role: "admin"
+      }
+    });
+    console.log(`👤 Verified/Restored admin user: ${defaultEmail}`);
+
+    const users = await prisma.user.findMany();
+    
+    // Migration: hash any plain-text passwords
+    for (const user of users) {
+      if (user.password && !user.password.startsWith("$2a$") && !user.password.startsWith("$2b$")) {
+        console.log(`🔐 Hashing plain-text password for user: ${user.email}`);
+        const hashed = await bcrypt.hash(user.password, 10);
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { password: hashed }
+        });
+      }
+    }
+
   } catch (err) {
     console.error("❌ Database connection failed:", err);
   }
@@ -1159,12 +1274,6 @@ app.get("/api/stores/:id/insights", async (req, res) => {
 
 // --- END STORE ENDPOINTS ---
 
-app.use("/api", (req, res) => {
-  res
-    .status(404)
-    .json({ error: `API Route not found: ${req.method} ${req.url}` });
-});
-
 // 定时任务：自动同步近一个月数据 (用于 Vercel Cron)
 // 配置 5 分钟超时限制 (Vercel Serverless 环境)
 export const maxDuration = 300;
@@ -1316,11 +1425,186 @@ app.get("/api/cron/sync-monthly", async (req, res) => {
   }
 });
 
-app.use("/api", (req, res) => {
-  res
-    .status(404)
-    .json({ error: `API Route not found: ${req.method} ${req.url}` });
+// --- User Authentication and Management ---
+
+app.post("/api/auth/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const user = await prisma.user.findUnique({ where: { email } });
+    
+    if (user && await bcrypt.compare(password, user.password)) {
+      res.json({ success: true, user: { id: user.id, email: user.email, role: user.role } });
+    } else {
+      res.status(401).json({ success: false, error: "账户或密码错误" });
+    }
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: "登录系统异常" });
+  }
 });
+
+app.post("/api/auth/verify-token", async (req, res) => {
+  const { token } = req.body;
+  if (!token) return res.status(400).json({ error: "Token required" });
+  try {
+    const invitation = await prisma.invitation.findUnique({ where: { token } });
+    if (!invitation || invitation.expiresAt < new Date()) {
+      return res.status(400).json({ error: "邀请失效或已过期" });
+    }
+    res.json({ success: true, data: { email: invitation.email, role: invitation.role } });
+  } catch (e) {
+    res.status(500).json({ error: "Token verification failed" });
+  }
+});
+
+app.post("/api/auth/register", async (req, res) => {
+  const { token, password } = req.body;
+  if (!token || !password) return res.status(400).json({ error: "Missing data" });
+  
+  try {
+    const invitation = await prisma.invitation.findUnique({ where: { token } });
+    if (!invitation || invitation.expiresAt < new Date()) {
+      return res.status(400).json({ error: "邀请失效或已过期" });
+    }
+
+    const hashedPass = await bcrypt.hash(password, 10);
+    
+    await prisma.$transaction([
+      prisma.user.upsert({
+        where: { email: invitation.email },
+        update: { password: hashedPass, role: invitation.role },
+        create: { email: invitation.email, password: hashedPass, role: invitation.role }
+      }),
+      prisma.invitation.delete({ where: { token } })
+    ]);
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error("Registration failed", e);
+    res.status(500).json({ error: "注册失败" });
+  }
+});
+
+  app.post("/api/users", async (req, res) => {
+    try {
+      const { email, role } = req.body;
+      const token = crypto.randomBytes(32).toString("hex");
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24h
+
+      const invitation = await prisma.invitation.upsert({
+        where: { email },
+        update: { token, role, expiresAt },
+        create: { email, token, role, expiresAt }
+      });
+
+      const emailResult = await sendInvitationEmail(email, token, role);
+      
+      res.json({ 
+        success: true, 
+        emailed: emailResult.success,
+        emailError: emailResult.error,
+        recommendation: emailResult.recommendation,
+        data: { 
+          id: invitation.id, 
+          email: invitation.email, 
+          role: invitation.role, 
+          token: invitation.token 
+        }
+      });
+    } catch(err: any) {
+      console.error("Invite error:", err);
+      res.status(500).json({ success: false, error: "邀请失败，请稍后重试" });
+    }
+  });
+
+  app.put("/api/users/:id", async (req, res) => {
+    try {
+      const { role } = req.body;
+      const user = await prisma.user.update({
+        where: { id: Number(req.params.id) },
+        data: { role },
+        select: { id: true, email: true, role: true }
+      });
+      res.json({ success: true, data: user });
+    } catch(err: any) {
+      res.status(500).json({ success: false, error: "Failed to update user" });
+    }
+  });
+
+  // 5. 用户管理与权限
+  app.get("/api/users", async (req, res) => {
+    try {
+      const users = await prisma.user.findMany({ 
+        select: { id: true, email: true, role: true, createdAt: true }
+      });
+      const invitations = await prisma.invitation.findMany({
+        select: { id: true, email: true, role: true, createdAt: true, token: true }
+      });
+      
+      // Combine but mark pending invitations
+      const combined = [
+        ...users.map(u => ({ ...u, status: "active" })),
+        ...invitations.map(i => ({ ...i, id: `inv_${i.id}`, status: "pending" }))
+      ];
+      
+      console.log(`👥 Fetched ${users.length} active users and ${invitations.length} pending invitations`);
+      res.json({ success: true, data: combined });
+    } catch (error: any) {
+      console.error("Fetch users error:", error);
+      res.status(500).json({ success: false, error: "加载成员列表失败: " + error.message });
+    }
+  });
+
+  app.delete("/api/users/:id", async (req, res) => {
+    console.log(`[Server] 🗑️ DELETE /api/users/${req.params.id} request received`);
+    try {
+      const { id } = req.params;
+      
+      if (id && String(id).startsWith("inv_")) {
+        const invIdStr = String(id).replace("inv_", "");
+        const invId = parseInt(invIdStr, 10);
+        console.log(`[Server] 📨 Attempting to revoke invitation ID: ${invId}`);
+        
+        if (isNaN(invId)) {
+          console.warn(`[Server] ⚠️ Invalid invitation ID: ${invIdStr}`);
+          return res.status(400).json({ success: false, error: "无效的邀请ID格式" });
+        }
+        
+        const deleted = await prisma.invitation.delete({ where: { id: invId } });
+        console.log(`[Server] ✅ Successfully revoked invitation: ${deleted.email}`);
+        return res.json({ success: true, message: "已撤回邀请" });
+      }
+
+      const userId = parseInt(id, 10);
+      console.log(`[Server] 👤 Attempting to delete user ID: ${userId}`);
+      
+      if (isNaN(userId)) {
+        console.warn(`[Server] ⚠️ Invalid user ID format: ${id}`);
+        return res.status(400).json({ success: false, error: "无效的用户ID格式" });
+      }
+
+      const user = await prisma.user.findUnique({ where: { id: userId } });
+      
+      if (!user) {
+        console.warn(`[Server] ⚠️ User not found: ID ${userId}`);
+        return res.status(404).json({ success: false, error: "用户不存在" });
+      }
+
+      if (user.role === "admin") {
+        const adminCount = await prisma.user.count({ where: { role: "admin" } });
+        if (adminCount <= 1) {
+          console.warn(`[Server] ⚠️ Blocked deletion of last admin: ${user.email}`);
+          return res.status(400).json({ success: false, error: "系统至少需要保留一名管理员" });
+        }
+      }
+
+      await prisma.user.delete({ where: { id: userId } });
+      console.log(`[Server] ✅ Successfully deleted user: ${user.email}`);
+      res.json({ success: true, message: "用户已移除" });
+    } catch (err: any) {
+      console.error("[Server] ❌ Delete operation failed:", err);
+      res.status(500).json({ success: false, error: "内部服务器错误: " + err.message });
+    }
+  });
 
 // ---后台静默同步逻辑 (Background Auto-Sync) ---
 async function runBackgroundSync() {
@@ -1512,9 +1796,16 @@ async function runBackgroundSync() {
   }
 }
 
+app.use("/api", (req, res) => {
+  res
+    .status(404)
+    .json({ error: `API Route not found: ${req.method} ${req.url}` });
+});
+
 async function startServer() {
   try {
     console.log("🚀 Starting server startup sequence...");
+    await checkDb();
     if (process.env.NODE_ENV !== "production") {
       console.log("🛠️ Initializing Vite development middleware...");
       const { createServer: createViteServer } = await import("vite");
