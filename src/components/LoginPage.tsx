@@ -65,11 +65,19 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     try {
       const res = await axios.post('/api/auth/register', { token, password });
       if (res.data.success) {
-        toast.success("账户激活成功，请登录");
-        setIsRegistering(false);
-        setToken(null);
-        setEmail(invitedEmail);
+        toast.success("账户激活成功，欢迎加入团队");
+        
+        // Auto-login after successful registration
+        localStorage.setItem("isAuthenticated", "true");
+        localStorage.setItem("user", JSON.stringify(res.data.user));
+        
+        // Clear token from URL
         window.history.replaceState({}, document.title, window.location.pathname);
+        
+        // Brief delay before redirecting to dashboard
+        setTimeout(() => {
+          onLogin();
+        }, 500);
       }
     } catch (error: any) {
       toast.error(error.response?.data?.error || "注册失败");

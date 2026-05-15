@@ -34,11 +34,11 @@ async function getSmtpConfig() {
   };
 }
 
-async function sendInvitationEmail(email: string, token: string, role: string) {
+async function sendInvitationEmail(email: string, token: string, role: string, baseUrlInput?: string) {
   const config = await getSmtpConfig();
   if (!config) {
     console.warn("SMTP settings not configured, skipping email send. Token:", token);
-    return false;
+    return { success: false, error: "SMTP settings not configured" };
   }
   
   const transporter = nodemailer.createTransport({
@@ -48,7 +48,8 @@ async function sendInvitationEmail(email: string, token: string, role: string) {
     auth: config.auth
   });
   
-  const registerUrl = `${process.env.APP_URL || ''}/?token=${token}#/login`;
+  const baseUrl = baseUrlInput || process.env.APP_URL || '';
+  const registerUrl = `${baseUrl.replace(/\/$/, '')}/?token=${token}`;
   
   const html = `
     <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
@@ -1468,16 +1469,18 @@ app.post("/api/auth/register", async (req, res) => {
 
     const hashedPass = await bcrypt.hash(password, 10);
     
-    await prisma.$transaction([
-      prisma.user.upsert({
-        where: { email: invitation.email },
-        update: { password: hashedPass, role: invitation.role },
-        create: { email: invitation.email, password: hashedPass, role: invitation.role }
-      }),
-      prisma.invitation.delete({ where: { token } })
-    ]);
+    const user = await prisma.user.upsert({
+      where: { email: invitation.email },
+      update: { password: hashedPass, role: invitation.role },
+      create: { email: invitation.email, password: hashedPass, role: invitation.role }
+    });
 
-    res.json({ success: true });
+    await prisma.invitation.delete({ where: { token } });
+
+    res.json({ 
+      success: true, 
+      user: { id: user.id, email: user.email, role: user.role } 
+    });
   } catch (e) {
     console.error("Registration failed", e);
     res.status(500).json({ error: "注册失败" });
@@ -1487,6 +1490,12 @@ app.post("/api/auth/register", async (req, res) => {
   app.post("/api/users", async (req, res) => {
     try {
       const { email, role } = req.body;
+      // Construct baseUrl safely from request
+      const origin = req.headers.origin;
+      const host = req.get('host');
+      const protocol = req.protocol;
+      const baseUrl = origin || `${protocol}://${host}`;
+      
       const token = crypto.randomBytes(32).toString("hex");
       const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24h
 
@@ -1496,7 +1505,7 @@ app.post("/api/auth/register", async (req, res) => {
         create: { email, token, role, expiresAt }
       });
 
-      const emailResult = await sendInvitationEmail(email, token, role);
+      const emailResult = await sendInvitationEmail(email, token, role, baseUrl);
       
       res.json({ 
         success: true, 
