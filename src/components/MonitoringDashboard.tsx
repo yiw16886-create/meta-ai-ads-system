@@ -30,7 +30,7 @@ export function MonitoringDashboard() {
   const [stats, setStats] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all"); // Default to All to show everything first
-  const [hideInactive, setHideInactive] = useState(false); // Default to FALSE to show all initially
+  const [hideInactive, setHideInactive] = useState(true); // Default to TRUE to show active accounts only initially
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' }>({ 
     key: 'amountSpent', 
     direction: 'desc' 
