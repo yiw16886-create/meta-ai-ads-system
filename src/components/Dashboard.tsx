@@ -25,6 +25,7 @@ import {
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { StoresDashboard } from "./StoresDashboard";
+import { MonitoringDashboard } from "./MonitoringDashboard";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -87,11 +88,12 @@ export function Dashboard({ onLogout }: DashboardProps) {
     | "category"
     | "accounts"
     | "stores"
+    | "monitoring"
     | "users"
     || "dashboard";
 
   const [currentTab, setCurrentTab] = useState<
-    "dashboard" | "settings" | "category" | "accounts" | "stores" | "users"
+    "dashboard" | "settings" | "category" | "accounts" | "stores" | "users" | "monitoring"
   >(initialTab);
 
   const currentUser = JSON.parse(localStorage.getItem("user") || "{}");
@@ -334,6 +336,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
           {[
             { id: "dashboard", icon: LayoutDashboard, label: "总览看板" },
             { id: "category", icon: LayoutGrid, label: "项目类别看板" },
+            { id: "monitoring", icon: BarChart3, label: "账户健康监控" },
             { id: "stores", icon: Store, label: "店铺管理" },
             isAdmin && { id: "users", icon: Users, label: "成员管理" },
           ].filter(Boolean).map((item: any) => (
@@ -709,6 +712,8 @@ export function Dashboard({ onLogout }: DashboardProps) {
           />
         ) : currentTab === "stores" ? (
           <StoresDashboard />
+        ) : currentTab === "monitoring" ? (
+          <MonitoringDashboard />
         ) : currentTab === "accounts" ? (
           <AccountManagementPage mappings={mappings} onMappingsChange={syncMappingsToDb} />
         ) : currentTab === "users" ? (

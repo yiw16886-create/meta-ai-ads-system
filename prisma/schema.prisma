@@ -77,6 +77,18 @@ model Store {
   updatedAt      DateTime    @updatedAt
 }
 
+model MetaAccountMonitoring {
+  accountId     String   @id
+  accountName   String?
+  status        Int?
+  spendCap      Float?
+  amountSpent   Float?
+  balance       Float?
+  currency      String?
+  timezone      String?
+  updatedAt     DateTime @updatedAt
+}
+
 model AdAccount {
   id              Int      @id @default(autoincrement())
   fb_account_id   String   @unique
