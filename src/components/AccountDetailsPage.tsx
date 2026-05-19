@@ -51,7 +51,7 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
 
   const [startDate, setStartDate] = useState<Date>(subDays(new Date(), 7));
   const [endDate, setEndDate] = useState<Date>(new Date());
-  const [tempDateRange, setTempDateRange] = useState<{ from: Date; to: Date }>({
+  const [tempDateRange, setTempDateRange] = useState<{ from: Date; to?: Date }>({
     from: subDays(new Date(), 7),
     to: new Date(),
   });
@@ -490,7 +490,13 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
         <div className="flex-1">
           <Button
             variant="ghost"
-            onClick={() => navigate("/")}
+            onClick={() => {
+              if (window.history.length > 1) {
+                navigate(-1);
+              } else {
+                navigate("/");
+              }
+            }}
             className="gap-2 px-0 hover:bg-transparent text-gray-700 font-normal"
           >
             <ArrowLeft className="w-4 h-4" /> 返回工作台
@@ -499,101 +505,7 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
 
         {/* Date Picker - Centered (Dashboard Style Two-Box) */}
         <div className="flex-1 flex justify-center">
-          <Popover
-            open={datePickerOpen}
-            onOpenChange={(open) => {
-              setDatePickerOpen(open);
-              if (open) {
-                setTempDateRange({ from: startDate, to: endDate });
-              }
-            }}
-          >
-            <PopoverTrigger>
-              <div className="flex items-center gap-2 cursor-pointer group">
-                <div className="relative">
-                  <CalendarIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 group-hover:text-meta-blue transition-colors z-10" />
-                  <div className="pl-9 pr-3 py-2 border border-[#e5e7eb] rounded-[6px] text-[13px] w-[130px] text-left bg-white flex items-center font-medium text-gray-700 hover:border-meta-blue/50 transition-colors">
-                    {format(startDate, "yyyy-MM-dd")}
-                  </div>
-                </div>
-                <span className="text-gray-400 text-[13px] font-medium">
-                  至
-                </span>
-                <div className="relative">
-                  <CalendarIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 group-hover:text-meta-blue transition-colors z-10" />
-                  <div className="pl-9 pr-3 py-2 border border-[#e5e7eb] rounded-[6px] text-[13px] w-[130px] text-left bg-white flex items-center font-medium text-gray-700 hover:border-meta-blue/50 transition-colors">
-                    {format(endDate, "yyyy-MM-dd")}
-                  </div>
-                </div>
-              </div>
-            </PopoverTrigger>
-            <PopoverContent
-              className="w-auto p-0"
-              align="center"
-              sideOffset={12}
-            >
-              <div className="flex flex-col">
-                <Calendar
-                  initialFocus
-                  mode="range"
-                  defaultMonth={tempDateRange.from}
-                  selected={{
-                    from: tempDateRange.from,
-                    to: tempDateRange.to,
-                  }}
-                  onSelect={(range) => {
-                    if (range?.from)
-                      setTempDateRange((prev) => ({
-                        ...prev,
-                        from: range.from!,
-                      }));
-                    if (range?.to)
-                      setTempDateRange((prev) => ({ ...prev, to: range.to! }));
-                  }}
-                  numberOfMonths={2}
-                  className="rounded-t-md"
-                />
-                <div className="p-3 border-t bg-gray-50 flex justify-between items-center rounded-b-md">
-                  <div className="text-[12px] text-gray-500">
-                    已选:{" "}
-                    <span className="font-bold text-gray-700">
-                      {format(tempDateRange.from, "yyyy-MM-dd")}
-                    </span>
-                    {tempDateRange.to && (
-                      <>
-                        {" "}
-                        至{" "}
-                        <span className="font-bold text-gray-700">
-                          {format(tempDateRange.to, "yyyy-MM-dd")}
-                        </span>
-                      </>
-                    )}
-                  </div>
-                  <div className="flex gap-2">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-8 text-[12px]"
-                      onClick={() => setDatePickerOpen(false)}
-                    >
-                      取消
-                    </Button>
-                    <Button
-                      size="sm"
-                      className="h-8 text-[12px] bg-meta-blue hover:bg-blue-600"
-                      onClick={() => {
-                        setStartDate(tempDateRange.from);
-                        setEndDate(tempDateRange.to || tempDateRange.from);
-                        setDatePickerOpen(false);
-                      }}
-                    >
-                      确定
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </PopoverContent>
-          </Popover>
+          {/* Moved date picker to filter row below */}
         </div>
 
         <div className="flex-1 flex justify-end">{/* Placeholder */}</div>
@@ -725,6 +637,102 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                   onChange={setSelectedAdIds}
                 />
               </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <Popover
+                open={datePickerOpen}
+                onOpenChange={(open) => {
+                  setDatePickerOpen(open);
+                  if (open) {
+                    setTempDateRange({ from: startDate, to: endDate });
+                  }
+                }}
+              >
+                <PopoverTrigger>
+                  <div className="flex items-center gap-2 cursor-pointer group">
+                    <div className="relative">
+                      <CalendarIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 group-hover:text-meta-blue transition-colors z-10" />
+                      <div className="pl-9 pr-3 py-2 border border-gray-300 rounded-md text-[13px] w-[130px] text-left bg-white flex items-center font-medium text-gray-700 hover:border-meta-blue/50 transition-colors shadow-sm">
+                        {format(startDate, "yyyy-MM-dd")}
+                      </div>
+                    </div>
+                    <span className="text-gray-400 text-[13px] font-medium">
+                      至
+                    </span>
+                    <div className="relative">
+                      <CalendarIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 group-hover:text-meta-blue transition-colors z-10" />
+                      <div className="pl-9 pr-3 py-2 border border-gray-300 rounded-md text-[13px] w-[130px] text-left bg-white flex items-center font-medium text-gray-700 hover:border-meta-blue/50 transition-colors shadow-sm">
+                        {format(endDate, "yyyy-MM-dd")}
+                      </div>
+                    </div>
+                  </div>
+                </PopoverTrigger>
+                <PopoverContent
+                  className="w-auto p-0"
+                  align="end"
+                  sideOffset={8}
+                >
+                  <div className="flex flex-col">
+                    <Calendar
+                      initialFocus
+                      mode="range"
+                      defaultMonth={tempDateRange.from}
+                      selected={{
+                        from: tempDateRange.from,
+                        to: tempDateRange.to,
+                      }}
+                      onSelect={(range) => {
+                        if (range) {
+                          setTempDateRange(range);
+                        }
+                      }}
+                      numberOfMonths={2}
+                      className="rounded-t-md"
+                    />
+                    <div className="p-3 border-t bg-gray-50 flex justify-between items-center rounded-b-md">
+                      <div className="text-[12px] text-gray-500">
+                        已选:{" "}
+                        <span className="font-bold text-gray-700">
+                          {tempDateRange.from ? format(tempDateRange.from, "yyyy-MM-dd") : "-"}
+                        </span>
+                        {tempDateRange.to && (
+                          <>
+                            {" "}
+                            至{" "}
+                            <span className="font-bold text-gray-700">
+                              {format(tempDateRange.to, "yyyy-MM-dd")}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 text-[12px]"
+                          onClick={() => setDatePickerOpen(false)}
+                        >
+                          取消
+                        </Button>
+                        <Button
+                          size="sm"
+                          className="h-8 text-[12px] bg-meta-blue hover:bg-blue-600"
+                          onClick={() => {
+                            if (tempDateRange.from) {
+                              setStartDate(tempDateRange.from);
+                              setEndDate(tempDateRange.to || tempDateRange.from);
+                              setDatePickerOpen(false);
+                            }
+                          }}
+                        >
+                          确定
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </PopoverContent>
+              </Popover>
 
               <Button
                 onClick={fetchData}

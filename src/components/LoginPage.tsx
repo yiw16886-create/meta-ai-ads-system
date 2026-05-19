@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 import { Lock, Eye, EyeOff, RefreshCcw, UserPlus } from "lucide-react";
+import { motion } from "motion/react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -13,6 +14,7 @@ interface LoginPageProps {
 export function LoginPage({ onLogin }: LoginPageProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [showSecret, setShowSecret] = useState(false);
   
@@ -22,18 +24,21 @@ export function LoginPage({ onLogin }: LoginPageProps) {
 
   useEffect(() => {
     if (token) {
+      console.log("🔍 Found activation token, verifying...");
       const verifyToken = async () => {
         try {
           const res = await axios.post('/api/auth/verify-token', { token });
           if (res.data.success) {
             setInvitedEmail(res.data.data.email);
             setIsRegistering(true);
+            toast.success("邀请验证成功，请设置登录密码");
           } else {
             toast.error(res.data.error || "邀请链接无效");
             setToken(null);
           }
         } catch (e) {
-          toast.error("验证邀请码失败");
+          console.error("Token verification error:", e);
+          toast.error("验证邀请码失败，请联系管理员");
           setToken(null);
         }
       };
@@ -61,11 +66,22 @@ export function LoginPage({ onLogin }: LoginPageProps) {
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    if (password !== confirmPassword) {
+      toast.error("两次输入的密码不一致");
+      return;
+    }
+    
+    if (password.length < 6) {
+      toast.error("密码长度至少需要 6 个字符");
+      return;
+    }
+
     setLoading(true);
     try {
       const res = await axios.post('/api/auth/register', { token, password });
       if (res.data.success) {
-        toast.success("账户激活成功，欢迎加入团队");
+        toast.success("账户激活成功，正为您进入仪表板...");
         
         // Auto-login after successful registration
         localStorage.setItem("isAuthenticated", "true");
@@ -77,57 +93,77 @@ export function LoginPage({ onLogin }: LoginPageProps) {
         // Brief delay before redirecting to dashboard
         setTimeout(() => {
           onLogin();
-        }, 500);
+        }, 1000);
       }
     } catch (error: any) {
-      toast.error(error.response?.data?.error || "注册失败");
+      toast.error(error.response?.data?.error || "账户激活失败");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="h-screen w-screen flex items-center justify-center bg-[#f0f2f5]">
-      <Card className="w-[400px] shadow-2xl border-none">
-        <CardHeader className="space-y-1 text-center pb-8 border-b">
+    <div className="min-h-screen w-full flex items-center justify-center bg-[#f0f2f5] p-4 font-sans">
+      <Card className={`w-full max-w-[420px] shadow-2xl border-none overflow-hidden transition-all duration-500 ${isRegistering ? 'ring-2 ring-meta-blue ring-offset-4' : ''}`}>
+        <CardHeader className="space-y-2 text-center pb-8 border-b bg-white">
           <div className="flex justify-center mb-4">
-            <div className="w-14 h-14 bg-meta-blue rounded-2xl flex items-center justify-center shadow-lg transform rotate-3">
-              {isRegistering ? <UserPlus className="text-white w-7 h-7" /> : <Lock className="text-white w-7 h-7" />}
-            </div>
+            <motion.div 
+              initial={{ scale: 0.8, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ type: "spring", stiffness: 200 }}
+              className={`w-16 h-16 ${isRegistering ? 'bg-green-500' : 'bg-meta-blue'} rounded-2xl flex items-center justify-center shadow-lg`}
+            >
+              {isRegistering ? <UserPlus className="text-white w-8 h-8" /> : <Lock className="text-white w-8 h-8" />}
+            </motion.div>
           </div>
-          <CardTitle className="text-2xl font-bold tracking-tight">
-            {isRegistering ? "激活您的账户" : "Meta Insights Pro"}
+          <CardTitle className="text-2xl font-black tracking-tight text-gray-900">
+            {isRegistering ? "激活您的管理账户" : "Meta Insights Pro"}
           </CardTitle>
-          <p className="text-sm text-muted-foreground">
-            {isRegistering ? `为 ${invitedEmail} 设置登录密码` : "店铺多平台整合面板"}
-          </p>
+          <div className="flex flex-col items-center gap-1">
+            {isRegistering ? (
+              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                {invitedEmail}
+              </span>
+            ) : (
+              <p className="text-sm text-gray-500">
+                Meta 广告数据整合与分析平台
+              </p>
+            )}
+            {isRegistering && (
+              <p className="text-xs text-meta-text-muted mt-2">
+                请为您的账户设置访问密码，设置完成后将自动进入系统
+              </p>
+            )}
+          </div>
         </CardHeader>
-        <CardContent className="pt-8">
+        <CardContent className="pt-8 pb-10 bg-white">
           <form onSubmit={isRegistering ? handleRegister : handleLogin} className="space-y-5">
             {!isRegistering && (
               <div className="space-y-2">
-                <label className="text-sm font-semibold text-gray-700">账户名</label>
-                <Input 
-                  placeholder="请输入账户/邮箱" 
-                  value={email} 
-                  onChange={(e) => setEmail(e.target.value)} 
-                  required
-                  className="h-12 border-gray-200 focus:border-meta-blue focus:ring-meta-blue"
-                />
+                <label className="text-sm font-bold text-gray-700">账户名 / 邮箱</label>
+                <div className="relative">
+                  <Input 
+                    placeholder="请输入您的邮箱地址" 
+                    value={email} 
+                    onChange={(e) => setEmail(e.target.value)} 
+                    required
+                    className="h-12 bg-gray-50 border-gray-200 focus:bg-white focus:border-meta-blue focus:ring-meta-blue transition-all"
+                  />
+                </div>
               </div>
             )}
             <div className="space-y-2">
-              <label className="text-sm font-semibold text-gray-700">
-                {isRegistering ? "设置新密码" : "登录密码"}
+              <label className="text-sm font-bold text-gray-700">
+                {isRegistering ? "设置新密码" : "访问密码"}
               </label>
               <div className="relative">
                 <Input 
                   type={showSecret ? "text" : "password"} 
-                  placeholder={isRegistering ? "请设置您的访问密码" : "请输入访问密码"} 
+                  placeholder={isRegistering ? "设置至少 6 位数的密码" : "请输入您的秘密"} 
                   value={password} 
                   onChange={(e) => setPassword(e.target.value)} 
                   required
-                  className="h-12 pr-12 border-gray-200 focus:border-meta-blue focus:ring-meta-blue"
+                  className="h-12 bg-gray-50 pr-12 border-gray-200 focus:bg-white focus:border-meta-blue focus:ring-meta-blue transition-all"
                 />
                 <button 
                   type="button"
@@ -138,11 +174,41 @@ export function LoginPage({ onLogin }: LoginPageProps) {
                 </button>
               </div>
             </div>
-            <Button type="submit" className="w-full h-12 bg-meta-blue hover:bg-blue-600 font-bold text-lg shadow-md transition-all active:scale-[0.98]" disabled={loading}>
-              {loading ? <RefreshCcw className="animate-spin w-5 h-5 mr-2" /> : (isRegistering ? "激活并继续" : "立即登录")}
+
+            {isRegistering && (
+              <motion.div 
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                className="space-y-2"
+              >
+                <label className="text-sm font-bold text-gray-700">再次确认密码</label>
+                <Input 
+                  type={showSecret ? "text" : "password"} 
+                  placeholder="请再次输入以确认" 
+                  value={confirmPassword} 
+                  onChange={(e) => setConfirmPassword(e.target.value)} 
+                  required
+                  className="h-12 bg-gray-50 border-gray-200 focus:bg-white focus:border-meta-blue focus:ring-meta-blue transition-all"
+                />
+              </motion.div>
+            )}
+
+            <Button 
+              type="submit" 
+              className={`w-full h-12 ${isRegistering ? 'bg-green-600 hover:bg-green-700' : 'bg-meta-blue hover:bg-blue-600'} text-white font-black text-lg shadow-xl shadow-blue-500/10 transition-all active:scale-[0.98] mt-4`} 
+              disabled={loading}
+            >
+              {loading ? (
+                <RefreshCcw className="animate-spin w-5 h-5 mr-2" />
+              ) : (
+                isRegistering ? "激活账户并进入" : "登 录"
+              )}
             </Button>
-            <div className="text-center">
-              <p className="text-xs text-meta-text-muted">受加密协议保护，仅限授人员操作</p>
+            
+            <div className="text-center mt-6">
+              <p className="text-[10px] uppercase tracking-widest font-bold text-gray-400">
+                Enterprise Data Security Standard
+              </p>
             </div>
           </form>
         </CardContent>

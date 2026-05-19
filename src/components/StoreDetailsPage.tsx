@@ -317,7 +317,13 @@ export function StoreDetailsPage({
         <header className="bg-white border-b px-6 py-4 flex items-center justify-between z-10 shrink-0">
           <div className="flex items-center gap-4">
             <button
-              onClick={() => navigate("/?tab=stores")}
+              onClick={() => {
+                if (window.history.length > 1) {
+                  navigate(-1);
+                } else {
+                  navigate("/?tab=stores");
+                }
+              }}
               className="text-gray-500 hover:text-gray-900 flex items-center gap-2"
             >
               <ArrowLeft className="h-5 w-5" />

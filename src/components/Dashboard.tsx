@@ -339,7 +339,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
           ].filter(Boolean).map((item: any) => (
             <button
               key={item.id}
-              onClick={() => setCurrentTab(item.id as any)}
+              onClick={() => navigate(`/?tab=${item.id}`)}
               className={cn(
                 "w-full flex items-center gap-3 px-4 py-3 rounded-[8px] text-[14px] transition-colors cursor-pointer",
                 currentTab === item.id
@@ -354,7 +354,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
         </nav>
         <div className="mt-auto p-4 space-y-1 border-t border-gray-800">
           <button
-            onClick={() => setCurrentTab("settings")}
+            onClick={() => navigate("/?tab=settings")}
             className={cn(
               "w-full flex items-center gap-3 px-4 py-3 rounded-[8px] text-[14px] transition-colors cursor-pointer",
               currentTab === "settings"
@@ -407,7 +407,11 @@ export function Dashboard({ onLogout }: DashboardProps) {
                       <Calendar
                         mode="single"
                         selected={startDate}
-                        onSelect={(day) => day && setStartDate(day)}
+                        onSelect={(day) => {
+                          if (day) {
+                            setStartDate(day);
+                          }
+                        }}
                         initialFocus
                       />
                     </PopoverContent>
@@ -701,7 +705,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
         ) : currentTab === "category" ? (
           <CategoryDashboard
             mappings={mappings}
-            onManageAccounts={() => setCurrentTab("accounts")}
+            onManageAccounts={() => navigate("/?tab=accounts")}
           />
         ) : currentTab === "stores" ? (
           <StoresDashboard />
@@ -1255,7 +1259,16 @@ function UsersManagementPage() {
   const [inviting, setInviting] = useState(false);
   const [fetching, setFetching] = useState(true);
   const [showInviteModal, setShowInviteModal] = useState(false);
+  const [showSmtpModal, setShowSmtpModal] = useState(false);
   const [lastInviteData, setLastInviteData] = useState<any>(null);
+  const [smtpConfig, setSmtpConfig] = useState({
+    SMTP_HOST: "",
+    SMTP_PORT: "465",
+    SMTP_USER: "",
+    SMTP_PASS: "",
+    SMTP_FROM: ""
+  });
+  const [savingSmtp, setSavingSmtp] = useState(false);
   
   // Custom delete confirmation state
   const [deleteConfirm, setDeleteConfirm] = useState<{ open: boolean; id: string | number | null; email: string; isPending: boolean }>({
@@ -1270,12 +1283,26 @@ function UsersManagementPage() {
   const fetchUsers = async () => {
     setFetching(true);
     try {
-      const res = await axios.get("/api/users");
-      if (res.data.success) {
-        setUsers(res.data.data);
+      const [usersRes, settingsRes] = await Promise.all([
+        axios.get("/api/users"),
+        axios.get("/api/settings")
+      ]);
+      
+      if (usersRes.data.success) {
+        setUsers(usersRes.data.data);
+      }
+      
+      if (settingsRes.data) {
+        setSmtpConfig({
+          SMTP_HOST: settingsRes.data.SMTP_HOST || "",
+          SMTP_PORT: settingsRes.data.SMTP_PORT || "465",
+          SMTP_USER: settingsRes.data.SMTP_USER || "",
+          SMTP_PASS: settingsRes.data.SMTP_PASS || "",
+          SMTP_FROM: settingsRes.data.SMTP_FROM || ""
+        });
       }
     } catch (e) {
-      console.error("Failed to fetch users", e);
+      console.error("Failed to fetch users or settings", e);
     } finally {
       setFetching(false);
     }
@@ -1368,6 +1395,25 @@ function UsersManagementPage() {
     console.warn("handleDeleteUser called directly, expected handleConfirmDelete flow");
   };
 
+  const handleSaveSmtp = async () => {
+    setSavingSmtp(true);
+    try {
+      await Promise.all([
+        axios.post("/api/settings", { key: "SMTP_HOST", value: smtpConfig.SMTP_HOST }),
+        axios.post("/api/settings", { key: "SMTP_PORT", value: smtpConfig.SMTP_PORT }),
+        axios.post("/api/settings", { key: "SMTP_USER", value: smtpConfig.SMTP_USER }),
+        axios.post("/api/settings", { key: "SMTP_PASS", value: smtpConfig.SMTP_PASS }),
+        axios.post("/api/settings", { key: "SMTP_FROM", value: smtpConfig.SMTP_FROM }),
+      ]);
+      toast.success("邮箱配置已保存");
+      setShowSmtpModal(false);
+    } catch (err) {
+      toast.error("保存失败，请检查设置");
+    } finally {
+      setSavingSmtp(false);
+    }
+  };
+
   if (fetching) {
     return (
       <div className="flex-1 flex items-center justify-center bg-white rounded-[12px]">
@@ -1380,13 +1426,25 @@ function UsersManagementPage() {
     <div className="flex-1 overflow-y-auto space-y-6 pb-12">
       <Card className="border-none shadow-sm rounded-[12px] overflow-hidden">
         <CardHeader className="border-b pb-4 bg-gray-50/50">
-          <div className="flex items-center gap-2 mb-1">
-            <Users className="w-5 h-5 text-meta-blue" />
-            <CardTitle className="text-xl">成员与权限管理</CardTitle>
+          <div className="flex items-center justify-between">
+            <div className="flex flex-col">
+              <div className="flex items-center gap-2 mb-1">
+                <Users className="w-5 h-5 text-meta-blue" />
+                <CardTitle className="text-xl">成员与权限管理</CardTitle>
+              </div>
+              <p className="text-sm text-meta-text-muted">
+                邀请新成员通过邮箱注册并分配角色权限，控制多账户访问安全
+              </p>
+            </div>
+            <Button 
+              variant="outline" 
+              className="flex items-center gap-2 border-meta-blue text-meta-blue hover:bg-meta-blue hover:text-white transition-all shadow-sm"
+              onClick={() => setShowSmtpModal(true)}
+            >
+              <Mail className="w-4 h-4" />
+              邮箱设置
+            </Button>
           </div>
-          <p className="text-sm text-meta-text-muted">
-            邀请新成员通过邮箱注册并分配角色权限，控制多账户访问安全
-          </p>
         </CardHeader>
         <CardContent className="pt-6 space-y-8">
           <div className="flex gap-4 items-end bg-gray-50 p-6 rounded-xl border border-gray-100">
@@ -1542,13 +1600,88 @@ function UsersManagementPage() {
           <div className="space-y-4 py-4">
             <p className="text-sm text-gray-600">由于邮箱服务未完全配置，请手动将以下链接发送给成员：</p>
             <div className="p-4 bg-gray-100 rounded-lg break-all font-mono text-xs select-all">
-              {`${window.location.origin}/?token=${lastInviteData?.token}#/login`}
+              {`${window.location.origin}/?token=${lastInviteData?.token}`}
             </div>
             <Button className="w-full" onClick={() => {
-              navigator.clipboard.writeText(`${window.location.origin}/?token=${lastInviteData?.token}#/login`);
+              navigator.clipboard.writeText(`${window.location.origin}/?token=${lastInviteData?.token}`);
               toast.success("链接已复制");
             }}>
               复制邀请链接
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showSmtpModal} onOpenChange={setShowSmtpModal}>
+        <DialogContent className="max-w-[600px]">
+          <DialogHeader className="border-b pb-4">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-full bg-meta-blue/10 flex items-center justify-center">
+                <Mail className="w-4 h-4 text-meta-blue" />
+              </div>
+              <div>
+                <DialogTitle className="text-xl">SMTP 邮件服务配置</DialogTitle>
+                <p className="text-xs text-gray-500 mt-1">配置 SMTP 服务器以便系统自动发送邀请激活邮件</p>
+              </div>
+            </div>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-4 py-6">
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-gray-700">SMTP 主机 (Host)</label>
+              <Input
+                placeholder="smtp.gmail.com"
+                value={smtpConfig.SMTP_HOST}
+                onChange={(e) => setSmtpConfig({...smtpConfig, SMTP_HOST: e.target.value})}
+                className="h-10"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-gray-700">端口 (Port)</label>
+              <Input
+                placeholder="465"
+                value={smtpConfig.SMTP_PORT}
+                onChange={(e) => setSmtpConfig({...smtpConfig, SMTP_PORT: e.target.value})}
+                className="h-10"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-gray-700">发件账号 (User)</label>
+              <Input
+                placeholder="your-email@example.com"
+                value={smtpConfig.SMTP_USER}
+                onChange={(e) => setSmtpConfig({...smtpConfig, SMTP_USER: e.target.value})}
+                className="h-10"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-gray-700">发件密码 (Password/App Password)</label>
+              <Input
+                type="password"
+                placeholder="••••••••"
+                value={smtpConfig.SMTP_PASS}
+                onChange={(e) => setSmtpConfig({...smtpConfig, SMTP_PASS: e.target.value})}
+                className="h-10"
+              />
+            </div>
+            <div className="space-y-2 col-span-2">
+              <label className="text-sm font-semibold text-gray-700">发件人显示的邮箱 (From Address)</label>
+              <Input
+                placeholder="Meta Insights <no-reply@insights.com>"
+                value={smtpConfig.SMTP_FROM}
+                onChange={(e) => setSmtpConfig({...smtpConfig, SMTP_FROM: e.target.value})}
+                className="h-10"
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-3 pt-4 border-t">
+            <Button variant="outline" onClick={() => setShowSmtpModal(false)} disabled={savingSmtp}>取消</Button>
+            <Button 
+              onClick={handleSaveSmtp} 
+              disabled={savingSmtp}
+              className="bg-meta-blue hover:bg-blue-600 px-6"
+            >
+              {savingSmtp ? <RefreshCcw className="w-4 h-4 animate-spin mr-2" /> : null}
+              保存配置
             </Button>
           </div>
         </DialogContent>
@@ -1559,13 +1692,6 @@ function UsersManagementPage() {
 
 function SettingsPage() {
   const [metaToken, setMetaToken] = useState("");
-  const [smtpConfig, setSmtpConfig] = useState({
-    SMTP_HOST: "",
-    SMTP_PORT: "465",
-    SMTP_USER: "",
-    SMTP_PASS: "",
-    SMTP_FROM: ""
-  });
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(true);
 
@@ -1576,13 +1702,6 @@ function SettingsPage() {
         if (settingsRes.data.META_ACCESS_TOKEN) {
           setMetaToken(settingsRes.data.META_ACCESS_TOKEN);
         }
-        setSmtpConfig({
-          SMTP_HOST: settingsRes.data.SMTP_HOST || "",
-          SMTP_PORT: settingsRes.data.SMTP_PORT || "465",
-          SMTP_USER: settingsRes.data.SMTP_USER || "",
-          SMTP_PASS: settingsRes.data.SMTP_PASS || "",
-          SMTP_FROM: settingsRes.data.SMTP_FROM || ""
-        });
       } catch (err) {
         toast.error("加载设置失败");
       } finally {
@@ -1604,12 +1723,7 @@ function SettingsPage() {
     setLoading(true);
     try {
       await handleSaveSetting("META_ACCESS_TOKEN", metaToken);
-      await handleSaveSetting("SMTP_HOST", smtpConfig.SMTP_HOST);
-      await handleSaveSetting("SMTP_PORT", smtpConfig.SMTP_PORT);
-      await handleSaveSetting("SMTP_USER", smtpConfig.SMTP_USER);
-      await handleSaveSetting("SMTP_PASS", smtpConfig.SMTP_PASS);
-      await handleSaveSetting("SMTP_FROM", smtpConfig.SMTP_FROM);
-      toast.success("所有配置已保存");
+      toast.success("Meta API 配置已保存");
     } catch (err: any) {
       toast.error(err.response?.data?.error || "保存失败");
     } finally {
@@ -1660,63 +1774,6 @@ function SettingsPage() {
               placeholder="请输入您的长效访问令牌"
               value={metaToken}
               onChange={(e) => setMetaToken(e.target.value)}
-              className="h-11"
-            />
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="border-none shadow-sm rounded-[12px]">
-        <CardHeader>
-          <CardTitle className="text-lg">SMTP 邮件服务配置 (邀请成员必填)</CardTitle>
-          <p className="text-sm text-meta-text-muted">
-            配置 SMTP 服务器以便系统自动发送邀请激活邮件
-          </p>
-        </CardHeader>
-        <CardContent className="grid grid-cols-2 gap-6">
-          <div className="space-y-2">
-            <label className="text-sm font-medium">SMTP 主机 (Host)</label>
-            <Input
-              placeholder="smtp.gmail.com"
-              value={smtpConfig.SMTP_HOST}
-              onChange={(e) => setSmtpConfig({...smtpConfig, SMTP_HOST: e.target.value})}
-              className="h-11"
-            />
-          </div>
-          <div className="space-y-2">
-            <label className="text-sm font-medium">端口 (Port)</label>
-            <Input
-              placeholder="465"
-              value={smtpConfig.SMTP_PORT}
-              onChange={(e) => setSmtpConfig({...smtpConfig, SMTP_PORT: e.target.value})}
-              className="h-11"
-            />
-          </div>
-          <div className="space-y-2">
-            <label className="text-sm font-medium">发件账号 (User)</label>
-            <Input
-              placeholder="your-email@example.com"
-              value={smtpConfig.SMTP_USER}
-              onChange={(e) => setSmtpConfig({...smtpConfig, SMTP_USER: e.target.value})}
-              className="h-11"
-            />
-          </div>
-          <div className="space-y-2">
-            <label className="text-sm font-medium">发件密码 (Password/App Password)</label>
-            <Input
-              type="password"
-              placeholder="••••••••"
-              value={smtpConfig.SMTP_PASS}
-              onChange={(e) => setSmtpConfig({...smtpConfig, SMTP_PASS: e.target.value})}
-              className="h-11"
-            />
-          </div>
-          <div className="space-y-2 col-span-2">
-            <label className="text-sm font-medium">发件人显示的邮箱 (From Address)</label>
-            <Input
-              placeholder="Meta Insights <no-reply@insights.com>"
-              value={smtpConfig.SMTP_FROM}
-              onChange={(e) => setSmtpConfig({...smtpConfig, SMTP_FROM: e.target.value})}
               className="h-11"
             />
           </div>
@@ -2005,7 +2062,11 @@ function CategoryDashboard({ mappings, onManageAccounts }: { mappings: Record<st
                 <Calendar
                   mode="single"
                   selected={startDate}
-                  onSelect={(day) => day && setStartDate(day)}
+                  onSelect={(day) => {
+                    if (day) {
+                      setStartDate(day);
+                    }
+                  }}
                   initialFocus
                 />
               </PopoverContent>
