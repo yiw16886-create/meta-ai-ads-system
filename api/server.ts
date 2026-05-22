@@ -898,6 +898,62 @@ app.get("/api/stores", async (req, res) => {
   }
 });
 
+
+// GET /api/stores/all-dashboard-summary - Aggregate Shopline data for all stores
+app.get("/api/stores/all-dashboard-summary", async (req, res) => {
+  const { startDate, endDate } = req.query;
+
+  if (!startDate || !endDate) {
+    return res.status(400).json({ error: "startDate and endDate are required" });
+  }
+
+  try {
+    const stores = await prisma.store.findMany();
+    const results = await Promise.all(stores.map(async (store) => {
+      if (store.shopline_token && store.domain) {
+        try {
+          const stats = await getShoplineAnalytics(store.domain, store.shopline_token, startDate as string, endDate as string, store.visitors || 0);
+          return {
+            storeName: store.name,
+            totalSales: stats.totalSales,
+            ordersCount: stats.ordersCount,
+            visitors: stats.visitors,
+            conversionRate: stats.conversionRate,
+            isConfigured: true
+          };
+        } catch (err: any) {
+          return {
+            storeName: store.name,
+            totalSales: 0,
+            ordersCount: 0,
+            visitors: store.visitors || 0,
+            conversionRate: 0,
+            isConfigured: true,
+            error: true
+          };
+        }
+      } else {
+        return {
+          storeName: store.name,
+          totalSales: 0,
+          ordersCount: 0,
+          visitors: store.visitors || 0,
+          conversionRate: 0,
+          isConfigured: false
+        };
+      }
+    }));
+    
+    // Convert to dictionary mapped by storeName
+    const summaryMap: Record<string, any> = {};
+    results.forEach(r => summaryMap[r.storeName] = r);
+    
+    res.json(summaryMap);
+  } catch (error: any) {
+    res.status(500).json({ error: "Failed to fetch stores summary", details: error.message });
+  }
+});
+
 // GET /api/stores/:id - Get a specific store
 app.get("/api/stores/:id", async (req, res) => {
   const { id } = req.params;
@@ -2021,7 +2077,10 @@ app.use("/api", (req, res) => {
 async function startServer() {
   try {
     console.log("🚀 Starting server startup sequence...");
-    await checkDb();
+    // Run database connection check asynchronously so the Express server binds and serves the app instantly
+    checkDb().catch((err) => {
+      console.error("❌ Asynchronous database check failed:", err);
+    });
     if (process.env.NODE_ENV !== "production") {
       console.log("🛠️ Initializing Vite development middleware...");
       const { createServer: createViteServer } = await import("vite");

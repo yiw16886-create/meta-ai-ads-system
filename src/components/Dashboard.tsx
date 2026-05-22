@@ -26,6 +26,7 @@ import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { StoresDashboard } from "./StoresDashboard";
 import { MonitoringDashboard } from "./MonitoringDashboard";
+import { OverviewDashboard } from "./OverviewDashboard";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -90,10 +91,11 @@ export function Dashboard({ onLogout }: DashboardProps) {
     | "stores"
     | "monitoring"
     | "users"
-    || "dashboard";
+    | "overview"
+    || "overview";
 
   const [currentTab, setCurrentTab] = useState<
-    "dashboard" | "settings" | "category" | "accounts" | "stores" | "users" | "monitoring"
+    "dashboard" | "settings" | "category" | "accounts" | "stores" | "users" | "monitoring" | "overview"
   >(initialTab);
 
   const currentUser = JSON.parse(localStorage.getItem("user") || "{}");
@@ -110,6 +112,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
   const [endDate, setEndDate] = useState<Date>(new Date());
   const [search, setSearch] = useState("");
   const [data, setData] = useState<AdInsight[]>([]);
+  const [storeSummaries, setStoreSummaries] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [mappings, setMappings] = useState<Record<string, any>>({});
@@ -158,12 +161,19 @@ export function Dashboard({ onLogout }: DashboardProps) {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const response = await axios.get("/api/insights", {
-        params: {
-          startDate: format(startDate, "yyyy-MM-dd"),
-          endDate: format(endDate, "yyyy-MM-dd"),
-        },
-      });
+      const dateParams = {
+        startDate: format(startDate, "yyyy-MM-dd"),
+        endDate: format(endDate, "yyyy-MM-dd"),
+      };
+
+      const [response, summariesRes] = await Promise.all([
+        axios.get("/api/insights", { params: dateParams }),
+        axios.get("/api/stores/all-dashboard-summary", { params: dateParams }).catch(err => {
+          console.error("Failed to fetch store summaries", err);
+          return { data: {} };
+        })
+      ]);
+
       if (typeof response.data === 'string' && response.data.trim().toLowerCase().startsWith('<!doctype html>')) {
         toast.error("系统正在启动或重启，请稍候...");
         setData([]);
@@ -177,6 +187,8 @@ export function Dashboard({ onLogout }: DashboardProps) {
         toast.error(typeof response.data?.error === 'string' ? response.data.error : "数据加载失败，请检查数据库连接或确认数据格式");
         setData([]);
       }
+      
+      setStoreSummaries(summariesRes.data || {});
     } catch (error: any) {
       console.error("fetchData error:", error.response?.data || error);
       const errMsg = error.response?.data?.error;
@@ -334,9 +346,10 @@ export function Dashboard({ onLogout }: DashboardProps) {
         </div>
         <nav className="flex-1 px-4 space-y-1">
           {[
-            { id: "dashboard", icon: LayoutDashboard, label: "总览看板" },
+            { id: "overview", icon: BarChart3, label: "数据总览" },
+            { id: "dashboard", icon: LayoutDashboard, label: "MATE广告账户" },
             { id: "category", icon: LayoutGrid, label: "项目类别看板" },
-            { id: "monitoring", icon: BarChart3, label: "账户健康监控" },
+            { id: "monitoring", icon: TrendingUp, label: "账户健康监控" },
             { id: "stores", icon: Store, label: "店铺管理" },
             isAdmin && { id: "users", icon: Users, label: "成员管理" },
           ].filter(Boolean).map((item: any) => (
@@ -392,7 +405,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
         </div>
       </aside>
       <main className="flex-1 ml-[200px] p-[24px] overflow-x-hidden flex flex-col h-screen box-border">
-        {currentTab === "dashboard" ? (
+        {currentTab === "overview" || currentTab === "dashboard" ? (
           <>
             <div className="bg-white p-[16px] rounded-[12px] flex items-center gap-[12px] mb-[20px] shadow-[0_1px_3px_rgba(0,0,0,0.1)]">
               <div className="flex items-center gap-2">
@@ -443,13 +456,22 @@ export function Dashboard({ onLogout }: DashboardProps) {
                 </div>
               </div>
               <div className="relative flex-grow">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-meta-text-muted" />
-                <Input
-                  placeholder="搜索账户名称"
-                  className="pl-10 h-9 rounded-[6px] border-[#e5e7eb] text-[13px]"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
+                {currentTab === "dashboard" ? (
+                  <>
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-meta-text-muted" />
+                    <Input
+                      placeholder="搜索账户名称"
+                      className="pl-10 h-9 rounded-[6px] border-[#e5e7eb] text-[13px]"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                    />
+                  </>
+                ) : (
+                  <div className="text-[13px] font-semibold text-meta-dark flex items-center gap-1.5 pl-3 border-l-2 border-meta-blue">
+                    <span>Meta Insights Pro</span>
+                    <span className="text-[11px] font-normal text-meta-text-muted">（数据范围内的总支出消耗、各店铺与负责人汇总大盘）</span>
+                  </div>
+                )}
               </div>
               {isAdmin && (
                 <Button
@@ -464,7 +486,12 @@ export function Dashboard({ onLogout }: DashboardProps) {
                 </Button>
               )}
             </div>
-            <div className="grid grid-cols-4 gap-[16px] mb-[20px]">
+
+            {currentTab === "overview" ? (
+              <OverviewDashboard data={data} mappings={mappings} storeSummaries={storeSummaries} />
+            ) : (
+              <>
+                <div className="grid grid-cols-4 gap-[16px] mb-[20px]">
               <MetricCard
                 title="总支出消耗"
                 value={`$${totals.spend.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
@@ -704,6 +731,8 @@ export function Dashboard({ onLogout }: DashboardProps) {
                 * 统计数据已按 account_id 自动聚合计算
               </div>
             </Card>
+              </>
+            )}
           </>
         ) : currentTab === "category" ? (
           <CategoryDashboard
@@ -1919,6 +1948,12 @@ function CategoryDashboard({ mappings, onManageAccounts }: { mappings: Record<st
           endDate: format(endDate, "yyyy-MM-dd"),
         },
       });
+
+      if (typeof res.data === 'string' && res.data.trim().toLowerCase().startsWith('<!doctype html>')) {
+        toast.error("系统正在启动或重启，请稍候...");
+        setRawInsights([]);
+        return;
+      }
 
       const data = Array.isArray(res.data) ? res.data : [];
       if (!Array.isArray(res.data)) {
