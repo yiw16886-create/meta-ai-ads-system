@@ -1,11 +1,12 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
-import { RefreshCcw, AlertTriangle, Info, Search, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
+import { RefreshCcw, AlertTriangle, Info, Search, ArrowUpDown, ArrowUp, ArrowDown, Wand2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import ReactMarkdown from 'react-markdown';
 import {
   Table,
   TableBody,

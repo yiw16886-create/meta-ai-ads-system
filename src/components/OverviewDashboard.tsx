@@ -476,117 +476,182 @@ export function OverviewDashboard({ data = [], mappings = {}, storeSummaries = {
         </Card>
       </div>
 
-      {/* Stores Performance Summary Table */}
-      <Card className="border-none shadow-[0_1px_3px_rgba(0,0,0,0.06)] bg-white rounded-[12px] overflow-hidden">
-        <div className="px-[16px] py-[12px] border-b border-gray-100 bg-gradient-to-r from-gray-50/50 to-white flex items-center gap-2">
-          <StoreIcon className="w-4 h-4 text-indigo-500" />
-          <span className="font-bold text-[14px] text-meta-dark">店铺全维度消耗总览 (Store Performance)</span>
-        </div>
-        <div className="overflow-x-auto">
-          <Table className="text-[12px]">
-            <TableHeader className="bg-gray-50/70">
-              <TableRow>
-                <TableHead className="font-semibold">店铺名称</TableHead>
-                <TableHead className="font-semibold text-center">绑定账户数</TableHead>
-                <TableHead className="font-semibold text-right">广告消耗</TableHead>
-                <TableHead className="font-semibold text-right">总订单数</TableHead>
-                <TableHead className="font-semibold text-right">总销售额</TableHead>
-                <TableHead className="font-semibold text-right">平均投资回报 (ROI)</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {storeStats.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={6} className="text-center py-6 text-gray-400">
-                    目前没有发现绑定了店铺的Meta广告账户记录。
-                  </TableCell>
-                </TableRow>
-              ) : (
-                storeStats.map((item) => (
-                  <TableRow key={item.store} className="hover:bg-gray-50/50">
-                    <TableCell className="font-medium text-gray-900">{item.store}</TableCell>
-                    <TableCell className="text-center">
-                      <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 text-[11px] font-medium">
-                        {item.accountsCount}个
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-right font-semibold text-gray-950">
-                      ${item.spend.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </TableCell>
-                    <TableCell className="text-right text-gray-700">
-                      {item.purchases.toLocaleString()}
-                    </TableCell>
-                    <TableCell className="text-right text-emerald-600 font-medium">
-                      ${item.purchaseValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <span className={`inline-block px-2 py-0.5 rounded-[4px] font-bold ${item.avgRoi >= 1.0 ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
-                        {item.avgRoi.toFixed(2)}x
-                      </span>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </div>
-      </Card>
+      {/* Modular Layout for Data Tables and Feature Panel */}
+      <div className="flex flex-col xl:flex-row gap-[20px]">
+        {/* Left Data Section: Grid layout for modular tables */}
+        <div className="flex-1 space-y-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-[20px]">
+            {/* Stores Performance Summary Table */}
+            <Card className="border-none shadow-[0_1px_3px_rgba(0,0,0,0.06)] bg-white rounded-[12px] flex flex-col overflow-hidden max-h-[400px]">
+              <div className="px-[16px] py-[12px] border-b border-gray-100 bg-gradient-to-r from-gray-50/50 to-white flex items-center gap-2">
+                <StoreIcon className="w-4 h-4 text-indigo-500" />
+                <span className="font-bold text-[14px] text-meta-dark">店铺消耗</span>
+              </div>
+              <div className="overflow-y-auto flex-1 custom-scrollbar">
+                <Table className="text-[12px] whitespace-nowrap">
+                  <TableHeader className="bg-gray-50/70 sticky top-0 z-10 shadow-sm shadow-gray-100/50">
+                    <TableRow>
+                      <TableHead className="font-semibold py-2 h-8">店铺</TableHead>
+                      <TableHead className="font-semibold text-center py-2 h-8">账户</TableHead>
+                      <TableHead className="font-semibold text-right py-2 h-8">消耗</TableHead>
+                      <TableHead className="font-semibold text-right py-2 h-8">订单</TableHead>
+                      <TableHead className="font-semibold text-right py-2 h-8">销售额</TableHead>
+                      <TableHead className="font-semibold text-right py-2 h-8">ROI</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {storeStats.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center py-6 text-gray-400">
+                          暂无店铺数据
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      storeStats.map((item) => (
+                        <TableRow key={item.store} className="hover:bg-gray-50/50">
+                          <TableCell className="font-medium text-gray-900 py-2">{item.store}</TableCell>
+                          <TableCell className="text-center py-2">
+                            <span className="px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[10px] font-medium">
+                              {item.accountsCount}个
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-right font-semibold text-gray-950 py-2">
+                            ${item.spend.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                          </TableCell>
+                          <TableCell className="text-right text-gray-700 py-2">
+                            {item.purchases.toLocaleString()}
+                          </TableCell>
+                          <TableCell className="text-right text-emerald-600 font-medium py-2">
+                            ${item.purchaseValue.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                          </TableCell>
+                          <TableCell className="text-right py-2">
+                            <span className={`inline-block px-1.5 py-0.5 rounded-[4px] font-bold ${item.avgRoi >= 1.0 ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                              {item.avgRoi.toFixed(2)}x
+                            </span>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </Card>
 
-      {/* Account Owner Allocation list */}
-      <Card className="border-none shadow-[0_1px_3px_rgba(0,0,0,0.06)] bg-white rounded-[12px] overflow-hidden">
-        <div className="px-[16px] py-[12px] border-b border-gray-100 bg-gradient-to-r from-gray-50/50 to-white flex items-center gap-2">
-          <User className="w-4 h-4 text-violet-500" />
-          <span className="font-bold text-[14px] text-meta-dark">负责人分配及投放消耗概览 (Mediabuyer Owner)</span>
+            {/* Account Owner Allocation list */}
+            <Card className="border-none shadow-[0_1px_3px_rgba(0,0,0,0.06)] bg-white rounded-[12px] flex flex-col overflow-hidden max-h-[400px]">
+              <div className="px-[16px] py-[12px] border-b border-gray-100 bg-gradient-to-r from-gray-50/50 to-white flex items-center gap-2">
+                <User className="w-4 h-4 text-violet-500" />
+                <span className="font-bold text-[14px] text-meta-dark">负责人概览</span>
+              </div>
+              <div className="overflow-y-auto flex-1 custom-scrollbar">
+                <Table className="text-[12px] whitespace-nowrap">
+                  <TableHeader className="bg-gray-50/70 sticky top-0 z-10 shadow-sm shadow-gray-100/50">
+                    <TableRow>
+                      <TableHead className="font-semibold py-2 h-8">负责人</TableHead>
+                      <TableHead className="font-semibold text-center py-2 h-8">账户</TableHead>
+                      <TableHead className="font-semibold text-right py-2 h-8">消耗</TableHead>
+                      <TableHead className="font-semibold text-right py-2 h-8">单量</TableHead>
+                      <TableHead className="font-semibold text-right py-2 h-8">营收</TableHead>
+                      <TableHead className="font-semibold text-right py-2 h-8">ROAS</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {ownerStats.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center py-6 text-gray-400">
+                          暂无分配数据
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      ownerStats.map((item) => (
+                        <TableRow key={item.owner} className="hover:bg-gray-50/50">
+                          <TableCell className="font-medium text-gray-900 py-2">{item.owner}</TableCell>
+                          <TableCell className="text-center py-2">
+                            <span className="px-1.5 py-0.5 rounded-md bg-violet-50 text-violet-700 text-[10px] font-medium">
+                              {item.accountsCount}个
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-right font-semibold py-2">
+                            ${item.spend.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                          </TableCell>
+                          <TableCell className="text-right text-gray-600 py-2">
+                            {item.purchases.toLocaleString()}
+                          </TableCell>
+                          <TableCell className="text-right font-medium text-gray-900 py-2">
+                            ${item.purchaseValue.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                          </TableCell>
+                          <TableCell className="text-right py-2">
+                            <span className={`font-bold ${item.avgRoi >= 1.0 ? 'text-emerald-600' : 'text-gray-500'}`}>
+                              {item.avgRoi.toFixed(2)}x
+                            </span>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </Card>
+          </div>
         </div>
-        <div className="overflow-x-auto">
-          <Table className="text-[12px]">
-            <TableHeader className="bg-gray-50/70">
-              <TableRow>
-                <TableHead className="font-semibold">负责人</TableHead>
-                <TableHead className="font-semibold text-center">负责账户数量</TableHead>
-                <TableHead className="font-semibold text-right">时间段总消耗</TableHead>
-                <TableHead className="font-semibold text-right">时间段总成效 (单量)</TableHead>
-                <TableHead className="font-semibold text-right">时间段总营收</TableHead>
-                <TableHead className="font-semibold text-right">平均 ROAS</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {ownerStats.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={6} className="text-center py-6 text-gray-400">
-                    未分配任何负责人
-                  </TableCell>
-                </TableRow>
-              ) : (
-                ownerStats.map((item) => (
-                  <TableRow key={item.owner} className="hover:bg-gray-50/50">
-                    <TableCell className="font-medium text-gray-900">{item.owner}</TableCell>
-                    <TableCell className="text-center">
-                      <span className="px-2.5 py-0.5 rounded-full bg-violet-50 text-violet-700 text-[11px] font-medium">
-                        {item.accountsCount} 个账户
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-right font-semibold">
-                      ${item.spend.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </TableCell>
-                    <TableCell className="text-right text-gray-600">
-                      {item.purchases.toLocaleString()}
-                    </TableCell>
-                    <TableCell className="text-right font-medium text-gray-900">
-                      ${item.purchaseValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <span className={`font-bold ${item.avgRoi >= 1.0 ? 'text-emerald-600' : 'text-gray-500'}`}>
-                        {item.avgRoi.toFixed(2)}x
-                      </span>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
+
+        {/* Right Feature Modules Panel */}
+        <div className="w-full xl:w-[260px] shrink-0">
+          <Card className="border-none shadow-[0_1px_3px_rgba(0,0,0,0.06)] bg-white rounded-[12px] overflow-hidden sticky top-[20px]">
+            <div className="px-[16px] py-[12px] border-b border-gray-100 bg-gray-50/30 flex items-center gap-2">
+              <Layers className="w-4 h-4 text-meta-blue" />
+              <span className="font-bold text-[13px] text-gray-800">视图模块配置</span>
+            </div>
+            <div className="p-4 space-y-4">
+              <p className="text-[11px] text-gray-500 text-left">自定义选择需要在总览中显示的模块</p>
+              
+              <div className="space-y-3">
+                <label className="flex items-center justify-between group cursor-pointer">
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 rounded border border-blue-500 bg-blue-500 flex items-center justify-center">
+                      <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
+                    </div>
+                    <span className="text-[12px] font-medium text-gray-700 group-hover:text-gray-900 transition-colors">店铺消耗概览</span>
+                  </div>
+                </label>
+
+                <label className="flex items-center justify-between group cursor-pointer">
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 rounded border border-blue-500 bg-blue-500 flex items-center justify-center">
+                      <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
+                    </div>
+                    <span className="text-[12px] font-medium text-gray-700 group-hover:text-gray-900 transition-colors">负责人业绩</span>
+                  </div>
+                </label>
+
+                <label className="flex items-center justify-between group cursor-pointer">
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 rounded border border-gray-300 bg-white flex items-center justify-center group-hover:border-blue-400">
+                    </div>
+                    <span className="text-[12px] font-medium text-gray-500 group-hover:text-gray-900 transition-colors">时段消耗图</span>
+                  </div>
+                  <span className="text-[9px] text-meta-blue font-semibold px-1.5 py-0.5 bg-blue-50 rounded">PRO</span>
+                </label>
+                
+                <label className="flex items-center justify-between group cursor-pointer">
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 rounded border border-gray-300 bg-white flex items-center justify-center group-hover:border-blue-400">
+                    </div>
+                    <span className="text-[12px] font-medium text-gray-500 group-hover:text-gray-900 transition-colors">商品成效分析</span>
+                  </div>
+                  <span className="text-[9px] text-gray-400 font-semibold px-1.5 py-0.5 bg-gray-100 rounded">待发布</span>
+                </label>
+              </div>
+
+              <div className="pt-3 border-t border-gray-100">
+                <button className="w-full py-2 bg-gray-50 hover:bg-gray-100 text-gray-700 text-[12px] font-medium rounded-md transition-colors flex items-center justify-center gap-1.5">
+                  应用视图布局
+                </button>
+              </div>
+            </div>
+          </Card>
         </div>
-      </Card>
+      </div>
     </div>
   );
 }

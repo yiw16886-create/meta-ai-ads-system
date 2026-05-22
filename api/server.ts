@@ -6,6 +6,7 @@ import { subDays, format } from "date-fns";
 import bcrypt from "bcryptjs";
 import nodemailer from "nodemailer";
 import crypto from "crypto";
+import { GoogleGenAI } from "@google/genai";
 
 // Helper to get SMTP config
 async function getSmtpConfig() {
@@ -951,6 +952,174 @@ app.get("/api/stores/all-dashboard-summary", async (req, res) => {
     res.json(summaryMap);
   } catch (error: any) {
     res.status(500).json({ error: "Failed to fetch stores summary", details: error.message });
+  }
+});
+
+// POST /api/ai/chat - AI General Chat
+app.post("/api/ai/chat", async (req, res) => {
+  const { messages } = req.body;
+
+  const systemInstruction = `
+    你是一位精通 Facebook 广告投放与独立站运营的顶尖 AI 策略师。
+    你的任务是解答用户关于广告跑量、防封、受众调整、预算策略等方面的问题。
+    回答需硬核、无废话、直击痛点，给出具体的落地建议。
+    格式要求：使用 Markdown 语法，分点作答。
+  `;
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  try {
+    const settings = await prisma.setting.findMany({
+      where: { key: { in: ['GEMINI_API_KEY', 'GEMINI_MODEL'] } }
+    });
+    
+    let apiKey = settings.find(s => s.key === 'GEMINI_API_KEY')?.value?.trim();
+    if (!apiKey) {
+      apiKey = process.env.GEMINI_API_KEY?.trim();
+    }
+    
+    let aiModel = settings.find(s => s.key === 'GEMINI_MODEL')?.value?.trim() || "gemini-3.5-flash";
+    if (aiModel.includes("gemini-1.5") || aiModel.includes("gemini-2.")) {
+      aiModel = "gemini-3.5-flash";
+    }
+
+    if (!apiKey) {
+      res.write(`data: ${JSON.stringify({ error: "应用未配置 GEMINI_API_KEY，请在设置中配置 API Key" })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+      return;
+    }
+
+    const ai = new GoogleGenAI({
+      apiKey: apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
+
+    const formattedMessages = messages.map((m: any) => ({
+      role: m.role === 'ai' ? 'model' : 'user',
+      parts: [{ text: m.content || " " }]
+    }));
+
+    // Filter out initial empty parts if there are any
+    // and make sure we don't pass an empty last message
+    const validMessages = formattedMessages.filter((m: any) => m.parts[0].text.trim() !== "");
+
+    const stream = await ai.models.generateContentStream({
+      model: aiModel,
+      contents: validMessages,
+      config: {
+        systemInstruction,
+      }
+    });
+
+    for await (const chunk of stream) {
+      const content = chunk.text;
+      if (content) {
+        res.write(`data: ${JSON.stringify({ text: content })}\n\n`);
+      }
+    }
+    
+    res.write('data: [DONE]\n\n');
+    res.end();
+
+  } catch (error: any) {
+    let errorMsg = "AI 接口响应超时或失败，请重试";
+    if (error?.message?.includes("API key not valid")) {
+      console.error("AI 聊天失败: API Key 无效");
+      errorMsg = "API Key 无效，请在平台设置中配置正确的 GEMINI_API_KEY。";
+    } else {
+      console.error("AI 聊天失败:", error);
+    }
+    res.write(`data: ${JSON.stringify({ error: errorMsg })}\n\n`);
+    res.end();
+  }
+});
+
+// POST /api/ai/diagnose - AI Diagnostics Stream
+app.post("/api/ai/diagnose", async (req, res) => {
+  const accountData = req.body;
+
+  const systemInstruction = `
+    你是一位精通 Facebook 广告投放与独立站运营的顶尖 AI 策略师。
+    你的任务是根据传入的广告账户实时财务和消耗数据，进行硬核、无废话、直击痛点的健康度诊断。
+
+    你必须严格遵循以下业务逻辑：
+    1. 【断流预警】：如果 days_remaining <= 2天，必须在报告开头以【🚨 高危断流警报】标红警告，计算出建议的充值金额（建议至少补足到7天安全消耗量）。
+    2. 【消耗状态分析】：结合已花费和均消，判断该账户是否在健康跑量。
+    3. 【今日动作指南】：给出的建议必须绝对具体（如：“立刻去FB后台重置限额”、“账户无断流风险，今天可保持跑量”），拒绝模棱两可。
+    
+    格式要求：使用 Markdown 语法，分为【风险排查】、【状态诊断】、【今日执行动作】。
+  `;
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  try {
+    const settings = await prisma.setting.findMany({
+      where: { key: { in: ['GEMINI_API_KEY', 'GEMINI_MODEL'] } }
+    });
+    
+    let apiKey = settings.find(s => s.key === 'GEMINI_API_KEY')?.value?.trim();
+    if (!apiKey) {
+      apiKey = process.env.GEMINI_API_KEY?.trim();
+    }
+    
+    let aiModel = settings.find(s => s.key === 'GEMINI_MODEL')?.value?.trim() || "gemini-3.5-flash";
+    if (aiModel.includes("gemini-1.5") || aiModel.includes("gemini-2.")) {
+      aiModel = "gemini-3.5-flash";
+    }
+
+    if (!apiKey) {
+      res.write(`data: ${JSON.stringify({ error: "应用未配置 GEMINI_API_KEY，请在设置中配置 API Key" })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+      return;
+    }
+
+    const ai = new GoogleGenAI({
+      apiKey: apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
+
+    const stream = await ai.models.generateContentStream({
+      model: aiModel,
+      contents: `请帮我诊断该广告账户的数据：${JSON.stringify(accountData)}`,
+      config: {
+        systemInstruction,
+      }
+    });
+
+    for await (const chunk of stream) {
+      const content = chunk.text;
+      if (content) {
+        res.write(`data: ${JSON.stringify({ text: content })}\n\n`);
+      }
+    }
+    
+    res.write('data: [DONE]\n\n');
+    res.end();
+
+  } catch (error: any) {
+    let errorMsg = "AI 接口响应超时或失败，请重试";
+    if (error?.message?.includes("API key not valid")) {
+      console.error("AI 诊断失败: API Key 无效");
+      errorMsg = "API Key 无效，请在平台设置中配置正确的 GEMINI_API_KEY。";
+    } else {
+      console.error("AI 诊断失败:", error);
+    }
+    res.write(`data: ${JSON.stringify({ error: errorMsg })}\n\n`);
+    res.end();
   }
 });
 
