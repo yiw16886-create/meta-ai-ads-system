@@ -54,6 +54,10 @@ model User {
   role      String   @default("member") // "admin" or "member"
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  organizations UserOrganization[]
+  workspaces    UserWorkspace[]
+  auditLogs     AuditLog[]
 }
 
 model Invitation {
@@ -73,6 +77,8 @@ model Store {
   domain         String?
   visitors       Int         @default(0)
   accounts       AdAccount[]
+  workspaceId    String?
+  workspace      Workspace?  @relation(fields: [workspaceId], references: [id])
   createdAt      DateTime    @default(now())
   updatedAt      DateTime    @updatedAt
 }
@@ -94,8 +100,93 @@ model AdAccount {
   fb_account_id   String   @unique
   fb_account_name String?
   fb_access_token String?
+  workspaceId     String?
+  workspace       Workspace? @relation(fields: [workspaceId], references: [id])
   storeId         Int
   store           Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }
+
+// SaaS Multi-tenancy Extensions
+
+model Organization {
+  id          String   @id @default(cuid())
+  name        String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Subscription / Billing Tier
+  plan        PlanTier @default(FREE)
+  stripeId    String?
+
+  users       UserOrganization[]
+  workspaces  Workspace[]
+  auditLogs   AuditLog[]
+}
+
+enum PlanTier {
+  FREE
+  PRO
+  ENTERPRISE
+}
+
+model Workspace {
+  id             String       @id @default(cuid())
+  name           String
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  users          UserWorkspace[]
+  stores         Store[]
+  adAccounts     AdAccount[]
+}
+
+enum OrgRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+enum WorkspaceRole {
+  ADMIN
+  OPERATOR
+  VIEWER
+}
+
+model UserOrganization {
+  userId         Int
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  role           OrgRole      @default(MEMBER)
+  
+  @@id([userId, organizationId])
+}
+
+model UserWorkspace {
+  userId      Int
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspaceId String
+  workspace   Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  role        WorkspaceRole @default(VIEWER)
+
+  @@id([userId, workspaceId])
+}
+
+model AuditLog {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         Int?
+  user           User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action         String
+  resourceType   String
+  resourceId     String?
+  details        String?      // Storing JSON string for compatibility
+  createdAt      DateTime     @default(now())
+}
+

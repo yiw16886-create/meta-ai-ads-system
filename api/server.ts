@@ -1,39 +1,16 @@
 import express, { Request, Response, NextFunction } from "express";
 import path from "path";
 import axios from "axios";
-import prisma from "./db.js";
+import prisma from "./db/prisma.js";
+import { getMetaToken, getSmtpConfig } from "./services/settings.service.js";
+import { errorHandler } from "./middlewares/errorHandler.js";
 import { subDays, format } from "date-fns";
 import bcrypt from "bcryptjs";
 import nodemailer from "nodemailer";
 import crypto from "crypto";
 import { GoogleGenAI } from "@google/genai";
 
-// Helper to get SMTP config
-async function getSmtpConfig() {
-  const settings = await prisma.setting.findMany({
-    where: {
-      key: {
-        in: ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "SMTP_FROM"]
-      }
-    }
-  });
-  
-  const configMap: Record<string, string> = {};
-  settings.forEach(s => { configMap[s.key] = s.value; });
-  
-  if (!configMap.SMTP_HOST || !configMap.SMTP_USER || !configMap.SMTP_PASS) return null;
-  
-  return {
-    host: configMap.SMTP_HOST,
-    port: parseInt(configMap.SMTP_PORT || "465"),
-    secure: configMap.SMTP_PORT === "465",
-    auth: {
-      user: configMap.SMTP_USER,
-      pass: configMap.SMTP_PASS
-    },
-    from: configMap.SMTP_FROM || configMap.SMTP_USER
-  };
-}
+// Helper to get SMTP config moved to settings.service.ts
 
 async function sendInvitationEmail(email: string, token: string, role: string, baseUrlInput?: string) {
   const config = await getSmtpConfig();
@@ -163,11 +140,19 @@ process.on("unhandledRejection", (reason, promise) => {
   console.error("🔥 UNHANDLED REJECTION:", reason);
 });
 
+import aiRoutes from "./routes/ai.routes.js";
+import asyncRoutes from "./routes/async.routes.js";
+import saasRoutes from "./routes/saas.routes.js";
+
 const app = express();
 export default app;
 const PORT = 3000;
 
 app.use(express.json());
+app.use("/api/v2/ai", aiRoutes);
+app.use("/api/v2/async", asyncRoutes);
+app.use("/api/v2/saas", saasRoutes);
+
 
 // API route to check if server is running
 app.get("/api/health", (req, res) => {
@@ -180,13 +165,7 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-// Helper to get Meta Access Token from DB or Env
-async function getMetaToken() {
-  const setting = await prisma.setting.findUnique({
-    where: { key: "META_ACCESS_TOKEN" },
-  });
-  return setting?.value || process.env.META_ACCESS_TOKEN;
-}
+// Helper to get Meta Access Token moved to settings.service.ts
 
 // Helper to extract Meta Error Message
 function extractMetaError(error: any): string {
@@ -240,180 +219,39 @@ app.get("/api/accounts", async (req, res) => {
 app.post("/api/sync", async (req, res) => {
   const { startDate, endDate } = req.body;
   if (!startDate || !endDate) {
-    return res
-      .status(400)
-      .json({ error: "startDate and endDate are required" });
+    return res.status(400).json({ error: "startDate and endDate are required" });
   }
 
   try {
     const token = await getMetaToken();
     if (!token) {
-      return res
-        .status(400)
-        .json({ error: "Meta Token 未配置，请前往设置页面填写" });
+      return res.status(400).json({ error: "Meta Token 未配置，请前往设置页面填写" });
     }
 
-    const accountsResponse = await axios.get(
-      `https://graph.facebook.com/v19.0/me/adaccounts`,
-      {
-        params: {
-          fields: "name,account_id,account_status",
-          limit: 1000,
-          access_token: token,
-        },
-      },
+    // Reuse the new MetaService to fetch available active accounts
+    const accounts = await import("./services/meta/meta.service.js").then(m => m.MetaService.fetchAdAccounts(token));
+    const activeAccounts = accounts.filter((a: any) => a.account_status === 1);
+
+    // Orchestrate sync using the new SyncService
+    const SyncService = (await import("./services/sync/sync.service.js")).SyncService;
+    const { totalSynced, errors } = await SyncService.syncMultipleAccounts(
+      activeAccounts,
+      token,
+      { startDate, endDate }
     );
 
-    const accounts = (accountsResponse.data.data || []).filter(
-      (a: any) => a.account_status === 1,
-    );
-    let totalSynced = 0;
-    let stopSync = false;
-    let lastError = "";
-
-    // 使用分批同步逻辑 (每5个一组) 避免 Meta API 限流
-    const chunkSize = 5;
-    for (let i = 0; i < accounts.length; i += chunkSize) {
-      if (stopSync) break;
-      const chunk = accounts.slice(i, i + chunkSize);
-
-      await Promise.all(
-        chunk.map(async (account: any) => {
-          const accountId = account.account_id || account.id;
-          try {
-            const insightsResponse = await axios.get(
-              `https://graph.facebook.com/v19.0/act_${accountId}/insights`,
-              {
-                params: {
-                  time_range: JSON.stringify({
-                    since: startDate,
-                    until: endDate,
-                  }),
-                  time_increment: 1,
-                  fields:
-                    "account_id,account_name,date_start,reach,impressions,clicks,spend,actions,purchase_roas,action_values",
-                  access_token: token,
-                },
-              },
-            );
-
-            const insights = insightsResponse.data.data || [];
-
-            for (const day of insights) {
-              const actions = day.actions || [];
-              const getActionValue = (type: string) => {
-                const action = actions.find((a: any) => a.action_type === type);
-                return action ? parseFloat(action.value) : 0;
-              };
-
-              const actionValues = day.action_values || [];
-              const getActionVal = (type: string) => {
-                const action = actionValues.find(
-                  (a: any) => a.action_type === type,
-                );
-                return action ? parseFloat(action.value) : 0;
-              };
-
-              const carts = getActionValue("add_to_cart");
-              const checkouts = getActionValue("initiate_checkout");
-              const purchases = getActionValue("purchase");
-              const purchaseValue =
-                getActionVal("purchase") || getActionVal("omni_purchase");
-
-              const spend = parseFloat(day.spend || "0");
-              const clicks = parseInt(day.clicks || "0");
-              const impressions = parseInt(day.impressions || "0");
-              const reach = parseInt(day.reach || "0");
-
-              const cpc = clicks > 0 ? spend / clicks : 0;
-              const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
-              const atcRate = clicks > 0 ? (carts / clicks) * 100 : 0;
-              const checkoutRate = clicks > 0 ? (checkouts / clicks) * 100 : 0;
-              const cpp = purchases > 0 ? spend / purchases : 0;
-              const roas = spend > 0 ? purchaseValue / spend : 0;
-
-              await prisma.adInsight.upsert({
-                where: {
-                  accountId_date: {
-                    accountId: accountId,
-                    date: day.date_start,
-                  },
-                },
-                update: {
-                  accountName: day.account_name,
-                  reach,
-                  impressions,
-                  clicks,
-                  spend,
-                  addToCart: carts,
-                  initiateCheckout: checkouts,
-                  purchases,
-                  purchaseValue,
-                  cpc,
-                  ctr,
-                  atcRate,
-                  checkoutRate,
-                  cpp,
-                  roas,
-                },
-                create: {
-                  accountId: accountId,
-                  date: day.date_start,
-                  accountName: day.account_name,
-                  reach,
-                  impressions,
-                  clicks,
-                  spend,
-                  addToCart: carts,
-                  initiateCheckout: checkouts,
-                  purchases,
-                  purchaseValue,
-                  cpc,
-                  ctr,
-                  atcRate,
-                  checkoutRate,
-                  cpp,
-                  roas,
-                },
-              });
-              totalSynced++;
-            }
-          } catch (err: any) {
-            lastError = extractMetaError(err);
-            const status = err.response?.status;
-            if (status === 403) {
-              console.warn(
-                `[Manual API Sync] ⚠️ Account ${accountId} access restricted (403): ${lastError}`,
-              );
-            } else {
-              console.error(
-                `[Manual API Sync] ❌ Error syncing account ${accountId}:`,
-                err.response?.data || err.message,
-              );
-            }
-          }
-        }),
-      );
-
-      // 每批处理后延迟 1.5 秒
-      if (i + chunkSize < accounts.length) {
-        await new Promise((resolve) => setTimeout(resolve, 1500));
-      }
-    }
-
-    if (stopSync && totalSynced === 0) {
-      return res.status(401).json({ error: lastError });
+    if (errors.length > 0 && totalSynced === 0) {
+      return res.status(500).json({ error: "Sync failed for all accounts.", details: errors });
     }
 
     res.json({
       success: true,
       count: totalSynced,
-      error: stopSync ? lastError : undefined,
+      errors: errors.length > 0 ? errors : undefined,
     });
   } catch (error: any) {
-    const msg = extractMetaError(error);
     console.error("Sync error:", error.response?.data || error.message);
-    res.status(500).json({ error: msg });
+    res.status(500).json({ error: error.message || "Unknown error during sync" });
   }
 });
 
@@ -2281,6 +2119,9 @@ app.use("/api", (req, res) => {
     .status(404)
     .json({ error: `API Route not found: ${req.method} ${req.url}` });
 });
+
+// Register Global Error Handler
+app.use(errorHandler);
 
 async function startServer() {
   try {
