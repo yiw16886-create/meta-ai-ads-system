@@ -959,13 +959,6 @@ app.get("/api/stores/all-dashboard-summary", async (req, res) => {
 app.post("/api/ai/chat", async (req, res) => {
   const { messages } = req.body;
 
-  const systemInstruction = `
-    你是一位精通 Facebook 广告投放与独立站运营的顶尖 AI 策略师。
-    你的任务是解答用户关于广告跑量、防封、受众调整、预算策略等方面的问题。
-    回答需硬核、无废话、直击痛点，给出具体的落地建议。
-    格式要求：使用 Markdown 语法，分点作答。
-  `;
-
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
@@ -991,6 +984,52 @@ app.post("/api/ai/chat", async (req, res) => {
       res.end();
       return;
     }
+
+    // Dynamic Database Context construction
+    let dbContextText = "";
+    try {
+      const [allStores, allMappings, allMonitorings, recentInsights] = await Promise.all([
+        prisma.store.findMany({ include: { accounts: true } }),
+        prisma.accountMapping.findMany(),
+        prisma.metaAccountMonitoring.findMany(),
+        prisma.adInsight.findMany({ orderBy: { date: "desc" }, take: 150 })
+      ]);
+
+      dbContextText = `
+【已配置的店铺列表 (Stores)】:
+${allStores.length === 0 ? "（暂无店铺数据）" : allStores.map(s => `- 店铺名称: ${s.name} | 域名: ${s.domain || "未配置"} | 绑定的广告账户数: ${s.accounts?.length || 0}`).join('\n')}
+
+【广告账户映射列表 (Account Mappings)】:
+${allMappings.length === 0 ? "（暂无映射数据）" : allMappings.map(m => `- 账户ID: act_${m.accountId} (别名: ${m.accountName}) | 对应店铺: ${m.store || "未配置"} | 项目: ${m.project || "未配置"} | 负责人: ${m.owner || "未配置"}`).join('\n')}
+
+【广告账户实时健康、财务和余额监控状态】:
+${allMonitorings.length === 0 ? "（暂无监控状态数据）" : allMonitorings.map(mono => {
+  const statusStr = mono.status === 1 ? "正常 (ACTIVE)" : mono.status === 2 ? "禁用 (DISABLED)" : mono.status === 3 ? "待重新授权 (UNSETTLED)" : `未知(${mono.status})`;
+  return `- 账户ID: act_${mono.accountId} | 账户名称: ${mono.accountName || "未知"} | 状态: ${statusStr} | 币种: ${mono.currency || "USD"} | 账户限额 (Spend Cap): ${mono.spendCap || 0} | 已消耗: ${mono.amountSpent || 0} | 账户余额 (日均量/可用额): ${mono.balance || 0}`;
+}).join('\n')}
+
+【最近同步的 150 条广告跑量数据明细 (Ad Insights - 日期倒序)】:
+${recentInsights.length === 0 ? "（暂无最近的广告跑量/转化率同步数据）" : recentInsights.map(ins => `- 日期: ${ins.date} | 账户ID: act_${ins.accountId} (名称: ${ins.accountName}) | 消耗: ${ins.spend} | 展示数: ${ins.impressions} | 点击数: ${ins.clicks} | CTR: ${(ins.ctr * 100).toFixed(2)}% | CPC: ${ins.cpc} | 加购数: ${ins.addToCart} | 发起结账: ${ins.initiateCheckout} | 购买数: ${ins.purchases} | 购买总价值: ${ins.purchaseValue} | ROAS: ${ins.roas}`).join('\n')}
+`;
+    } catch (dbErr: any) {
+      console.error("Failed to fetch database context for AI chat:", dbErr);
+      dbContextText = "\n注：读取数据库实时数据出错，无法展示数据库最新数据副本，错误原因: " + dbErr.message;
+    }
+
+    const systemInstruction = `
+      你是一位精通 Facebook 广告投放与独立站运营的顶尖 AI 策略师。
+      你已彻底连通系统数据库，可以直接查看底部的【数据库实时数据上下文】进行诊断、分析与解答。
+      
+      业务规范与设定：
+      1. 用户对你说话时无需手动向你粘贴当前页面或数据库里的数值！你应该【主动】基于【数据库实时数据上下文】中的实时高密度数据，提供精准计算、指标分析、表现对比或余额预警故障排查。
+      2. 当用户问及"我的广告跑量如何"、"最近点击率和 ROAS"、"哪些账户断流/余额不足了"、"店铺目前的数据"等问题时，立刻提取对应的广告账户和店铺信息进行分析答疑。
+      3. 若发现有些账户余额（balance）明显不足或状态为禁用（DISABLED），可在回答中给予适时的橙/红色预警或充值、排查的具体实操建议。
+      4. 解答需硬核、专业、无废话、直击痛点，拒绝模棱两可。
+      5. 统一使用 Markdown 格式，清晰分段或分点展示。
+      
+      【数据库实时数据上下文】:
+      ${dbContextText}
+    `;
 
     const ai = new GoogleGenAI({
       apiKey: apiKey,
