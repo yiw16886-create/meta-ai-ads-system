@@ -1,0 +1,31 @@
+services:
+  meta-ads-mcp:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - SERVER_URL=${SERVER_URL:-http://localhost:3000}
+      - META_APP_ID=${META_APP_ID:-}
+      - META_APP_SECRET=${META_APP_SECRET:-}
+      - META_OAUTH_REDIRECT_URI=${META_OAUTH_REDIRECT_URI:-}
+      - AUTH_ALLOWED_EMAILS=${AUTH_ALLOWED_EMAILS:-}
+      - AUTH_ALLOWED_DOMAINS=${AUTH_ALLOWED_DOMAINS:-}
+      - AUTH_ALLOWED_FB_USER_IDS=${AUTH_ALLOWED_FB_USER_IDS:-}
+      - TOKEN_ENCRYPTION_KEY=${TOKEN_ENCRYPTION_KEY:-}
+      - SESSION_COOKIE_SECRET=${SESSION_COOKIE_SECRET:-}
+      - OAUTH_SECRET=${OAUTH_SECRET:-}
+      - FIRESTORE_PROJECT_ID=${FIRESTORE_PROJECT_ID:-}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
+      - META_ACCESS_TOKEN=${META_ACCESS_TOKEN:-}
+      - META_TOKENS=${META_TOKENS:-}
+      - MCP_API_KEY=${MCP_API_KEY:-}
+      - META_API_VERSION=${META_API_VERSION:-v22.0}
+      - PORT=3000
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - NODE_ENV=production
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3

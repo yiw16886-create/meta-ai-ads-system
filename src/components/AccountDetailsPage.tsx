@@ -11,6 +11,9 @@ import {
   Check,
   ChevronsUpDown,
   Info,
+  Settings2,
+  AlertTriangle,
+  Lightbulb,
 } from "lucide-react";
 import {
   Card,
@@ -57,6 +60,9 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
   });
   const [datePickerOpen, setDatePickerOpen] = useState(false);
 
+  const [budgetAlertThreshold, setBudgetAlertThreshold] = useState<number>(0.8);
+
+
   const [level, setLevel] = useState<"campaigns" | "adsets" | "ads">(
     "campaigns",
   );
@@ -91,6 +97,17 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
       setSelectedAdSetIds((prev) => prev.filter((id) => validAdSetIds.has(id)));
     }
   }, [selectedCampaignIds, hierarchy.adSets]);
+
+  useEffect(() => {
+    if (data.length > 0) {
+      const riskyCount = data.filter(item => isBudgetRisk(item)).length;
+      if (riskyCount > 0) {
+        toast.warning(`[AI预警提醒] 主动扫描发现当前层级有 ${riskyCount} 个对象触及预算警戒线(${Math.round(budgetAlertThreshold * 100)}%)`, {
+          duration: 5000,
+        });
+      }
+    }
+  }, [data, budgetAlertThreshold]);
 
   useEffect(() => {
     if (selectedAdSetIds.length > 0) {
@@ -331,7 +348,7 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
       // Search filter
       if (
         tableSearch &&
-        !item.name.toLowerCase().includes(tableSearch.toLowerCase())
+        !(item.name || "").toLowerCase().includes((tableSearch || "").toLowerCase())
       ) {
         return false;
       }
@@ -483,6 +500,24 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
   const currentAccountName =
     accounts.find((a) => a.accountId === accountId)?.accountName || accountId;
 
+  const isBudgetRisk = (item: any) => {
+    const budget = getBudgetValue(item);
+    const spend = getInsightValue(item, "spend");
+    return budget > 0 && spend >= budget * budgetAlertThreshold;
+  };
+
+  const getAIRiskHint = (item: any) => {
+    if (isBudgetRisk(item)) return "⚠️ 预算即将触顶";
+    if (item.effective_status === 'DISABLED') return "❌ 状态异常被禁用";
+    return "✅ 账户运行平稳";
+  };
+
+  const getAISuggestion = (item: any) => {
+     if (isBudgetRisk(item)) return "建议提额或调整分日分布";
+     if (item.effective_status === 'DISABLED') return "请排查政策并修复";
+     return "保持当前优质跑量";
+  };
+
   return (
     <div className="min-h-screen bg-[#f3f4f6]">
       {/* Top Navbar */}
@@ -582,10 +617,10 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                         {accounts
                           .filter(
                             (a) =>
-                              a.accountName
-                                ?.toLowerCase()
-                                .includes(accountSearch.toLowerCase()) ||
-                              a.accountId.includes(accountSearch),
+                              (a.accountName || "")
+                                .toLowerCase()
+                                .includes((accountSearch || "").toLowerCase()) ||
+                              (a.accountId || "").includes(accountSearch || ""),
                           )
                           .map((acc) => (
                             <button
@@ -734,6 +769,43 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                 </PopoverContent>
               </Popover>
 
+              {/* Alert Config Popover */}
+              <Popover>
+                <PopoverTrigger
+                  render={
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-9 px-3 border-gray-300 text-gray-700 shadow-sm flex items-center gap-2 hover:bg-gray-50"
+                    />
+                  }
+                >
+                  <Settings2 className="w-4 h-4 text-gray-500" />
+                  预警设置
+                </PopoverTrigger>
+                <PopoverContent className="w-64 p-4 text-sm" align="end" sideOffset={8}>
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <h4 className="font-semibold leading-none">自定义预算警戒线 ✨</h4>
+                      <p className="text-[12px] text-muted-foreground mt-1">
+                        当消耗超过预算的指定比例时，将触发系统内的 AI 监控预警提醒。
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <Input
+                        type="number"
+                        min="1"
+                        max="100"
+                        className="h-8 w-20 text-right"
+                        value={Math.round(budgetAlertThreshold * 100)}
+                        onChange={(e) => setBudgetAlertThreshold(parseInt(e.target.value || "80") / 100)}
+                      />
+                      <span className="text-gray-500">%</span>
+                    </div>
+                  </div>
+                </PopoverContent>
+              </Popover>
+
               <Button
                 onClick={fetchData}
                 disabled={loading}
@@ -856,6 +928,12 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                     </th>
 
                     {/* New Metric Columns */}
+                    <th className="h-10 px-2 align-middle whitespace-nowrap border-r border-[#e5e7eb] px-4 text-[12px] bg-red-50 text-red-600 font-bold sticky top-0 z-30 min-w-[140px]">
+                      <div className="flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> AI 风险提示</div>
+                    </th>
+                    <th className="h-10 px-2 align-middle whitespace-nowrap border-r border-[#e5e7eb] px-4 text-[12px] bg-blue-50 text-blue-600 font-bold sticky top-0 z-30 min-w-[200px]">
+                      <div className="flex items-center gap-1"><Lightbulb className="w-3.5 h-3.5" /> AI 优化建议</div>
+                    </th>
                     <th
                       className="h-10 px-2 align-middle whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:bg-gray-100 border-r border-b border-[#e5e7eb] text-[#4b5563] font-bold px-4 text-[12px]"
                       onClick={() => requestSort("cpm")}
@@ -994,6 +1072,11 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                             }}
                           >
                             {item.name}
+                            {isBudgetRisk(item) && (
+                              <span className="ml-2 inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700 whitespace-nowrap animate-pulse border border-red-200">
+                                预算预警
+                              </span>
+                            )}
                           </div>
                         </td>
                         <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
@@ -1009,7 +1092,7 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                           </span>
                         </td>
                         <td className="p-2 align-middle whitespace-nowrap font-bold border-r border-[#e5e7eb] text-gray-800 px-4">
-                          {getInsightValue(item, "results").toLocaleString()}
+                          {(getInsightValue(item, "results") || 0).toLocaleString()}
                         </td>
                         <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
                           ${getInsightValue(item, "cpr").toFixed(2)}
@@ -1022,27 +1105,36 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                           ${getInsightValue(item, "spend").toFixed(2)}
                         </td>
                         <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
-                          {getInsightValue(
+                          {(getInsightValue(
                             item,
                             "impressions",
-                          ).toLocaleString()}
+                          ) || 0).toLocaleString()}
                         </td>
                         <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
-                          {getInsightValue(item, "reach").toLocaleString()}
+                          {(getInsightValue(item, "reach") || 0).toLocaleString()}
                         </td>
                         <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
                           {getInsightValue(item, "frequency").toFixed(2)}
                         </td>
 
                         {/* New Metric Cells */}
+                        <td className="p-2 align-middle whitespace-nowrap text-[12px] font-semibold text-red-600 border-r border-[#e5e7eb] px-4 bg-red-50/20">
+                          <div className="flex items-center gap-1.5">
+                            {isBudgetRisk(item) && <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />}
+                            {getAIRiskHint(item)}
+                          </div>
+                        </td>
+                        <td className="p-2 align-middle whitespace-nowrap text-[12px] text-blue-700 border-r border-[#e5e7eb] px-4 bg-blue-50/20 font-medium">
+                          {getAISuggestion(item)}
+                        </td>
                         <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
                           ${getInsightValue(item, "cpm").toFixed(2)}
                         </td>
                         <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
-                          {getInsightValue(
+                          {(getInsightValue(
                             item,
                             "link_clicks",
-                          ).toLocaleString()}
+                          ) || 0).toLocaleString()}
                         </td>
                         <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
                           {getInsightValue(item, "link_ctr").toFixed(2)}%
@@ -1051,7 +1143,7 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                           ${getInsightValue(item, "link_cpc").toFixed(2)}
                         </td>
                         <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
-                          {getInsightValue(item, "clicks").toLocaleString()}
+                          {(getInsightValue(item, "clicks") || 0).toLocaleString()}
                         </td>
                         <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
                           {getInsightValue(item, "ctr").toFixed(2)}%
@@ -1060,10 +1152,10 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                           ${getInsightValue(item, "cpc").toFixed(2)}
                         </td>
                         <td className="p-2 align-middle whitespace-nowrap text-gray-600 px-4">
-                          {getInsightValue(
+                          {(getInsightValue(
                             item,
                             "add_to_cart",
-                          ).toLocaleString()}
+                          ) || 0).toLocaleString()}
                         </td>
                       </tr>
                     ))
@@ -1094,12 +1186,14 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                           </div>
                         </div>
                       </td>
+                      <td className="p-2 align-middle whitespace-nowrap text-center text-gray-400 border-r border-[#ced0d4] px-4 bg-[#f0f2f5] opacity-50 text-[10px]">AI分析略过</td>
+                      <td className="p-2 align-middle whitespace-nowrap text-center text-gray-400 border-r border-[#ced0d4] px-4 bg-[#f0f2f5] opacity-50 text-[10px]">AI分析略过</td>
                       <td className="p-2 align-middle whitespace-nowrap text-center text-gray-400 border-r border-[#ced0d4] px-4">
                         —
                       </td>
                       <td className="p-2 align-middle whitespace-nowrap border-r border-[#ced0d4] text-[#1c2b33] px-4 leading-tight">
                         <div className="font-bold text-[13px]">
-                          {totalPurchases.toLocaleString()}
+                          {(totalPurchases || 0).toLocaleString()}
                         </div>
                         <div className="text-[11px] text-gray-500">
                           Meta 账户
@@ -1124,13 +1218,13 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                       </td>
                       <td className="p-2 align-middle whitespace-nowrap text-[#1c2b33] border-r border-[#ced0d4] px-4 leading-tight">
                         <div className="font-bold text-[13px]">
-                          {totalImpressions.toLocaleString()}
+                          {(totalImpressions || 0).toLocaleString()}
                         </div>
                         <div className="text-[11px] text-gray-500">共计</div>
                       </td>
                       <td className="p-2 align-middle whitespace-nowrap text-[#1c2b33] border-r border-[#ced0d4] px-4 leading-tight">
                         <div className="font-bold text-[13px]">
-                          {totalReach.toLocaleString()}
+                          {(totalReach || 0).toLocaleString()}
                         </div>
                         <div className="text-[11px] text-gray-500">共计</div>
                       </td>
@@ -1152,7 +1246,7 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                       </td>
                       <td className="p-2 align-middle whitespace-nowrap text-[#1c2b33] border-r border-[#ced0d4] px-4 leading-tight">
                         <div className="font-bold text-[13px]">
-                          {linkClicks.toLocaleString()}
+                          {(linkClicks || 0).toLocaleString()}
                         </div>
                         <div className="text-[11px] text-gray-500">共计</div>
                       </td>
@@ -1170,7 +1264,7 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                       </td>
                       <td className="p-2 align-middle whitespace-nowrap text-[#1c2b33] border-r border-[#ced0d4] px-4 leading-tight">
                         <div className="font-bold text-[13px]">
-                          {allClicks.toLocaleString()}
+                          {(allClicks || 0).toLocaleString()}
                         </div>
                         <div className="text-[11px] text-gray-500">共计</div>
                       </td>
@@ -1188,7 +1282,7 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                       </td>
                       <td className="p-2 align-middle whitespace-nowrap text-[#1c2b33] px-4 leading-tight">
                         <div className="font-bold text-[13px]">
-                          {totalAddToCart.toLocaleString()}
+                          {(totalAddToCart || 0).toLocaleString()}
                         </div>
                         <div className="text-[11px] text-gray-500">共计</div>
                       </td>

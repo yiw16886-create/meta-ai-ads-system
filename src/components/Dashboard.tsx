@@ -23,12 +23,19 @@ import {
   Mail,
   X,
   HelpCircle,
+  ShoppingCart,
+  Image as ImageIcon,
+  ChevronDown
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { StoresDashboard } from "./StoresDashboard";
 import { MonitoringDashboard } from "./MonitoringDashboard";
 import { OverviewDashboard } from "./OverviewDashboard";
+import { ProductIntelligenceDashboard } from "./ProductIntelligenceDashboard";
+import { CreativeIntelligenceDashboard } from "./CreativeIntelligenceDashboard";
+import { AudienceAnalysisDashboard } from "./AudienceAnalysisDashboard";
+import { CampaignStructureDashboard } from "./CampaignStructureDashboard";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -87,6 +94,9 @@ export function Dashboard({ onLogout }: DashboardProps) {
 
   const initialTab = new URLSearchParams(location.search).get("tab") as
     | "dashboard"
+    | "campaign_structure"
+    | "audience_analysis"
+    | "creative_analysis"
     | "settings"
     | "category"
     | "accounts"
@@ -94,14 +104,23 @@ export function Dashboard({ onLogout }: DashboardProps) {
     | "monitoring"
     | "users"
     | "overview"
+    | "product_intelligence"
+    | "creative_intelligence"
     || "overview";
 
   const [currentTab, setCurrentTab] = useState<
-    "dashboard" | "settings" | "category" | "accounts" | "stores" | "users" | "monitoring" | "overview"
+    "dashboard" | "campaign_structure" | "audience_analysis" | "creative_analysis" | "settings" | "category" | "accounts" | "stores" | "users" | "monitoring" | "overview" | "product_intelligence" | "creative_intelligence"
   >(initialTab);
 
   const currentUser = JSON.parse(localStorage.getItem("user") || "{}");
   const isAdmin = currentUser.role === "admin";
+  
+  const [settingsExpanded, setSettingsExpanded] = useState<boolean>(
+    initialTab === "settings" || initialTab === "users"
+  );
+  const [dashboardExpanded, setDashboardExpanded] = useState<boolean>(
+    initialTab === "dashboard" || initialTab === "campaign_structure" || initialTab === "audience_analysis" || initialTab === "creative_analysis"
+  );
 
   useEffect(() => {
     const tab = new URLSearchParams(location.search).get("tab") as any;
@@ -233,7 +252,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
       (acc, curr) => {
         if (
           search &&
-          !curr.accountName?.toLowerCase()?.includes(search.toLowerCase())
+          !(curr.accountName || "").toLowerCase().includes((search || "").toLowerCase())
         ) {
           return acc;
         }
@@ -347,13 +366,92 @@ export function Dashboard({ onLogout }: DashboardProps) {
           </div>
         </div>
         <nav className="flex-1 px-4 space-y-1">
+          <button
+            onClick={() => navigate(`/?tab=overview`)}
+            className={cn(
+              "w-full flex items-center gap-3 px-4 py-3 rounded-[8px] text-[14px] transition-colors cursor-pointer",
+              currentTab === "overview"
+                ? "bg-meta-nav text-white"
+                : "text-meta-text-muted hover:text-white hover:bg-meta-nav",
+            )}
+          >
+            <BarChart3 className="w-4 h-4" />
+            数据总览
+          </button>
+
+          <div>
+            <button
+              onClick={() => setDashboardExpanded(!dashboardExpanded)}
+              className={cn(
+                "w-full flex items-center justify-between px-4 py-3 rounded-[8px] text-[14px] transition-colors cursor-pointer",
+                (currentTab === "dashboard" || currentTab === "campaign_structure" || currentTab === "audience_analysis" || currentTab === "creative_analysis")
+                  ? "text-white"
+                  : "text-meta-text-muted hover:text-white hover:bg-meta-nav"
+              )}
+            >
+              <div className="flex items-center gap-3">
+                <LayoutDashboard className="w-4 h-4" />
+                <span>Meta 广告账户</span>
+              </div>
+              <ChevronDown className={cn("w-4 h-4 transition-transform", dashboardExpanded ? "rotate-180" : "")} />
+            </button>
+            
+            {dashboardExpanded && (
+              <div className="pl-11 pr-4 py-1 space-y-1">
+                <button
+                  onClick={() => navigate("/?tab=dashboard")}
+                  className={cn(
+                    "w-full flex items-center gap-3 px-3 py-2 rounded-[6px] text-[13px] transition-colors cursor-pointer text-left",
+                    currentTab === "dashboard"
+                      ? "bg-meta-nav text-white"
+                      : "text-meta-text-muted hover:text-white hover:bg-meta-nav",
+                  )}
+                >
+                  数据明细
+                </button>
+                <button
+                  onClick={() => navigate("/?tab=campaign_structure")}
+                  className={cn(
+                    "w-full flex items-center gap-3 px-3 py-2 rounded-[6px] text-[13px] transition-colors cursor-pointer text-left",
+                    currentTab === "campaign_structure"
+                      ? "bg-meta-nav text-white"
+                      : "text-meta-text-muted hover:text-white hover:bg-meta-nav",
+                  )}
+                >
+                  广告系列结构
+                </button>
+                <button
+                  onClick={() => navigate("/?tab=audience_analysis")}
+                  className={cn(
+                    "w-full flex items-center gap-3 px-3 py-2 rounded-[6px] text-[13px] transition-colors cursor-pointer text-left",
+                    currentTab === "audience_analysis"
+                      ? "bg-meta-nav text-white"
+                      : "text-meta-text-muted hover:text-white hover:bg-meta-nav",
+                  )}
+                >
+                  受众分析
+                </button>
+                <button
+                  onClick={() => navigate("/?tab=creative_analysis")}
+                  className={cn(
+                    "w-full flex items-center gap-3 px-3 py-2 rounded-[6px] text-[13px] transition-colors cursor-pointer text-left",
+                    currentTab === "creative_analysis"
+                      ? "bg-meta-nav text-white"
+                      : "text-meta-text-muted hover:text-white hover:bg-meta-nav",
+                  )}
+                >
+                  素材分析
+                </button>
+              </div>
+            )}
+          </div>
+
           {[
-            { id: "overview", icon: BarChart3, label: "数据总览" },
-            { id: "dashboard", icon: LayoutDashboard, label: "MATE广告账户" },
+            { id: "product_intelligence", icon: ShoppingCart, label: "商品智能分析" },
+            { id: "creative_intelligence", icon: ImageIcon, label: "素材智能分析" },
             { id: "category", icon: LayoutGrid, label: "项目类别看板" },
             { id: "monitoring", icon: TrendingUp, label: "账户健康监控" },
             { id: "stores", icon: Store, label: "店铺管理" },
-            isAdmin && { id: "users", icon: Users, label: "成员管理" },
           ].filter(Boolean).map((item: any) => (
             <button
               key={item.id}
@@ -371,18 +469,52 @@ export function Dashboard({ onLogout }: DashboardProps) {
           ))}
         </nav>
         <div className="mt-auto p-4 space-y-1 border-t border-gray-800">
-          <button
-            onClick={() => navigate("/?tab=settings")}
-            className={cn(
-              "w-full flex items-center gap-3 px-4 py-3 rounded-[8px] text-[14px] transition-colors cursor-pointer",
-              currentTab === "settings"
-                ? "bg-meta-nav text-white"
-                : "text-meta-text-muted hover:text-white hover:bg-meta-nav",
+          <div>
+            <button
+              onClick={() => setSettingsExpanded(!settingsExpanded)}
+              className={cn(
+                "w-full flex items-center justify-between px-4 py-3 rounded-[8px] text-[14px] transition-colors cursor-pointer",
+                (currentTab === "settings" || currentTab === "users")
+                  ? "text-white"
+                  : "text-meta-text-muted hover:text-white hover:bg-meta-nav"
+              )}
+            >
+              <div className="flex items-center gap-3">
+                <Settings className="w-4 h-4" />
+                <span>系统设置</span>
+              </div>
+              <ChevronDown className={cn("w-4 h-4 transition-transform", settingsExpanded ? "rotate-180" : "")} />
+            </button>
+            
+            {settingsExpanded && (
+              <div className="pl-11 pr-4 py-1 space-y-1">
+                <button
+                  onClick={() => navigate("/?tab=settings")}
+                  className={cn(
+                    "w-full flex items-center gap-3 px-3 py-2 rounded-[6px] text-[13px] transition-colors cursor-pointer text-left",
+                    currentTab === "settings"
+                      ? "bg-meta-nav text-white"
+                      : "text-meta-text-muted hover:text-white hover:bg-meta-nav",
+                  )}
+                >
+                  系统参数配置
+                </button>
+                {isAdmin && (
+                  <button
+                    onClick={() => navigate("/?tab=users")}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-3 py-2 rounded-[6px] text-[13px] transition-colors cursor-pointer text-left",
+                      currentTab === "users"
+                        ? "bg-meta-nav text-white"
+                        : "text-meta-text-muted hover:text-white hover:bg-meta-nav",
+                    )}
+                  >
+                    成员管理
+                  </button>
+                )}
+              </div>
             )}
-          >
-            <Settings className="w-4 h-4" />
-            系统设置
-          </button>
+          </div>
           <button
             onClick={() => {
               try {
@@ -407,7 +539,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
         </div>
       </aside>
       <main className="flex-1 ml-[200px] p-[24px] overflow-x-hidden flex flex-col h-screen box-border">
-        {currentTab === "overview" || currentTab === "dashboard" ? (
+        {currentTab === "overview" || currentTab === "dashboard" || currentTab === "product_intelligence" || currentTab === "creative_intelligence" || currentTab === "campaign_structure" || currentTab === "audience_analysis" || currentTab === "creative_analysis" ? (
           <>
             <div className="bg-white p-[16px] rounded-[12px] flex items-center gap-[12px] mb-[20px] shadow-[0_1px_3px_rgba(0,0,0,0.1)]">
               <div className="flex items-center gap-2">
@@ -491,17 +623,33 @@ export function Dashboard({ onLogout }: DashboardProps) {
 
             {currentTab === "overview" ? (
               <OverviewDashboard data={data} mappings={mappings} storeSummaries={storeSummaries} />
+            ) : currentTab === "product_intelligence" ? (
+              <ProductIntelligenceDashboard data={data} startDate={startDate} endDate={endDate} />
+            ) : currentTab === "creative_intelligence" ? (
+              <CreativeIntelligenceDashboard data={data} startDate={startDate} endDate={endDate} />
+            ) : currentTab === "campaign_structure" ? (
+              <CampaignStructureDashboard startDate={startDate} endDate={endDate} />
+            ) : currentTab === "audience_analysis" ? (
+              <AudienceAnalysisDashboard startDate={startDate} endDate={endDate} />
+            ) : currentTab === "creative_analysis" ? (
+              <div className="flex-grow flex items-center justify-center bg-white rounded-xl shadow-sm border border-gray-100">
+                <div className="text-center text-gray-500">
+                  <ImageIcon className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                  <p className="text-lg font-medium text-gray-900">素材分析</p>
+                  <p className="mt-1">此功能正在开发中</p>
+                </div>
+              </div>
             ) : (
               <>
                 <div className="grid grid-cols-4 gap-[16px] mb-[20px]">
               <MetricCard
                 title="总支出消耗"
-                value={`$${totals.spend.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                value={`$${(totals.spend || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                 subValue="投放消耗金额"
               />
               <MetricCard
                 title="总转化价值"
-                value={`$${totals.purchaseValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                value={`$${(totals.purchaseValue || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                 subValue="全渠道营收"
               />
               <MetricCard
@@ -511,7 +659,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
               />
               <MetricCard
                 title="总成效"
-                value={totals.purchases.toLocaleString()}
+                value={(totals.purchases || 0).toLocaleString()}
                 subValue="购买转化次数"
               />
             </div>
@@ -681,13 +829,13 @@ export function Dashboard({ onLogout }: DashboardProps) {
                               </button>
                             </TableCell>
                             <TableCell className="px-4 py-[10px] whitespace-nowrap text-[#374151]">
-                              {item.reach.toLocaleString()}
+                              {(item.reach || 0).toLocaleString()}
                             </TableCell>
                             <TableCell className="px-4 py-[10px] whitespace-nowrap text-[#374151]">
-                              {item.impressions.toLocaleString()}
+                              {(item.impressions || 0).toLocaleString()}
                             </TableCell>
                             <TableCell className="px-4 py-[10px] whitespace-nowrap text-[#374151]">
-                              {item.clicks.toLocaleString()}
+                              {(item.clicks || 0).toLocaleString()}
                             </TableCell>
                             <TableCell className="px-4 py-[10px] whitespace-nowrap text-[#374151]">
                               ${item.cpc.toFixed(2)}
@@ -699,13 +847,13 @@ export function Dashboard({ onLogout }: DashboardProps) {
                               ${item.spend.toFixed(2)}
                             </TableCell>
                             <TableCell className="px-4 py-[10px] whitespace-nowrap text-[#374151]">
-                              {item.addToCart.toLocaleString()}
+                              {(item.addToCart || 0).toLocaleString()}
                             </TableCell>
                             <TableCell className="px-4 py-[10px] whitespace-nowrap text-[#374151]">
                               {item.atcRate.toFixed(2)}%
                             </TableCell>
                             <TableCell className="px-4 py-[10px] whitespace-nowrap text-[#374151]">
-                              {item.initiateCheckout.toLocaleString()}
+                              {(item.initiateCheckout || 0).toLocaleString()}
                             </TableCell>
                             <TableCell className="px-4 py-[10px] whitespace-nowrap text-[#374151]">
                               {item.checkoutRate.toFixed(2)}%
@@ -2442,14 +2590,14 @@ function CategoryDashboard({ mappings, onManageAccounts }: { mappings: Record<st
                     </TableCell>
                     <TableCell className="font-medium font-mono">
                       $
-                      {item.spend.toLocaleString(undefined, {
+                      {(item.spend || 0).toLocaleString(undefined, {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2,
                       })}
                     </TableCell>
                     <TableCell className="font-medium font-mono text-green-600">
                       $
-                      {item.purchaseValue.toLocaleString(undefined, {
+                      {(item.purchaseValue || 0).toLocaleString(undefined, {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2,
                       })}
@@ -2472,14 +2620,14 @@ function CategoryDashboard({ mappings, onManageAccounts }: { mappings: Record<st
                   </TableCell>
                   <TableCell className="py-4 text-gray-900 text-[14px] font-bold font-mono">
                     $
-                    {totals.spend.toLocaleString(undefined, {
+                    {(totals.spend || 0).toLocaleString(undefined, {
                       minimumFractionDigits: 2,
                       maximumFractionDigits: 2,
                     })}
                   </TableCell>
                   <TableCell className="py-4 text-green-600 text-[14px] font-bold font-mono">
                     $
-                    {totals.purchaseValue.toLocaleString(undefined, {
+                    {(totals.purchaseValue || 0).toLocaleString(undefined, {
                       minimumFractionDigits: 2,
                       maximumFractionDigits: 2,
                     })}

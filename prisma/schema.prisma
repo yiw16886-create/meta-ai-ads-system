@@ -99,3 +99,113 @@ model AdAccount {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }
+
+model Product {
+  id          String   @id
+  storeId     Int
+  name        String
+  sku         String
+  category    String
+  inventory   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Order {
+  id          String   @id
+  storeId     Int
+  productId   String
+  revenue     Float    @default(0)
+  profit      Float    @default(0)
+  refunded    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+}
+
+model Campaign {
+  id          String   @id
+  accountId   String
+  name        String
+  region      String?
+  status      String?
+}
+
+model AdSet {
+  id          String   @id
+  campaignId  String
+  accountId   String
+  name        String
+}
+
+model Ad {
+  id          String   @id
+  adsetId     String
+  campaignId  String
+  accountId   String
+  name        String
+  creativeId  String?
+}
+
+model AdCreative {
+  id          String   @id
+  storeId     Int?
+  name        String
+  type        String   // IMAGE, VIDEO, CAROUSEL
+  hookRate    Float    @default(0)
+}
+
+model ProductPerformanceDaily {
+  id               Int      @id @default(autoincrement())
+  date             String
+  storeId          Int
+  productId        String
+  productName      String
+  sku              String
+  category         String
+  revenue          Float    @default(0)
+  orders           Int      @default(0)
+  profit           Float    @default(0)
+  adSpend          Float    @default(0)
+  productRoas      Float    @default(0)
+  profitRoas       Float    @default(0)
+  ctr              Float    @default(0)
+  cpc              Float    @default(0)
+  cpm              Float    @default(0)
+  frequency        Float    @default(0)
+  refundRate       Float    @default(0)
+  inventory        Int      @default(0)
+  topRegion        String?
+  topCampaign      String?
+  topCreative      String?
+  aiRiskStatus     String?
+  trendStatus      String?
+  aiSuggestion     String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([storeId, productId, date])
+}
+
+model CreativePerformanceDaily {
+  id               Int      @id @default(autoincrement())
+  date             String
+  storeId          Int
+  creativeId       String
+  creativeName     String
+  type             String
+  spend            Float    @default(0)
+  purchases        Int      @default(0)
+  revenue          Float    @default(0)
+  roas             Float    @default(0)
+  ctr              Float    @default(0)
+  cpc              Float    @default(0)
+  cpm              Float    @default(0)
+  frequency        Float    @default(0)
+  hookRate         Float    @default(0)
+  aiRiskStatus     String?
+  trendStatus      String?
+  aiSuggestion     String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([storeId, creativeId, date])
+}

@@ -1,4 +1,5 @@
 import express, { Request, Response, NextFunction } from "express";
+import cron from "node-cron";
 import path from "path";
 import axios from "axios";
 import prisma from "./db.js";
@@ -7,6 +8,27 @@ import bcrypt from "bcryptjs";
 import nodemailer from "nodemailer";
 import crypto from "crypto";
 import { GoogleGenAI } from "@google/genai";
+import { getProductIntelligence } from "./services/product-intelligence.service.js";
+import { getCreativeIntelligence } from "./services/creative-intelligence.service.js";
+import { syncStoreData } from "./services/store-sync.service.js";
+import { syncMetaHierarchy, ensureAdAccounts } from "./services/meta-hierarchy-sync.service.js";
+import { aggregateData } from "./services/aggregation.service.js";
+import { attributePurchases } from "./services/attribution.service.js";
+
+// -- SCHEDULE JOBS --
+// Run daily aggregation at 2:00 AM
+cron.schedule("0 2 * * *", async () => {
+  console.log("Triggering daily aggregation job via cron...");
+  try {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const dateStr = yesterday.toISOString().split("T")[0];
+    await attributePurchases();
+    await aggregateData(dateStr, dateStr);
+  } catch (error) {
+    console.error("Daily aggregation job failed:", error);
+  }
+});
 
 // Helper to get SMTP config
 async function getSmtpConfig() {
@@ -281,8 +303,11 @@ app.post("/api/sync", async (req, res) => {
         chunk.map(async (account: any) => {
           const accountId = account.account_id || account.id;
           try {
+            const url = `https://graph.facebook.com/v19.0/act_${accountId}/insights`;
+            console.log(`[Manual API Sync] Fetching insights for account ${accountId} from URL ${url}`);
+            
             const insightsResponse = await axios.get(
-              `https://graph.facebook.com/v19.0/act_${accountId}/insights`,
+              url,
               {
                 params: {
                   time_range: JSON.stringify({
@@ -298,7 +323,9 @@ app.post("/api/sync", async (req, res) => {
             );
 
             const insights = insightsResponse.data.data || [];
+            console.log(`[Manual API Sync] Received ${insights.length} insight items for account ${accountId}`);
 
+            let accountSuccessCount = 0;
             for (const day of insights) {
               const actions = day.actions || [];
               const getActionValue = (type: string) => {
@@ -332,52 +359,58 @@ app.post("/api/sync", async (req, res) => {
               const cpp = purchases > 0 ? spend / purchases : 0;
               const roas = spend > 0 ? purchaseValue / spend : 0;
 
-              await prisma.adInsight.upsert({
-                where: {
-                  accountId_date: {
+              try {
+                await prisma.adInsight.upsert({
+                  where: {
+                    accountId_date: {
+                      accountId: accountId,
+                      date: day.date_start,
+                    },
+                  },
+                  update: {
+                    accountName: day.account_name,
+                    reach,
+                    impressions,
+                    clicks,
+                    spend,
+                    addToCart: carts,
+                    initiateCheckout: checkouts,
+                    purchases,
+                    purchaseValue,
+                    cpc,
+                    ctr,
+                    atcRate,
+                    checkoutRate,
+                    cpp,
+                    roas,
+                  },
+                  create: {
                     accountId: accountId,
                     date: day.date_start,
+                    accountName: day.account_name,
+                    reach,
+                    impressions,
+                    clicks,
+                    spend,
+                    addToCart: carts,
+                    initiateCheckout: checkouts,
+                    purchases,
+                    purchaseValue,
+                    cpc,
+                    ctr,
+                    atcRate,
+                    checkoutRate,
+                    cpp,
+                    roas,
                   },
-                },
-                update: {
-                  accountName: day.account_name,
-                  reach,
-                  impressions,
-                  clicks,
-                  spend,
-                  addToCart: carts,
-                  initiateCheckout: checkouts,
-                  purchases,
-                  purchaseValue,
-                  cpc,
-                  ctr,
-                  atcRate,
-                  checkoutRate,
-                  cpp,
-                  roas,
-                },
-                create: {
-                  accountId: accountId,
-                  date: day.date_start,
-                  accountName: day.account_name,
-                  reach,
-                  impressions,
-                  clicks,
-                  spend,
-                  addToCart: carts,
-                  initiateCheckout: checkouts,
-                  purchases,
-                  purchaseValue,
-                  cpc,
-                  ctr,
-                  atcRate,
-                  checkoutRate,
-                  cpp,
-                  roas,
-                },
-              });
-              totalSynced++;
+                });
+                totalSynced++;
+                accountSuccessCount++;
+              } catch (prismaErr) {
+                console.error(`[Manual API Sync] ❌ Prisma error writing insight for account ${accountId} on date ${day.date_start}:`, prismaErr);
+              }
             }
+            console.log(`[Manual API Sync] Successfully wrote ${accountSuccessCount} insight items for account ${accountId}`);
           } catch (err: any) {
             lastError = extractMetaError(err);
             const status = err.response?.status;
@@ -403,6 +436,21 @@ app.post("/api/sync", async (req, res) => {
 
     if (stopSync && totalSynced === 0) {
       return res.status(401).json({ error: lastError });
+    }
+
+    try {
+      console.log("Triggering Ensure AdAccounts...");
+      await ensureAdAccounts(token);
+      console.log("Triggering Store Data Sync...");
+      await syncStoreData(startDate, endDate);
+      console.log("Triggering Meta Hierarchy Sync...");
+      await syncMetaHierarchy(token);
+      console.log("Triggering Attribution and Aggregation...");
+      await attributePurchases();
+      await aggregateData(startDate, endDate);
+      console.log("Sync pipeline completed successfully.");
+    } catch (aggErr) {
+      console.error("Aggregation error during sync:", aggErr);
     }
 
     res.json({
@@ -490,6 +538,41 @@ app.get("/api/accounts/:accountId/details", async (req, res) => {
       error.response?.data || error.message,
     );
     res.status(500).json({ error: extractMetaError(error) });
+  }
+});
+
+// GET /api/accounts/:accountId/audience-insights
+app.get("/api/accounts/:accountId/audience-insights", async (req, res) => {
+  const { accountId } = req.params;
+  const { startDate, endDate, breakdown } = req.query;
+
+  try {
+    const token = await getMetaToken();
+    if (!token) return res.status(400).json({ error: "Meta Token 未配置" });
+
+    let breakdownsParam = "";
+    if (breakdown === "gender_age") breakdownsParam = "age,gender";
+    else if (breakdown === "country") breakdownsParam = "country";
+    else if (breakdown === "placement") breakdownsParam = "publisher_platform,platform_position,device_platform";
+    else return res.status(400).json({ error: "Invalid breakdown type" });
+
+    const response = await axios.get(
+      `https://graph.facebook.com/v19.0/act_${accountId}/insights`,
+      {
+        params: {
+          time_range: JSON.stringify({ since: startDate, until: endDate }),
+          breakdowns: breakdownsParam,
+          fields: "reach,impressions,spend,actions,purchase_roas,action_values,cpm,inline_link_clicks,inline_link_click_ctr,cost_per_inline_link_click,ctr,cpc,clicks",
+          limit: 1000,
+          access_token: token,
+        },
+      }
+    );
+
+    res.json(response.data.data || []);
+  } catch (error: any) {
+    console.error("Audience insights fetch error:", error?.response?.data || error.message);
+    res.status(500).json({ error: "Failed to fetch audience insights" });
   }
 });
 
@@ -883,6 +966,41 @@ app.post("/api/monitoring/accounts/:accountId/reset", async (req, res) => {
 });
 
 // --- END MONITORING ENDPOINTS ---
+
+// --- INTELLIGENCE ENDPOINTS ---
+app.get("/api/intelligence/products", async (req, res) => {
+  const { startDate, endDate } = req.query;
+  if (!startDate || !endDate) return res.status(400).json({ error: "Missing dates" });
+  try {
+    const data = await getProductIntelligence(startDate as string, endDate as string);
+    res.json(data);
+  } catch (error: any) {
+    res.status(500).json({ error: "Failed to fetch product intelligence", details: error.message });
+  }
+});
+
+app.get("/api/intelligence/creatives", async (req, res) => {
+  const { startDate, endDate } = req.query;
+  if (!startDate || !endDate) return res.status(400).json({ error: "Missing dates" });
+  try {
+    const data = await getCreativeIntelligence(startDate as string, endDate as string);
+    res.json(data);
+  } catch (error: any) {
+    res.status(500).json({ error: "Failed to fetch creative intelligence", details: error.message });
+  }
+});
+
+app.post("/api/intelligence/aggregate", async (req, res) => {
+  const { startDate, endDate } = req.body;
+  if (!startDate || !endDate) return res.status(400).json({ error: "Missing dates" });
+  try {
+    await attributePurchases();
+    const result = await aggregateData(startDate, endDate);
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: "Failed to aggregate intelligence", details: error.message });
+  }
+});
 
 // --- NEW STORE & AD ACCOUNT ENDPOINTS ---
 // GET /api/stores - List all stores

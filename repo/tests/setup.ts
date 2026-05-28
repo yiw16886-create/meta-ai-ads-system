@@ -1,0 +1,94 @@
+/**
+ * Shared test helpers and mocks.
+ */
+import { vi } from "vitest";
+import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
+
+/**
+ * Set a META_ACCESS_TOKEN env var so getAccessToken() doesn't throw.
+ */
+export function setupTestToken(token = "test-access-token"): void {
+  process.env.META_ACCESS_TOKEN = token;
+}
+
+/**
+ * Remove test env vars.
+ */
+export function cleanupTestToken(): void {
+  delete process.env.META_ACCESS_TOKEN;
+}
+
+/**
+ * Create a mock fetch Response.
+ */
+export function mockFetchResponse(
+  body: unknown,
+  options: { status?: number; headers?: Record<string, string> } = {},
+): Response {
+  const { status = 200, headers = {} } = options;
+  const responseHeaders = new Headers(headers);
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: responseHeaders,
+    json: async () => body,
+    text: async () => JSON.stringify(body),
+  } as unknown as Response;
+}
+
+interface RegisteredTool {
+  name: string;
+  description: string;
+  schema: unknown;
+  annotations?: ToolAnnotations;
+  handler: (...args: unknown[]) => Promise<unknown>;
+}
+
+/**
+ * Create a mock McpServer that records tool registrations.
+ *
+ * Supports both the legacy `server.tool(name, description, schema, handler)` API
+ * and the modern `server.registerTool(name, config, handler)` API used in v3.
+ */
+export function createMockMcpServer() {
+  const tools: RegisteredTool[] = [];
+
+  const registerTool = vi.fn(
+    (
+      name: string,
+      config: {
+        description?: string;
+        inputSchema?: unknown;
+        annotations?: ToolAnnotations;
+      },
+      handler: (...args: unknown[]) => Promise<unknown>,
+    ) => {
+      tools.push({
+        name,
+        description: config.description ?? "",
+        schema: config.inputSchema,
+        annotations: config.annotations,
+        handler,
+      });
+    },
+  );
+
+  const tool = vi.fn(
+    (
+      name: string,
+      description: string,
+      schema: unknown,
+      handler: (...args: unknown[]) => Promise<unknown>,
+    ) => {
+      tools.push({ name, description, schema, handler });
+    },
+  );
+
+  const server = {
+    tool,
+    registerTool,
+    _registeredTools: tools,
+  };
+
+  return server;
+}

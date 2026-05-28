@@ -1,0 +1,368 @@
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches: [main]
+
+env:
+  SERVICE_NAME: meta-ads-mcp
+  IMAGE_NAME: server
+
+permissions:
+  contents: read
+  id-token: write   # Required for WIF OIDC token
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false   # never cancel an in-flight deploy
+
+jobs:
+  preflight:
+    name: Preflight (lint, typecheck, test, build, secret scan)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit production dependencies
+        run: npm audit --audit-level=high --omit=dev
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        env:
+          CI: '1'
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7  # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+
+  deploy:
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Validate required production secrets
+        env:
+          OAUTH_SECRET: ${{ secrets.OAUTH_SECRET }}
+          TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
+          SESSION_COOKIE_SECRET: ${{ secrets.SESSION_COOKIE_SECRET }}
+          META_APP_ID: ${{ secrets.META_APP_ID }}
+          META_APP_SECRET: ${{ secrets.META_APP_SECRET }}
+          SERVER_URL: ${{ secrets.SERVER_URL }}
+          AUTH_ALLOWED_EMAILS: ${{ secrets.AUTH_ALLOWED_EMAILS }}
+          AUTH_ALLOWED_DOMAINS: ${{ secrets.AUTH_ALLOWED_DOMAINS }}
+          AUTH_ALLOWED_FB_USER_IDS: ${{ secrets.AUTH_ALLOWED_FB_USER_IDS }}
+          FIRESTORE_PROJECT_ID: ${{ secrets.FIRESTORE_PROJECT_ID }}
+          GCP_RUNTIME_SERVICE_ACCOUNT: ${{ secrets.GCP_RUNTIME_SERVICE_ACCOUNT }}
+        run: |
+          set -u
+          errors=()
+
+          # Treat placeholder strings as "not set". `-z` alone misses these
+          # because GitHub will happily store "-" or "TODO" as a secret value
+          # and the runtime then crashes deep in the container instead of
+          # failing the deploy gate.
+          looks_unset() {
+            local v="$1"
+            [ -z "$v" ] && return 0
+            case "$v" in
+              -|--|x|xx|xxx|TODO|todo|none|None|NONE|placeholder|PLACEHOLDER) return 0 ;;
+              "change-me"|"change_me"|"changeme"|"<value>"|"<unset>") return 0 ;;
+              your_*|your-*|YOUR_*) return 0 ;;
+            esac
+            [ "${#v}" -lt 8 ] && return 0
+            return 1
+          }
+
+          require_present() {
+            local name="$1" value="$2"
+            if looks_unset "$value"; then
+              errors+=("$name is missing or looks like a placeholder")
+            fi
+          }
+
+          require_min_length() {
+            local name="$1" value="$2" min="$3"
+            if [ "${#value}" -lt "$min" ]; then
+              errors+=("$name must be at least ${min} characters (got ${#value})")
+            fi
+          }
+
+          require_regex() {
+            local name="$1" value="$2" regex="$3" desc="$4"
+            if ! printf '%s' "$value" | grep -Eq "$regex"; then
+              errors+=("$name must be ${desc}")
+            fi
+          }
+
+          require_present OAUTH_SECRET                "${OAUTH_SECRET}"
+          require_present TOKEN_ENCRYPTION_KEY        "${TOKEN_ENCRYPTION_KEY}"
+          require_present SESSION_COOKIE_SECRET       "${SESSION_COOKIE_SECRET}"
+          require_present META_APP_ID                 "${META_APP_ID}"
+          require_present META_APP_SECRET             "${META_APP_SECRET}"
+          require_present SERVER_URL                  "${SERVER_URL}"
+          require_present FIRESTORE_PROJECT_ID        "${FIRESTORE_PROJECT_ID}"
+          require_present GCP_RUNTIME_SERVICE_ACCOUNT "${GCP_RUNTIME_SERVICE_ACCOUNT}"
+
+          # Format: matches resolveSecurityConfig() in src/transport/security-config.ts
+          require_regex   TOKEN_ENCRYPTION_KEY    "${TOKEN_ENCRYPTION_KEY}"  '^[0-9a-fA-F]{64}$' "64 hex chars (32 bytes)"
+          require_min_length SESSION_COOKIE_SECRET "${SESSION_COOKIE_SECRET}" 32
+          require_min_length OAUTH_SECRET         "${OAUTH_SECRET}"          32
+          # Meta App ID is a numeric string (typ. 15-17 digits)
+          require_regex   META_APP_ID             "${META_APP_ID}"           '^[0-9]{10,20}$' "10-20 digit numeric Meta App ID"
+          # Meta App Secret is a 32-char hex string
+          require_regex   META_APP_SECRET         "${META_APP_SECRET}"       '^[0-9a-fA-F]{32}$' "32 hex chars"
+          require_regex   SERVER_URL              "${SERVER_URL}"            '^https://[^[:space:]]+$' "a public https:// URL"
+          # GCP project ID format: 6-30 chars, lowercase, starts with letter, ends with letter/digit
+          require_regex   FIRESTORE_PROJECT_ID    "${FIRESTORE_PROJECT_ID}"  '^[a-z][a-z0-9-]{4,28}[a-z0-9]$' "valid GCP project ID"
+          # Runtime SA must look like a valid GCP service account email
+          require_regex   GCP_RUNTIME_SERVICE_ACCOUNT "${GCP_RUNTIME_SERVICE_ACCOUNT}" '^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$' "a valid GCP service account email (name@project.iam.gserviceaccount.com)"
+
+          # At least one allowlist source must be a real value
+          allowlist_ok=0
+          for v in "${AUTH_ALLOWED_EMAILS}" "${AUTH_ALLOWED_DOMAINS}" "${AUTH_ALLOWED_FB_USER_IDS}"; do
+            if ! looks_unset "$v"; then allowlist_ok=1; fi
+          done
+          if [ "$allowlist_ok" -eq 0 ]; then
+            errors+=("at least one of AUTH_ALLOWED_EMAILS / AUTH_ALLOWED_DOMAINS / AUTH_ALLOWED_FB_USER_IDS must hold a real value")
+          fi
+
+          if [ "${#errors[@]}" -ne 0 ]; then
+            echo "Production secret validation failed:"
+            printf '  - %s\n' "${errors[@]}"
+            exit 1
+          fi
+          echo "All production secrets validated."
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed  # v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f  # v2
+
+      - name: Verify runtime service account exists
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GCP_RUNTIME_SERVICE_ACCOUNT: ${{ secrets.GCP_RUNTIME_SERVICE_ACCOUNT }}
+        run: |
+          set -u
+          # Fail fast with a clear error before deploy if the runtime SA
+          # doesn't exist (e.g. fork to a fresh project that hasn't been
+          # bootstrapped yet). Without this, the deploy step fails with a
+          # cryptic iam.serviceAccountUser error mid-rollout.
+          #
+          # Be tolerant of strict least-privilege deployers: roles/iam.serviceAccountUser
+          # grants iam.serviceAccounts.actAs but NOT iam.serviceAccounts.get,
+          # so `describe` may return PERMISSION_DENIED even when the SA exists
+          # and the deployer can legitimately attach it. Treat NOT_FOUND as
+          # blocking, but downgrade missing-read-permission to a warning.
+          if out=$(gcloud iam service-accounts describe "${GCP_RUNTIME_SERVICE_ACCOUNT}" \
+              --project="${GCP_PROJECT_ID}" --quiet 2>&1); then
+            echo "Runtime SA ${GCP_RUNTIME_SERVICE_ACCOUNT} exists."
+          else
+            if printf '%s' "$out" | grep -qiE "permission denied|insufficient permission|forbidden|does not have permission"; then
+              echo "::warning::Cannot read SA metadata for ${GCP_RUNTIME_SERVICE_ACCOUNT} (deployer lacks iam.serviceAccounts.get)."
+              echo "::warning::Skipping existence check; deploy will fail later with a clear iam.serviceAccountUser error if the SA does not exist."
+            elif printf '%s' "$out" | grep -qiE "not.*found|does not exist|NOT_FOUND"; then
+              echo "Runtime service account ${GCP_RUNTIME_SERVICE_ACCOUNT} does not exist in project ${GCP_PROJECT_ID}."
+              echo "Create it with the minimum roles described in CONTRIBUTING.md, e.g.:"
+              echo "  gcloud iam service-accounts create meta-ads-mcp-runtime --project=${GCP_PROJECT_ID}"
+              echo "  gcloud projects add-iam-policy-binding ${GCP_PROJECT_ID} --member=serviceAccount:${GCP_RUNTIME_SERVICE_ACCOUNT} --role=roles/datastore.user"
+              echo "  gcloud projects add-iam-policy-binding ${GCP_PROJECT_ID} --member=serviceAccount:${GCP_RUNTIME_SERVICE_ACCOUNT} --role=roles/logging.logWriter"
+              echo "  # plus secretmanager.secretAccessor on each mounted secret"
+              exit 1
+            else
+              echo "Unexpected error reading runtime SA metadata:"
+              printf '%s\n' "$out"
+              exit 1
+            fi
+          fi
+
+      - name: Sync META_TOKENS to Secret Manager
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ secrets.GCP_REGION }}
+          META_TOKENS: ${{ secrets.META_TOKENS }}
+          GCP_RUNTIME_SERVICE_ACCOUNT: ${{ secrets.GCP_RUNTIME_SERVICE_ACCOUNT }}
+        run: |
+          set -u
+          if [ -z "${META_TOKENS}" ]; then
+            echo "META_TOKENS not set; skipping Secret Manager sync"
+            exit 0
+          fi
+
+          # Sanity-check: it must be valid JSON (catches the buggy
+          # comma-split fragments that broke production).
+          if ! printf '%s' "${META_TOKENS}" | python3 -c 'import json,sys; json.loads(sys.stdin.read())' 2>/dev/null; then
+            echo "META_TOKENS is not valid JSON; refusing to sync"
+            exit 1
+          fi
+
+          SECRET_NAME=meta-tokens-prod
+          # Always grant access to the SA the deploy step will pin (single
+          # source of truth: GCP_RUNTIME_SERVICE_ACCOUNT). Previously this
+          # derived RUNTIME_SA from gcloud run services describe with a
+          # fall-back to the default Compute SA — that drifted from the SA
+          # the deploy step actually used.
+          RUNTIME_SA="${GCP_RUNTIME_SERVICE_ACCOUNT}"
+
+          # Idempotent IAM reconcile: ensure the current runtime SA always
+          # has access to meta-tokens-prod, regardless of whether the secret
+          # is being created here or already existed. Without this, rotating
+          # GCP_RUNTIME_SERVICE_ACCOUNT to a new SA would mount the secret
+          # at deploy time but the new SA would lack secretmanager.secretAccessor,
+          # and the container would fail at startup.
+          ensure_iam_binding() {
+            local secret="$1"
+            gcloud secrets add-iam-policy-binding "$secret" \
+              --member="serviceAccount:${RUNTIME_SA}" \
+              --role=roles/secretmanager.secretAccessor \
+              --project="$GCP_PROJECT_ID" --condition=None --quiet >/dev/null
+          }
+
+          if ! gcloud secrets describe "$SECRET_NAME" --project="$GCP_PROJECT_ID" --quiet >/dev/null 2>&1; then
+            printf '%s' "${META_TOKENS}" | gcloud secrets create "$SECRET_NAME" \
+              --data-file=- --replication-policy=automatic \
+              --project="$GCP_PROJECT_ID" --quiet
+            ensure_iam_binding "$SECRET_NAME"
+            echo "Created Secret Manager secret $SECRET_NAME and granted ${RUNTIME_SA} access."
+          else
+            ensure_iam_binding "$SECRET_NAME"
+            echo "Reconciled ${RUNTIME_SA} access on existing $SECRET_NAME."
+            # Only add a new version if the value actually changed — avoids
+            # one new version per deploy (Secret Manager bills per-version).
+            existing_hash=$(gcloud secrets versions access latest \
+              --secret="$SECRET_NAME" --project="$GCP_PROJECT_ID" 2>/dev/null \
+              | shasum -a 256 | cut -d' ' -f1 || true)
+            desired_hash=$(printf '%s' "${META_TOKENS}" | shasum -a 256 | cut -d' ' -f1)
+            if [ "${existing_hash}" != "${desired_hash}" ]; then
+              printf '%s' "${META_TOKENS}" | gcloud secrets versions add "$SECRET_NAME" \
+                --data-file=- --project="$GCP_PROJECT_ID" --quiet
+              echo "Added new version of $SECRET_NAME (value changed)."
+            else
+              echo "$SECRET_NAME is already up to date."
+            fi
+          fi
+
+      - name: Configure Docker for Artifact Registry
+        env:
+          GCP_REGION: ${{ secrets.GCP_REGION }}
+        run: gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/meta-ads-mcp/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/meta-ads-mcp/${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Deploy to Cloud Run
+        id: deploy
+        uses: google-github-actions/deploy-cloudrun@251330ba9a8a34bfbc1622895f42e1d53fd14522  # v2
+        with:
+          service: ${{ env.SERVICE_NAME }}
+          region: ${{ secrets.GCP_REGION }}
+          image: ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/meta-ads-mcp/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          flags: >-
+            --allow-unauthenticated
+            --service-account=${{ secrets.GCP_RUNTIME_SERVICE_ACCOUNT }}
+            --memory=512Mi
+            --cpu=1
+            --concurrency=80
+            --timeout=300
+            --min-instances=0
+            --max-instances=10
+            --port=3000
+          env_vars: |
+            META_API_VERSION=v22.0
+            LOG_LEVEL=info
+            NODE_ENV=production
+            META_APP_ID=${{ secrets.META_APP_ID }}
+            SERVER_URL=${{ secrets.SERVER_URL }}
+            AUTH_ALLOWED_EMAILS=${{ secrets.AUTH_ALLOWED_EMAILS }}
+            AUTH_ALLOWED_DOMAINS=${{ secrets.AUTH_ALLOWED_DOMAINS }}
+            AUTH_ALLOWED_FB_USER_IDS=${{ secrets.AUTH_ALLOWED_FB_USER_IDS }}
+            FIRESTORE_PROJECT_ID=${{ secrets.FIRESTORE_PROJECT_ID }}
+          secrets: |
+            META_TOKENS=meta-tokens-prod:latest
+            OAUTH_SECRET=oauth-secret:latest
+            TOKEN_ENCRYPTION_KEY=token-encryption-key:latest
+            SESSION_COOKIE_SECRET=session-cookie-secret:latest
+            META_APP_SECRET=meta-app-secret:latest
+            MCP_API_KEY=mcp-api-key:latest
+
+      - name: Mask service URL in logs
+        env:
+          SERVICE_URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          # Register the URL (and its bare host) as secrets so any subsequent
+          # step that accidentally prints it gets auto-redacted by Actions.
+          echo "::add-mask::${SERVICE_URL}"
+          HOST="${SERVICE_URL#https://}"
+          HOST="${HOST#http://}"
+          echo "::add-mask::${HOST}"
+
+      - name: Smoke test (URL stays masked in logs)
+        env:
+          SERVICE_URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          # Wait for new revision to roll out
+          sleep 5
+
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${SERVICE_URL}/health" --max-time 10)
+          if [ "${STATUS}" = "200" ]; then
+            echo "Health check passed (HTTP ${STATUS})"
+          else
+            echo "Health check FAILED (HTTP ${STATUS})"
+            exit 1
+          fi
+
+          OAUTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${SERVICE_URL}/.well-known/oauth-authorization-server" --max-time 10)
+          if [ "${OAUTH_STATUS}" = "200" ]; then
+            echo "OAuth metadata check passed (HTTP ${OAUTH_STATUS})"
+          else
+            echo "OAuth metadata check FAILED (HTTP ${OAUTH_STATUS})"
+            exit 1
+          fi

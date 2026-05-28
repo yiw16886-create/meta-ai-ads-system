@@ -1,0 +1,47 @@
+node_modules/
+dist/
+*.js.map
+*.d.ts
+!src/**/*.d.ts
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Secrets / credentials — public repo, never commit any of these
+*.key
+*.pem
+*.p12
+*.pfx
+credentials.json
+service-account*.json
+.gitleaks-report.json
+id_rsa
+id_dsa
+id_ed25519
+
+# IDE / tooling
+.vscode/
+.idea/
+.claude/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Test coverage
+coverage/
+
+# Build artifacts
+*.tsbuildinfo
+
+# Local Firecrawl scraping cache (never committed)
+.firecrawl/

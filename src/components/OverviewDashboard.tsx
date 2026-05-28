@@ -85,7 +85,7 @@ export function OverviewDashboard({ data = [], mappings = {}, storeSummaries = {
         let finalPurchases = item.purchases;
         
         // Match case-insensitively since mapping names might differ from DB store names
-        const summaryKey = Object.keys(storeSummaries).find(k => k.toLowerCase() === item.store.toLowerCase());
+        const summaryKey = Object.keys(storeSummaries).find(k => (k || "").toLowerCase() === (item.store || "").toLowerCase());
         const summary = summaryKey ? storeSummaries[summaryKey] : null;
 
         if (summary && summary.isConfigured && !summary.error) {
@@ -273,7 +273,7 @@ export function OverviewDashboard({ data = [], mappings = {}, storeSummaries = {
             <div>
               <p className="text-[12px] font-medium text-meta-text-muted">总广告预算消耗</p>
               <h3 className="text-[24px] font-bold text-meta-dark tracking-tight mt-1">
-                ${totals.spend.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                ${(totals.spend || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </h3>
             </div>
             <div className="p-2.5 rounded-lg bg-blue-50 text-[#076eff] group-hover:scale-110 transition-transform">
@@ -291,7 +291,7 @@ export function OverviewDashboard({ data = [], mappings = {}, storeSummaries = {
             <div>
               <p className="text-[12px] font-medium text-meta-text-muted">总转化业务营收</p>
               <h3 className="text-[24px] font-bold text-[#10b981] tracking-tight mt-1">
-                ${totals.purchaseValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                ${(totals.purchaseValue || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </h3>
             </div>
             <div className="p-2.5 rounded-lg bg-emerald-50 text-emerald-600 group-hover:scale-110 transition-transform">
@@ -329,7 +329,7 @@ export function OverviewDashboard({ data = [], mappings = {}, storeSummaries = {
             <div>
               <p className="text-[12px] font-medium text-meta-text-muted">总订单成效</p>
               <h3 className="text-[24px] font-bold text-meta-dark tracking-tight mt-1">
-                {totals.purchases.toLocaleString()} 次
+                {(totals.purchases || 0).toLocaleString()} 次
               </h3>
             </div>
             <div className="p-2.5 rounded-lg bg-amber-50 text-amber-600 group-hover:scale-110 transition-transform">
@@ -350,14 +350,14 @@ export function OverviewDashboard({ data = [], mappings = {}, storeSummaries = {
             <Eye className="w-3.5 h-3.5 text-blue-500" />
             曝光印象数
           </span>
-          <p className="text-[15px] font-semibold text-gray-900">{totals.impressions.toLocaleString()}</p>
+          <p className="text-[15px] font-semibold text-gray-900">{(totals.impressions || 0).toLocaleString()}</p>
         </div>
         <div className="space-y-1">
           <span className="text-[11px] text-gray-500 flex items-center gap-1">
             <MousePointer className="w-3.5 h-3.5 text-indigo-500" />
             网站点击量
           </span>
-          <p className="text-[15px] font-semibold text-gray-900">{totals.clicks.toLocaleString()}</p>
+          <p className="text-[15px] font-semibold text-gray-900">{(totals.clicks || 0).toLocaleString()}</p>
         </div>
         <div className="space-y-1">
           <span className="text-[11px] text-gray-500 flex items-center gap-1 text-nowrap">
@@ -456,7 +456,7 @@ export function OverviewDashboard({ data = [], mappings = {}, storeSummaries = {
                     <div className="flex justify-between items-center text-[12px]">
                       <span className="font-semibold text-gray-800">{cat.project}</span>
                       <div className="flex items-center gap-4 text-[11px] text-gray-500">
-                        <span>消耗: <strong className="text-gray-900">${cat.spend.toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong></span>
+                        <span>消耗: <strong className="text-gray-900">${(cat.spend || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong></span>
                         <span>成效: <strong className="text-gray-900">{cat.purchases}</strong></span>
                         <span>ROI: <strong className={cat.avgRoi >= 1 ? "text-emerald-600 bg-emerald-50 px-1 rounded font-bold" : "text-gray-500 font-bold"}>{cat.avgRoi.toFixed(2)}x</strong></span>
                         <span className="text-[10px] text-gray-400">({cat.accountsCount}个账户)</span>
@@ -516,13 +516,13 @@ export function OverviewDashboard({ data = [], mappings = {}, storeSummaries = {
                             </span>
                           </TableCell>
                           <TableCell className="text-right font-semibold text-gray-950 py-2">
-                            ${item.spend.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                            ${(item.spend || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                           </TableCell>
                           <TableCell className="text-right text-gray-700 py-2">
-                            {item.purchases.toLocaleString()}
+                            {(item.purchases || 0).toLocaleString()}
                           </TableCell>
                           <TableCell className="text-right text-emerald-600 font-medium py-2">
-                            ${item.purchaseValue.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                            ${(item.purchaseValue || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                           </TableCell>
                           <TableCell className="text-right py-2">
                             <span className={`inline-block px-1.5 py-0.5 rounded-[4px] font-bold ${item.avgRoi >= 1.0 ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
@@ -572,13 +572,13 @@ export function OverviewDashboard({ data = [], mappings = {}, storeSummaries = {
                             </span>
                           </TableCell>
                           <TableCell className="text-right font-semibold py-2">
-                            ${item.spend.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                            ${(item.spend || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                           </TableCell>
                           <TableCell className="text-right text-gray-600 py-2">
-                            {item.purchases.toLocaleString()}
+                            {(item.purchases || 0).toLocaleString()}
                           </TableCell>
                           <TableCell className="text-right font-medium text-gray-900 py-2">
-                            ${item.purchaseValue.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                            ${(item.purchaseValue || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                           </TableCell>
                           <TableCell className="text-right py-2">
                             <span className={`font-bold ${item.avgRoi >= 1.0 ? 'text-emerald-600' : 'text-gray-500'}`}>

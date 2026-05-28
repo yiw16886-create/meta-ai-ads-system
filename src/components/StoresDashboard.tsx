@@ -92,7 +92,7 @@ export function StoresDashboard() {
                     已关联{" "}
                     {
                       mappings.filter(
-                        (m) => m.store?.toLowerCase() === store.name?.toLowerCase()
+                        (m) => (m.store || "").toLowerCase() === (store.name || "").toLowerCase()
                       ).length
                     }{" "}
                     个广告账户

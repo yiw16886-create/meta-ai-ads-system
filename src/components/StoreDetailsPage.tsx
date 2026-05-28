@@ -215,7 +215,7 @@ export function StoreDetailsPage({
             conversion_rate: 0,
           };
         })
-        .filter((item: any) => item.store?.toLowerCase() === storeName?.toLowerCase());
+        .filter((item: any) => (item.store || "").toLowerCase() === (storeName || "").toLowerCase());
 
       setAccountsInsights(aggregatedData);
     } catch (err: any) {

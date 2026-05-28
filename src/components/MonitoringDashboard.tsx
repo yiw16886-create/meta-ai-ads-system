@@ -89,8 +89,8 @@ export function MonitoringDashboard() {
     if (searchTerm) {
       const lowerSearch = searchTerm.toLowerCase();
       result = result.filter(acc => 
-        acc.name.toLowerCase().includes(lowerSearch) || 
-        acc.accountId.toLowerCase().includes(lowerSearch)
+        (acc.name || "").toLowerCase().includes(lowerSearch) || 
+        (acc.accountId || "").toLowerCase().includes(lowerSearch)
       );
     }
 
