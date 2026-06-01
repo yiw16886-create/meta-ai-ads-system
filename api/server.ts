@@ -39,6 +39,7 @@ async function evaluateActivityStatus(accountId: string, fbAccountStatus: number
              time_range: JSON.stringify(timeRange),
              time_increment: 1,
              fields: 'spend,impressions',
+             limit: 1000,
              access_token: token
           }
       });
@@ -99,6 +100,7 @@ async function syncSingleAccountAdData(accountId: string, startDate: string, end
         time_increment: 1,
         fields:
           "account_id,account_name,date_start,reach,impressions,clicks,spend,actions,purchase_roas,action_values",
+        limit: 1000,
         access_token: token,
       },
     },
@@ -266,6 +268,35 @@ async function syncSingleAccountAdData(accountId: string, startDate: string, end
     const checkoutRate = item.clicks > 0 ? (item.initiateCheckout / item.clicks) * 100 : 0;
     const cpp = item.purchases > 0 ? item.spend / item.purchases : 0;
     const roas = item.spend > 0 ? item.purchaseValue / item.spend : 0;
+
+    // Optimization to avoid duplicate database writes if exact data already exists
+    const existing = await prisma.adInsight.findUnique({
+      where: {
+        accountId_date: {
+          accountId: cleanAccountId,
+          date: dateKey,
+        },
+      },
+    });
+
+    if (existing) {
+      const isIdentical =
+        existing.accountName === item.accountName &&
+        existing.reach === item.reach &&
+        existing.impressions === item.impressions &&
+        existing.clicks === item.clicks &&
+        Math.abs(existing.spend - item.spend) < 0.001 &&
+        existing.addToCart === item.addToCart &&
+        existing.initiateCheckout === item.initiateCheckout &&
+        existing.purchases === item.purchases &&
+        Math.abs(existing.purchaseValue - item.purchaseValue) < 0.001;
+
+      if (isIdentical) {
+        // Data is identical, skip updating to optimize database and sync performance
+        syncedRecords++;
+        continue;
+      }
+    }
 
     await prisma.adInsight.upsert({
       where: {
@@ -675,13 +706,13 @@ app.post("/api/sync", async (req, res) => {
     try {
       console.log("Triggering Ensure AdAccounts...");
       await ensureAdAccounts(token);
-      console.log("Triggering Meta Hierarchy Sync...");
-      await syncMetaHierarchy(token);
-      console.log("Triggering Attribution and Aggregation...");
+      console.log("Triggering Meta Hierarchy Sync (excluding creatives)...");
+      await syncMetaHierarchy(token, { syncCreative: false });
+      console.log("Triggering Attribution and Aggregation (excluding products & creatives)...");
       await attributePurchases();
       await aggregateData(startDate, endDate, {
-        syncProduct: syncProduct === true,
-        syncCreative: syncCreative === true
+        syncProduct: false,
+        syncCreative: false
       });
       console.log("Sync pipeline completed successfully.");
     } catch (aggErr) {
@@ -697,6 +728,44 @@ app.post("/api/sync", async (req, res) => {
     const msg = extractMetaError(error);
     console.error("Sync error:", error.response?.data || error.message);
     res.status(500).json({ error: msg });
+  }
+});
+
+// 2a. 同步店铺和订单数据 (和 Meta 广告同步分开)
+app.post("/api/sync-store", async (req, res) => {
+  const { startDate, endDate } = req.body;
+  if (!startDate || !endDate) {
+    return res.status(400).json({ error: "startDate and endDate are required" });
+  }
+  try {
+    console.log(`[Manual Store Sync] Starting store sync: ${startDate} to ${endDate}`);
+    await syncStoreData(startDate, endDate);
+    await aggregateData(startDate, endDate, { syncProduct: true, syncCreative: false });
+    return res.json({ success: true, message: "店铺和订单数据同步成功" });
+  } catch (error: any) {
+    console.error("Store sync error:", error);
+    return res.status(500).json({ error: error.message || "店铺和订单数据同步失败" });
+  }
+});
+
+// 2b. 同步创意和素材数据 (和 Meta 广告及店铺同步分开)
+app.post("/api/sync-creatives", async (req, res) => {
+  const { startDate, endDate } = req.body;
+  if (!startDate || !endDate) {
+    return res.status(400).json({ error: "startDate and endDate are required" });
+  }
+  try {
+    const token = await getMetaToken();
+    if (!token) {
+      return res.status(400).json({ error: "Meta Token 未配置，请前往设置页面填写" });
+    }
+    console.log(`[Manual Creative Sync] Starting creative adcreatives sync: ${startDate} to ${endDate}`);
+    await syncMetaHierarchy(token, { syncCreative: true });
+    await aggregateData(startDate, endDate, { syncProduct: false, syncCreative: true });
+    return res.json({ success: true, message: "创意素材数据同步成功" });
+  } catch (error: any) {
+    console.error("Creative sync error:", error);
+    return res.status(500).json({ error: extractMetaError(error) });
   }
 });
 

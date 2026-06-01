@@ -25,6 +25,7 @@ import {
   Check,
   ChevronRight,
   RefreshCcw,
+  RefreshCw,
   Clock,
   Zap,
   Maximize2,
@@ -106,6 +107,31 @@ export function CreativeIntelligenceDashboard({
   const [dailyRecords, setDailyRecords] = useState<any[]>([]);
   const [storesList, setStoresList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+
+  const handleSyncCreatives = async () => {
+    setSyncing(true);
+    const syncToast = toast.loading("正在分离同步 Meta 创意素材数据...");
+    try {
+      const startStr = startDate ? format(startDate, "yyyy-MM-dd") : format(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), "yyyy-MM-dd");
+      const endStr = endDate ? format(endDate, "yyyy-MM-dd") : format(new Date(), "yyyy-MM-dd");
+
+      const response = await axios.post("/api/sync-creatives", {
+        startDate: startStr,
+        endDate: endStr
+      });
+      toast.success(response.data.message || "创意素材数据同步成功！", {
+        id: syncToast,
+      });
+      fetchCreatives();
+    } catch (err: any) {
+      const respErr = err.response?.data?.error;
+      const errMsg = typeof respErr === 'string' ? respErr : (respErr?.message || "同步创意数据失败");
+      toast.error(errMsg, { id: syncToast });
+    } finally {
+      setSyncing(false);
+    }
+  };
   
   // Local store filter state
   const [localStoreFilter, setLocalStoreFilter] = useState("all");
@@ -540,6 +566,15 @@ export function CreativeIntelligenceDashboard({
               {startDate ? format(startDate, "yyyy-MM-dd") : "过去30天"} ~ {endDate ? format(endDate, "yyyy-MM-dd") : "当天"}
             </span>
           </div>
+          <Button
+            variant="outline"
+            className="h-9 px-3.5 text-xs font-semibold border-gray-200 text-slate-700 hover:bg-gray-50 flex items-center gap-1.5"
+            onClick={handleSyncCreatives}
+            disabled={syncing}
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
+            同步创意数据
+          </Button>
           <Button
             onClick={fetchCreatives}
             variant="outline"

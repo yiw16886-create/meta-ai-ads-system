@@ -132,6 +132,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
   const [startDate, setStartDate] = useState<Date>(subDays(new Date(), 1));
   const [endDate, setEndDate] = useState<Date>(subDays(new Date(), 1));
   const [search, setSearch] = useState("");
+  const [viewDimension, setViewDimension] = useState<"account" | "date" | "date_account">("account");
   const [data, setData] = useState<AdInsight[]>([]);
   const [storeSummaries, setStoreSummaries] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(false);
@@ -265,10 +266,20 @@ export function Dashboard({ onLogout }: DashboardProps) {
         ) {
           return acc;
         }
-        const key = curr.accountId;
+        
+        let key = "";
+        if (viewDimension === "account") {
+          key = curr.accountId;
+        } else if (viewDimension === "date") {
+          key = curr.date;
+        } else {
+          key = `${curr.date}_${curr.accountId}`;
+        }
+
         if (!acc[key]) {
           acc[key] = {
             ...curr,
+            id: key, // dynamic identifier
             reach: 0,
             impressions: 0,
             clicks: 0,
@@ -289,7 +300,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
         acc[key].purchaseValue += curr.purchaseValue;
         return acc;
       },
-      {} as Record<string, AdInsight>,
+      {} as Record<string, any>,
     );
 
     return Object.values(grouped).map((item) => ({
@@ -302,7 +313,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
       cpp: item.purchases > 0 ? item.spend / item.purchases : 0,
       roas: item.spend > 0 ? item.purchaseValue / item.spend : 0,
     }));
-  }, [data, search]);
+  }, [data, search, viewDimension]);
 
   const [sortConfig, setSortConfig] = useState<{ key: keyof AdInsight; direction: "asc" | "desc" } | null>(null);
 
@@ -341,27 +352,36 @@ export function Dashboard({ onLogout }: DashboardProps) {
   const avgRoi = totals.spend > 0 ? totals.purchaseValue / totals.spend : 0;
 
   const handleExport = () => {
-    const exportData = sortedAggregatedData.map((item) => ({
-      帐户名称: item.accountName,
-      抵达: item.reach,
-      印象: item.impressions,
-      点击: item.clicks,
-      "CPC（全部）": `$${item.cpc.toFixed(2)}`,
-      "点击率（全部）%": `${item.ctr.toFixed(2)}%`,
-      已花费金额: `$${item.spend.toFixed(2)}`,
-      加入购物车: item.addToCart,
-      加购率: `${item.atcRate.toFixed(2)}%`,
-      结账发起次数: item.initiateCheckout,
-      结账发起率: `${item.checkoutRate.toFixed(2)}%`,
-      成效: item.purchases,
-      单次成效费用: `$${item.cpp.toFixed(2)}`,
-      购物转化价值: `$${item.purchaseValue.toFixed(2)}`,
-      ROAS: item.roas.toFixed(2),
-    }));
+    const exportData = sortedAggregatedData.map((item) => {
+      const row: any = {};
+      if (viewDimension === "date" || viewDimension === "date_account") {
+        row["日期"] = item.date;
+      }
+      if (viewDimension === "account" || viewDimension === "date_account") {
+        row["帐户名称"] = item.accountName;
+      }
+      return {
+        ...row,
+        抵达: item.reach,
+        印象: item.impressions,
+        点击: item.clicks,
+        "CPC（全部）": `$${item.cpc.toFixed(2)}`,
+        "点击率（全部）%": `${item.ctr.toFixed(2)}%`,
+        已花费金额: `$${item.spend.toFixed(2)}`,
+        加入购物车: item.addToCart,
+        加购率: `${item.atcRate.toFixed(2)}%`,
+        结账发起次数: item.initiateCheckout,
+        结账发起率: `${item.checkoutRate.toFixed(2)}%`,
+        成效: item.purchases,
+        单次成效费用: `$${item.cpp.toFixed(2)}`,
+        购物转化价值: `$${item.purchaseValue.toFixed(2)}`,
+        ROAS: item.roas.toFixed(2),
+      };
+    });
     const ws = XLSX.utils.json_to_sheet(exportData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Ad Insights");
-    XLSX.writeFile(wb, `Meta_Ads_Data_${format(new Date(), "yyyyMMdd")}.xlsx`);
+    XLSX.writeFile(wb, `Meta_Ads_Data_${viewDimension}_${format(new Date(), "yyyyMMdd")}.xlsx`);
     toast.success("导出成功！");
   };
 
@@ -691,14 +711,61 @@ export function Dashboard({ onLogout }: DashboardProps) {
                 <span className="font-semibold text-[14px] text-meta-dark">
                   广告账户详情明细
                 </span>
-                <Button
-                  variant="outline"
-                  className="h-[32px] px-3 rounded-[6px] border-[#e5e7eb] text-[12px] text-[#374151]"
-                  onClick={handleExport}
-                >
-                  <Download className="w-3.5 h-3.5 mr-2" />
-                  导出报表
-                </Button>
+                <div className="flex items-center gap-[12px]">
+                  <div className="flex items-center bg-gray-100 p-0.5 rounded-[8px] border border-gray-200">
+                    <button
+                      className={cn(
+                        "px-3 py-1 text-[11px] font-medium rounded-[6px] transition-all",
+                        viewDimension === "account"
+                          ? "bg-white text-meta-dark shadow-sm"
+                          : "text-meta-text-muted hover:text-meta-dark"
+                      )}
+                      onClick={() => setViewDimension("account")}
+                    >
+                      按账户汇总
+                    </button>
+                    <button
+                      className={cn(
+                        "px-3 py-1 text-[11px] font-medium rounded-[6px] transition-all",
+                        viewDimension === "date"
+                          ? "bg-white text-meta-dark shadow-sm"
+                          : "text-meta-text-muted hover:text-meta-dark"
+                      )}
+                      onClick={() => {
+                        setViewDimension("date");
+                        if (sortConfig?.key !== 'date') {
+                          setSortConfig({ key: 'date' as any, direction: 'desc' });
+                        }
+                      }}
+                    >
+                      按日期汇总
+                    </button>
+                    <button
+                      className={cn(
+                        "px-3 py-1 text-[11px] font-medium rounded-[6px] transition-all",
+                        viewDimension === "date_account"
+                          ? "bg-white text-meta-dark shadow-sm"
+                          : "text-meta-text-muted hover:text-meta-dark"
+                      )}
+                      onClick={() => {
+                        setViewDimension("date_account");
+                        if (sortConfig?.key !== 'date') {
+                          setSortConfig({ key: 'date' as any, direction: 'desc' });
+                        }
+                      }}
+                    >
+                      按日期与账户明细
+                    </button>
+                  </div>
+                  <Button
+                    variant="outline"
+                    className="h-[32px] px-3 rounded-[6px] border-[#e5e7eb] text-[12px] text-[#374151]"
+                    onClick={handleExport}
+                  >
+                    <Download className="w-3.5 h-3.5 mr-2" />
+                    导出报表
+                  </Button>
+                </div>
               </div>
               <div className="flex-grow overflow-hidden flex flex-col">
                 <div className="flex-grow w-full overflow-auto max-h-[650px] relative border-b">
@@ -706,11 +773,17 @@ export function Dashboard({ onLogout }: DashboardProps) {
                     <TableHeader className="sticky top-0 z-20 shadow-[0_1px_0_rgba(0,0,0,0.05)]">
                       <TableRow className="bg-[#f9fafb] hover:bg-[#f9fafb]">
                     <TableHead 
-                      className="w-[180px] sticky left-0 top-0 z-30 bg-[#f9fafb] border-r-2 border-[#e5e7eb] font-semibold text-[#374151] h-11 px-4 cursor-pointer hover:bg-gray-100"
-                      onClick={() => requestSort("accountName")}
+                      className={cn(
+                        "sticky left-0 top-0 z-30 bg-[#f9fafb] border-r-2 border-[#e5e7eb] font-semibold text-[#374151] h-11 px-4 cursor-pointer hover:bg-gray-100",
+                        viewDimension === "date_account" ? "w-[240px]" : "w-[180px]"
+                      )}
+                      onClick={() => requestSort(viewDimension === "date" ? "date" : "accountName")}
                     >
                       <div className="flex items-center gap-1">
-                        帐户名称 <ArrowUpDown className={`w-3 h-3 ${sortConfig?.key === 'accountName' ? 'text-meta-blue' : 'text-gray-300'}`}/>
+                        {viewDimension === "account" && "帐户名称"}
+                        {viewDimension === "date" && "日期"}
+                        {viewDimension === "date_account" && "日期 | 帐户名称"}
+                        <ArrowUpDown className={`w-3 h-3 ${sortConfig?.key === (viewDimension === "date" ? 'date' : 'accountName') ? 'text-meta-blue' : 'text-gray-300'}`}/>
                       </div>
                     </TableHead>
                     <TableHead 
@@ -840,16 +913,33 @@ export function Dashboard({ onLogout }: DashboardProps) {
                       ) : (
                         sortedAggregatedData.map((item) => (
                           <TableRow
-                            key={item.accountId}
+                            key={item.id || item.accountId}
                             className="hover:bg-gray-50 transition-colors border-b border-[#f3f4f6]"
                           >
                             <TableCell className="sticky left-0 z-10 bg-white border-r-2 border-[#f3f4f6] px-4 py-[10px] whitespace-nowrap font-medium text-meta-dark">
-                              <button
-                                onClick={() => navigate(`/account/${item.accountId}`)}
-                                className="hover:text-blue-600 hover:underline text-left outline-none"
-                              >
-                                {item.accountName}
-                              </button>
+                              {viewDimension === "account" && (
+                                <button
+                                  onClick={() => navigate(`/account/${item.accountId}`)}
+                                  className="hover:text-blue-600 hover:underline text-left outline-none"
+                                >
+                                  {item.accountName}
+                                </button>
+                              )}
+                              {viewDimension === "date" && (
+                                <span className="text-[#374151]">{item.date}</span>
+                              )}
+                              {viewDimension === "date_account" && (
+                                <div className="flex items-center gap-1.5 text-xs text-meta-dark">
+                                  <span className="text-gray-500 font-normal">{item.date}</span>
+                                  <span className="text-gray-300">|</span>
+                                  <button
+                                    onClick={() => navigate(`/account/${item.accountId}`)}
+                                    className="hover:text-blue-600 hover:underline text-left outline-none font-medium"
+                                  >
+                                    {item.accountName}
+                                  </button>
+                                </div>
+                              )}
                             </TableCell>
                             <TableCell className="px-4 py-[10px] whitespace-nowrap text-[#374151]">
                               {(item.reach || 0).toLocaleString()}
@@ -913,7 +1003,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
             onManageAccounts={() => navigate("/?tab=accounts")}
           />
         ) : currentTab === "stores" ? (
-          <StoresDashboard />
+          <StoresDashboard startDate={startDate} endDate={endDate} />
         ) : currentTab === "monitoring" ? (
           <MonitoringDashboard />
         ) : currentTab === "accounts" ? (

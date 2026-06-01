@@ -36,19 +36,30 @@ export async function ensureAdAccounts(token: string) {
     let successCount = 0;
     for (const acc of activeAccounts) {
       try {
-        await prisma.adAccount.upsert({
-          where: { fb_account_id: acc.account_id },
-          update: {
-            fb_account_name: acc.name,
-            fb_access_token: token,
-          },
-          create: {
-            fb_account_id: acc.account_id,
-            fb_account_name: acc.name,
-            fb_access_token: token,
-            storeId: defaultStore.id,
-          }
+        const existingAdAccount = await prisma.adAccount.findUnique({
+          where: { fb_account_id: acc.account_id }
         });
+
+        if (existingAdAccount) {
+          if (existingAdAccount.fb_account_name !== acc.name || existingAdAccount.fb_access_token !== token) {
+            await prisma.adAccount.update({
+              where: { fb_account_id: acc.account_id },
+              data: {
+                fb_account_name: acc.name,
+                fb_access_token: token,
+              }
+            });
+          }
+        } else {
+          await prisma.adAccount.create({
+            data: {
+              fb_account_id: acc.account_id,
+              fb_account_name: acc.name,
+              fb_access_token: token,
+              storeId: defaultStore.id,
+            }
+          });
+        }
         successCount++;
       } catch (err) {
         console.error(`[Ensure AdAccounts] Prisma error writing ad account ${acc.account_id}:`, err);
@@ -60,7 +71,7 @@ export async function ensureAdAccounts(token: string) {
   }
 }
 
-export async function syncMetaHierarchy(token: string) {
+export async function syncMetaHierarchy(token: string, options: { syncCreative?: boolean } = { syncCreative: false }) {
   const activeAccountIds = new Set<string>();
   try {
     const url = `https://graph.facebook.com/v19.0/me/adaccounts`;
@@ -150,22 +161,33 @@ export async function syncMetaHierarchy(token: string) {
       let campSuccess = 0;
       for (const campaign of campaigns) {
         try {
-          await prisma.campaign.upsert({
-            where: { id: campaign.id },
-            update: { name: campaign.name, status: campaign.status },
-            create: {
-              id: campaign.id,
-              accountId: rawAccountId,
-              name: campaign.name,
-              status: campaign.status
-            }
+          const existingCampaign = await prisma.campaign.findUnique({
+            where: { id: campaign.id }
           });
+          
+          if (existingCampaign) {
+            if (existingCampaign.name !== campaign.name || existingCampaign.status !== campaign.status) {
+              await prisma.campaign.update({
+                where: { id: campaign.id },
+                data: { name: campaign.name, status: campaign.status }
+              });
+            }
+          } else {
+            await prisma.campaign.create({
+              data: {
+                id: campaign.id,
+                accountId: rawAccountId,
+                name: campaign.name,
+                status: campaign.status
+              }
+            });
+          }
           campSuccess++;
         } catch (err) {
           console.error(`[Meta Hierarchy Sync] Prisma error writing campaign ${campaign.id}:`, err);
         }
       }
-      console.log(`[Meta Hierarchy Sync] Successfully wrote ${campSuccess} campaigns`);
+      console.log(`[Meta Hierarchy Sync] Successfully processed ${campSuccess} campaigns`);
 
       await delay(300);
 
@@ -181,22 +203,33 @@ export async function syncMetaHierarchy(token: string) {
       let adsetSuccess = 0;
       for (const adset of adsets) {
         try {
-          await prisma.adSet.upsert({
-            where: { id: adset.id },
-            update: { name: adset.name, campaignId: adset.campaign_id },
-            create: {
-              id: adset.id,
-              campaignId: adset.campaign_id,
-              accountId: rawAccountId,
-              name: adset.name
-            }
+          const existingAdSet = await prisma.adSet.findUnique({
+            where: { id: adset.id }
           });
+
+          if (existingAdSet) {
+            if (existingAdSet.name !== adset.name || existingAdSet.campaignId !== adset.campaign_id) {
+              await prisma.adSet.update({
+                where: { id: adset.id },
+                data: { name: adset.name, campaignId: adset.campaign_id }
+              });
+            }
+          } else {
+            await prisma.adSet.create({
+              data: {
+                id: adset.id,
+                campaignId: adset.campaign_id,
+                accountId: rawAccountId,
+                name: adset.name
+              }
+            });
+          }
           adsetSuccess++;
         } catch (err) {
           console.error(`[Meta Hierarchy Sync] Prisma error writing adset ${adset.id}:`, err);
         }
       }
-      console.log(`[Meta Hierarchy Sync] Successfully wrote ${adsetSuccess} adsets`);
+      console.log(`[Meta Hierarchy Sync] Successfully processed ${adsetSuccess} adsets`);
 
       await delay(300);
 
@@ -213,68 +246,94 @@ export async function syncMetaHierarchy(token: string) {
       for (const ad of ads) {
         const creativeId = ad.creative?.id || null;
         try {
-          await prisma.ad.upsert({
-            where: { id: ad.id },
-            update: {
-              name: ad.name,
-              adsetId: ad.adset_id,
-              campaignId: ad.campaign_id,
-              creativeId: creativeId
-            },
-            create: {
-              id: ad.id,
-              adsetId: ad.adset_id,
-              campaignId: ad.campaign_id,
-              accountId: rawAccountId,
-              name: ad.name,
-              creativeId: creativeId
-            }
+          const existingAd = await prisma.ad.findUnique({
+            where: { id: ad.id }
           });
+
+          if (existingAd) {
+            if (existingAd.name !== ad.name || existingAd.adsetId !== ad.adset_id || existingAd.campaignId !== ad.campaign_id || existingAd.creativeId !== creativeId) {
+              await prisma.ad.update({
+                where: { id: ad.id },
+                data: {
+                  name: ad.name,
+                  adsetId: ad.adset_id,
+                  campaignId: ad.campaign_id,
+                  creativeId: creativeId
+                }
+              });
+            }
+          } else {
+            await prisma.ad.create({
+              data: {
+                id: ad.id,
+                adsetId: ad.adset_id,
+                campaignId: ad.campaign_id,
+                accountId: rawAccountId,
+                name: ad.name,
+                creativeId: creativeId
+              }
+            });
+          }
           adSuccess++;
         } catch (err) {
           console.error(`[Meta Hierarchy Sync] Prisma error writing ad ${ad.id}:`, err);
         }
       }
-      console.log(`[Meta Hierarchy Sync] Successfully wrote ${adSuccess} ads`);
+      console.log(`[Meta Hierarchy Sync] Successfully processed ${adSuccess} ads`);
 
       await delay(300);
 
-      // 4. Fetch Creatives
-      const creativesUrl = `https://graph.facebook.com/v19.0/${actId}/adcreatives`;
-      console.log(`[Meta Hierarchy Sync] Fetching creatives from URL: ${creativesUrl}`);
-      const creativesRes = await axios.get(creativesUrl, {
-        params: { fields: "id,name,object_type,status", limit: 100, access_token: token }
-      });
-      const creatives = creativesRes.data?.data || [];
-      console.log(`[Meta Hierarchy Sync] Received ${creatives.length} creatives`);
+      if (options?.syncCreative) {
+        // 4. Fetch Creatives
+        const creativesUrl = `https://graph.facebook.com/v19.0/${actId}/adcreatives`;
+        console.log(`[Meta Hierarchy Sync] Fetching creatives from URL: ${creativesUrl}`);
+        const creativesRes = await axios.get(creativesUrl, {
+          params: { fields: "id,name,object_type,status", limit: 100, access_token: token }
+        });
+        const creatives = creativesRes.data?.data || [];
+        console.log(`[Meta Hierarchy Sync] Received ${creatives.length} creatives`);
 
-      let creativeSuccess = 0;
-      for (const creative of creatives) {
-        // Attempt to guess type based on object_type
-        const type = getCreativeType(creative.object_type);
-        
-        try {
-          await prisma.adCreative.upsert({
-            where: { id: creative.id },
-            update: {
-              name: creative.name,
-              type: type,
-              storeId: acc.storeId
-            },
-            create: {
-              id: creative.id,
-              storeId: acc.storeId,
-              name: creative.name || `Creative ${creative.id}`,
-              type: type,
-              hookRate: Math.random() * 50 // Example default calculation as placeholder
+        let creativeSuccess = 0;
+        for (const creative of creatives) {
+          // Attempt to guess type based on object_type
+          const type = getCreativeType(creative.object_type);
+          
+          try {
+            const existingCreative = await prisma.adCreative.findUnique({
+              where: { id: creative.id }
+            });
+
+            if (existingCreative) {
+              if (existingCreative.name !== creative.name || existingCreative.type !== type || existingCreative.storeId !== acc.storeId) {
+                await prisma.adCreative.update({
+                  where: { id: creative.id },
+                  data: {
+                    name: creative.name,
+                    type: type,
+                    storeId: acc.storeId
+                  }
+                });
+              }
+            } else {
+              await prisma.adCreative.create({
+                data: {
+                  id: creative.id,
+                  storeId: acc.storeId,
+                  name: creative.name || `Creative ${creative.id}`,
+                  type: type,
+                  hookRate: Math.random() * 50 // Example default calculation as placeholder
+                }
+              });
             }
-          });
-          creativeSuccess++;
-        } catch (err) {
-          console.error(`[Meta Hierarchy Sync] Prisma error writing creative ${creative.id}:`, err);
+            creativeSuccess++;
+          } catch (err) {
+            console.error(`[Meta Hierarchy Sync] Prisma error writing creative ${creative.id}:`, err);
+          }
         }
+        console.log(`[Meta Hierarchy Sync] Successfully processed ${creativeSuccess} creatives`);
+      } else {
+        console.log(`[Meta Hierarchy Sync] Skipping active fetch of Meta creatives for account ${actId}`);
       }
-      console.log(`[Meta Hierarchy Sync] Successfully wrote ${creativeSuccess} creatives`);
       lastHierarchySyncByAccount.set(rawAccountId, Date.now());
 
     } catch (err: any) {
@@ -310,74 +369,116 @@ export async function syncMetaHierarchy(token: string) {
 
         let mockCampCount = 0;
         for (const campaign of mockCampaigns) {
-          await prisma.campaign.upsert({
-            where: { id: campaign.id },
-            update: { name: campaign.name, status: campaign.status },
-            create: {
-              id: campaign.id,
-              accountId: rawAccountId,
-              name: campaign.name,
-              status: campaign.status
-            }
+          const existingCampaign = await prisma.campaign.findUnique({
+            where: { id: campaign.id }
           });
+          if (existingCampaign) {
+            if (existingCampaign.name !== campaign.name || existingCampaign.status !== campaign.status) {
+              await prisma.campaign.update({
+                where: { id: campaign.id },
+                data: { name: campaign.name, status: campaign.status }
+              });
+            }
+          } else {
+            await prisma.campaign.create({
+              data: {
+                id: campaign.id,
+                accountId: rawAccountId,
+                name: campaign.name,
+                status: campaign.status
+              }
+            });
+          }
           mockCampCount++;
         }
 
         let mockAdsetCount = 0;
         for (const adset of mockAdSets) {
-          await prisma.adSet.upsert({
-            where: { id: adset.id },
-            update: { name: adset.name, campaignId: adset.campaignId },
-            create: {
-              id: adset.id,
-              campaignId: adset.campaignId,
-              accountId: rawAccountId,
-              name: adset.name
-            }
+          const existingAdSet = await prisma.adSet.findUnique({
+            where: { id: adset.id }
           });
+          if (existingAdSet) {
+            if (existingAdSet.name !== adset.name || existingAdSet.campaignId !== adset.campaignId) {
+              await prisma.adSet.update({
+                where: { id: adset.id },
+                data: { name: adset.name, campaignId: adset.campaignId }
+              });
+            }
+          } else {
+            await prisma.adSet.create({
+              data: {
+                id: adset.id,
+                campaignId: adset.campaignId,
+                accountId: rawAccountId,
+                name: adset.name
+              }
+            });
+          }
           mockAdsetCount++;
         }
 
         let mockAdCount = 0;
         for (const ad of mockAds) {
-          await prisma.ad.upsert({
-            where: { id: ad.id },
-            update: {
-              name: ad.name,
-              adsetId: ad.adsetId,
-              campaignId: ad.campaignId,
-              creativeId: ad.creativeId
-            },
-            create: {
-              id: ad.id,
-              adsetId: ad.adsetId,
-              campaignId: ad.campaignId,
-              accountId: rawAccountId,
-              name: ad.name,
-              creativeId: ad.creativeId
-            }
+          const existingAd = await prisma.ad.findUnique({
+            where: { id: ad.id }
           });
+          if (existingAd) {
+            if (existingAd.name !== ad.name || existingAd.adsetId !== ad.adsetId || existingAd.campaignId !== ad.campaignId || existingAd.creativeId !== ad.creativeId) {
+              await prisma.ad.update({
+                where: { id: ad.id },
+                data: {
+                  name: ad.name,
+                  adsetId: ad.adsetId,
+                  campaignId: ad.campaignId,
+                  creativeId: ad.creativeId
+                }
+              });
+            }
+          } else {
+            await prisma.ad.create({
+              data: {
+                id: ad.id,
+                adsetId: ad.adsetId,
+                campaignId: ad.campaignId,
+                accountId: rawAccountId,
+                name: ad.name,
+                creativeId: ad.creativeId
+              }
+            });
+          }
           mockAdCount++;
         }
 
         let mockCreativeCount = 0;
-        for (const creative of mockCreatives) {
-          await prisma.adCreative.upsert({
-            where: { id: creative.id },
-            update: {
-              name: creative.name,
-              type: creative.type,
-              storeId: acc.storeId
-            },
-            create: {
-              id: creative.id,
-              storeId: acc.storeId,
-              name: creative.name,
-              type: creative.type,
-              hookRate: creative.hookRate
+        if (options?.syncCreative) {
+          for (const creative of mockCreatives) {
+            const existingCreative = await prisma.adCreative.findUnique({
+              where: { id: creative.id }
+            });
+            if (existingCreative) {
+              if (existingCreative.name !== creative.name || existingCreative.type !== creative.type || existingCreative.storeId !== acc.storeId) {
+                await prisma.adCreative.update({
+                  where: { id: creative.id },
+                  data: {
+                    name: creative.name,
+                    type: creative.type,
+                    storeId: acc.storeId
+                  }
+                });
+              }
+            } else {
+              await prisma.adCreative.create({
+                data: {
+                  id: creative.id,
+                  storeId: acc.storeId,
+                  name: creative.name,
+                  type: creative.type,
+                  hookRate: creative.hookRate
+                }
+              });
             }
-          });
-          mockCreativeCount++;
+            mockCreativeCount++;
+          }
         }
 
         console.log(`[Meta Hierarchy Sync] Successfully seeded fallback metadata for ${actId} (${mockCampCount} campaigns, ${mockAdsetCount} adsets, ${mockAdCount} ads, ${mockCreativeCount} creatives)`);

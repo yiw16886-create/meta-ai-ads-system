@@ -66,35 +66,52 @@ async function syncShoplineStoreData(store: any, startDate: string, endDate: str
 
         try {
           // Fallback: lazily create product if it didn't sync previously to satisfy foreign key
-          await prisma.product.upsert({
-            where: { id: productId },
-            update: {}, // Don't overwrite if it exists
-            create: {
-              id: productId,
-              storeId: store.id,
-              name: lineItem.title || lineItem.name || "Unknown Product",
-              sku: lineItem.sku || "",
-              category: "Uncategorized",
-              inventory: 0,
-            }
+          const existingProduct = await prisma.product.findUnique({
+            where: { id: productId }
+          });
+          if (!existingProduct) {
+            await prisma.product.create({
+              data: {
+                id: productId,
+                storeId: store.id,
+                name: lineItem.title || lineItem.name || "Unknown Product",
+                sku: lineItem.sku || "",
+                category: "Uncategorized",
+                inventory: 0,
+              }
+            });
+          }
+
+          const revenue = parseFloat(lineItem.price || 0) * (lineItem.quantity || 1);
+          const refunded = o.financial_status === 'refunded' || o.financial_status === 'partially_refunded';
+          
+          const existingOrder = await prisma.order.findUnique({
+            where: { id: lineItem.id.toString() }
           });
 
-          await prisma.order.upsert({
-            where: { id: lineItem.id.toString() },
-            update: {
-              revenue: parseFloat(lineItem.price || 0) * (lineItem.quantity || 1),
-              refunded: o.financial_status === 'refunded' || o.financial_status === 'partially_refunded',
-            },
-            create: {
-              id: lineItem.id.toString(),
-              storeId: store.id,
-              productId: productId,
-              revenue: parseFloat(lineItem.price || 0) * (lineItem.quantity || 1),
-              profit: (parseFloat(lineItem.price || 0) * (lineItem.quantity || 1)) * 0.4,
-              refunded: o.financial_status === 'refunded' || o.financial_status === 'partially_refunded',
-              createdAt: new Date(o.created_at)
+          if (existingOrder) {
+            if (existingOrder.revenue !== revenue || existingOrder.refunded !== refunded) {
+              await prisma.order.update({
+                where: { id: lineItem.id.toString() },
+                data: {
+                  revenue,
+                  refunded,
+                }
+              });
             }
-          });
+          } else {
+            await prisma.order.create({
+              data: {
+                id: lineItem.id.toString(),
+                storeId: store.id,
+                productId: productId,
+                revenue,
+                profit: revenue * 0.4,
+                refunded,
+                createdAt: new Date(o.created_at)
+              }
+            });
+          }
           successCount++;
         } catch (oErr) {
           console.error(`[Shopline Sync] Prisma error writing order ${lineItem.id}:`, oErr);
@@ -141,23 +158,34 @@ async function syncShopifyStoreData(store: any, startDate: string, endDate: stri
           let successCount = 0;
           for (const p of products) {
             try {
-              await prisma.product.upsert({
-                where: { id: p.id.toString() },
-                update: {
-                  name: p.title,
-                  category: p.product_type || "Uncategorized",
-                  sku: p.variants?.[0]?.sku || "",
-                  inventory: p.variants?.[0]?.inventory_quantity || 0,
-                },
-                create: {
-                  id: p.id.toString(),
-                  storeId: store.id,
-                  name: p.title,
-                  sku: p.variants?.[0]?.sku || "",
-                  category: p.product_type || "Uncategorized",
-                  inventory: p.variants?.[0]?.inventory_quantity || 0,
-                }
+              const name = p.title;
+              const category = p.product_type || "Uncategorized";
+              const sku = p.variants?.[0]?.sku || "";
+              const inventory = p.variants?.[0]?.inventory_quantity || 0;
+
+              const existingProduct = await prisma.product.findUnique({
+                where: { id: p.id.toString() }
               });
+
+              if (existingProduct) {
+                if (existingProduct.name !== name || existingProduct.category !== category || existingProduct.sku !== sku || existingProduct.inventory !== inventory) {
+                  await prisma.product.update({
+                    where: { id: p.id.toString() },
+                    data: { name, category, sku, inventory }
+                  });
+                }
+              } else {
+                await prisma.product.create({
+                  data: {
+                    id: p.id.toString(),
+                    storeId: store.id,
+                    name,
+                    sku,
+                    category,
+                    inventory
+                  }
+                });
+              }
               successCount++;
             } catch (pErr) {
               console.error(`[Store Sync] Prisma error writing product ${p.id}:`, pErr);
@@ -197,22 +225,53 @@ async function syncShopifyStoreData(store: any, startDate: string, endDate: stri
               if (!productId) continue;
 
               try {
-                await prisma.order.upsert({
-                  where: { id: lineItem.id.toString() },
-                  update: {
-                    revenue: parseFloat(lineItem.price) * lineItem.quantity,
-                    refunded: o.financial_status === 'refunded' || o.financial_status === 'partially_refunded',
-                  },
-                  create: {
-                    id: lineItem.id.toString(),
-                    storeId: store.id,
-                    productId: productId,
-                    revenue: parseFloat(lineItem.price) * lineItem.quantity,
-                    profit: (parseFloat(lineItem.price) * lineItem.quantity) * 0.4, // Estimated 40% margin logic
-                    refunded: o.financial_status === 'refunded' || o.financial_status === 'partially_refunded',
-                    createdAt: new Date(o.created_at)
-                  }
+                // Ensure product exists
+                const existingProduct = await prisma.product.findUnique({
+                  where: { id: productId }
                 });
+                if (!existingProduct) {
+                  await prisma.product.create({
+                    data: {
+                      id: productId,
+                      storeId: store.id,
+                      name: lineItem.title || lineItem.name || "Unknown Product",
+                      sku: lineItem.sku || "",
+                      category: "Uncategorized",
+                      inventory: 0,
+                    }
+                  });
+                }
+
+                const revenue = parseFloat(lineItem.price) * lineItem.quantity;
+                const refunded = o.financial_status === 'refunded' || o.financial_status === 'partially_refunded';
+
+                const existingOrder = await prisma.order.findUnique({
+                  where: { id: lineItem.id.toString() }
+                });
+
+                if (existingOrder) {
+                  if (existingOrder.revenue !== revenue || existingOrder.refunded !== refunded) {
+                     await prisma.order.update({
+                       where: { id: lineItem.id.toString() },
+                       data: {
+                         revenue,
+                         refunded,
+                       }
+                     });
+                  }
+                } else {
+                  await prisma.order.create({
+                    data: {
+                      id: lineItem.id.toString(),
+                      storeId: store.id,
+                      productId: productId,
+                      revenue,
+                      profit: revenue * 0.4,
+                      refunded,
+                      createdAt: new Date(o.created_at)
+                    }
+                  });
+                }
                 successCount++;
               } catch (oErr) {
                 console.error(`[Store Sync] Prisma error writing order ${lineItem.id}:`, oErr);

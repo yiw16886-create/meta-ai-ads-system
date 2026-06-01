@@ -1,21 +1,51 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { Plus, Store, Link as LinkIcon, Trash2 } from "lucide-react";
+import { Plus, Store, Link as LinkIcon, Trash2, RefreshCw } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
-export function StoresDashboard() {
+export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endDate?: Date }) {
   const navigate = useNavigate();
   const [stores, setStores] = useState<any[]>([]);
   const [mappings, setMappings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
 
   // States for store deletion
   const [deletingStoreId, setDeletingStoreId] = useState<number | null>(null);
   const [deleteStoreName, setDeleteStoreName] = useState("");
   const [deleteLoading, setDeleteLoading] = useState(false);
+
+  const handleSyncStore = async () => {
+    setSyncing(true);
+    const syncToast = toast.loading("正在同步店铺与订单数据...");
+    try {
+      const sDate = startDate || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      const eDate = endDate || new Date();
+      // Format to local YYYY-MM-DD format safely
+      const offset = sDate.getTimezoneOffset();
+      const localSDate = new Date(sDate.getTime() - (offset * 60 * 1000));
+      const localEDate = new Date(eDate.getTime() - (offset * 60 * 1000));
+      const startStr = localSDate.toISOString().split('T')[0];
+      const endStr = localEDate.toISOString().split('T')[0];
+
+      const response = await axios.post("/api/sync-store", {
+        startDate: startStr,
+        endDate: endStr
+      });
+      toast.success(response.data.message || "店铺和订单数据同步成功", {
+        id: syncToast,
+      });
+    } catch (error: any) {
+      const respErr = error.response?.data?.error;
+      const errMsg = typeof respErr === 'string' ? respErr : (respErr?.message || "同步店铺数据失败");
+      toast.error(errMsg, { id: syncToast });
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const fetchStoresAndMappings = async () => {
     setLoading(true);
@@ -63,7 +93,18 @@ export function StoresDashboard() {
             管理独立站店铺，并关联对应的 Meta 广告账户
           </p>
         </div>
-        <Button onClick={() => navigate("/store/new")}>添加店铺</Button>
+        <div className="flex items-center gap-3">
+          <Button
+            variant="outline"
+            className="flex items-center gap-2 text-gray-700 border-gray-300 hover:bg-gray-50"
+            onClick={handleSyncStore}
+            disabled={syncing}
+          >
+            <RefreshCw className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
+            同步店铺数据
+          </Button>
+          <Button onClick={() => navigate("/store/new")}>添加店铺</Button>
+        </div>
       </div>
 
       {loading ? (
