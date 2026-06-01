@@ -1,6 +1,8 @@
 import axios from "axios";
 import prisma from "../db.js";
 
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export async function syncStoreData(startDate: string, endDate: string) {
   const stores = await prisma.store.findMany();
 
@@ -18,6 +20,8 @@ export async function syncStoreData(startDate: string, endDate: string) {
         console.log(`[Store Sync] Triggering Shopify Sync for store ${store.id}...`);
         await syncShopifyStoreData(store, startDate, endDate);
       }
+      // Wait between stores to be polite & avoid concurrency limits
+      await delay(1000);
     } catch (err) {
       console.error(`[Store Sync] Failed to sync store ${store.id}:`, err);
     }
@@ -35,8 +39,8 @@ async function syncShoplineStoreData(store: any, startDate: string, endDate: str
   // We skip fetching products directly for Shopline as the /products.json endpoint is often not exposed or returns 404.
   // Instead, products are lazily created during the Order sync phase from order line items.
 
-  // 2. Fetch Orders
-  let ordersUrl = `https://${domain}/admin/openapi/v20240301/orders.json?status=any&created_at_min=${startDate}T00:00:00Z&created_at_max=${endDate}T23:59:59Z&limit=100`;
+  // 2. Fetch Orders (GMT-8 timezone forced)
+  let ordersUrl = `https://${domain}/admin/openapi/v20240301/orders.json?status=any&created_at_min=${startDate}T00:00:00-08:00&created_at_max=${endDate}T23:59:59-08:00&limit=100`;
   let hasNextOrders = true;
   let ordersCount = 0;
 
@@ -104,6 +108,8 @@ async function syncShoplineStoreData(store: any, startDate: string, endDate: str
     if (linkHeader && linkHeader.includes('rel="next"')) {
       const matches = linkHeader.match(/<([^>]+)>; rel="next"/);
       ordersUrl = matches ? matches[1] : "";
+      // Brief sleep between paginated requests
+      await delay(500);
     } else {
       hasNextOrders = false;
     }
@@ -164,6 +170,8 @@ async function syncShopifyStoreData(store: any, startDate: string, endDate: stri
           if (linkHeader && linkHeader.includes('rel="next"')) {
             const matches = linkHeader.match(/<([^>]+)>; rel="next"/);
             url = matches ? matches[1] : "";
+            // Brief sleep between paginated requests
+            await delay(500);
           } else {
             hasNextPage = false;
           }
@@ -218,6 +226,8 @@ async function syncShopifyStoreData(store: any, startDate: string, endDate: stri
           if (linkHeader && linkHeader.includes('rel="next"')) {
             const matches = linkHeader.match(/<([^>]+)>; rel="next"/);
             ordersUrl = matches ? matches[1] : "";
+            // Brief sleep between paginated requests
+            await delay(500);
           } else {
             hasNextOrders = false;
           }

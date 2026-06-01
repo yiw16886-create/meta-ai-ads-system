@@ -324,7 +324,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
                 <CardTitle className="text-[15px]">核心受众消耗占比 (Top 10)</CardTitle>
               </CardHeader>
               <CardContent className="h-[350px]">
-                <ResponsiveContainer width="100%" height="100%">
+                <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                   <BarChart data={data.slice(0, 10)} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
                     <XAxis 

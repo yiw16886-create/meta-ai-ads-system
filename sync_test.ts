@@ -9,7 +9,7 @@ async function main() {
   const endDate = '2024-05-25';
 
   const setting = await prisma.setting.findUnique({ where: { key: "META_ACCESS_TOKEN" }});
-  const token = setting?.value;
+  const token = setting?.value || process.env.META_ACCESS_TOKEN;
 
   if (!token) {
     console.log("No META_ACCESS_TOKEN found.");

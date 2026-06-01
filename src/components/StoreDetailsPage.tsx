@@ -64,8 +64,8 @@ export function StoreDetailsPage({
     error: false
   });
 
-  const [startDate, setStartDate] = useState<Date>(subDays(new Date(), 7));
-  const [endDate, setEndDate] = useState<Date>(new Date());
+  const [startDate, setStartDate] = useState<Date>(subDays(new Date(), 1));
+  const [endDate, setEndDate] = useState<Date>(subDays(new Date(), 1));
 
   const [sortConfig, setSortConfig] = useState<{
     key: string;
@@ -350,7 +350,7 @@ export function StoreDetailsPage({
                       <div className="space-y-2">
                         <label className="text-sm font-medium">店铺名称</label>
                         <Input
-                          value={storeData.name}
+                          value={storeData.name || ""}
                           onChange={(e) => setStoreData({ ...storeData, name: e.target.value })}
                           placeholder="例如: Kolaich"
                         />
@@ -358,7 +358,7 @@ export function StoreDetailsPage({
                       <div className="space-y-2">
                         <label className="text-sm font-medium">域名</label>
                         <Input
-                          value={storeData.domain}
+                          value={storeData.domain || ""}
                           onChange={(e) => setStoreData({ ...storeData, domain: e.target.value })}
                           placeholder="例如: xxxx.myshopline.com"
                         />
@@ -370,7 +370,7 @@ export function StoreDetailsPage({
                         <label className="text-sm font-medium">STORE_Token</label>
                         <Input
                           type="password"
-                          value={storeData.shopline_token}
+                          value={storeData.shopline_token || ""}
                           onChange={(e) =>
                             setStoreData({
                               ...storeData,
@@ -384,7 +384,7 @@ export function StoreDetailsPage({
                         <label className="text-sm font-medium">预设访客数</label>
                         <Input
                           type="number"
-                          value={storeData.visitors}
+                          value={storeData.visitors ?? ""}
                           onChange={(e) => setStoreData({ ...storeData, visitors: parseInt(e.target.value) || 0 })}
                           placeholder="0"
                         />
@@ -512,7 +512,7 @@ export function StoreDetailsPage({
                   <div className="space-y-2">
                     <label className="text-sm font-medium">店铺名称</label>
                     <Input
-                      value={storeData.name}
+                      value={storeData.name || ""}
                       onChange={(e) =>
                         setStoreData({ ...storeData, name: e.target.value })
                       }
@@ -522,7 +522,7 @@ export function StoreDetailsPage({
                   <div className="space-y-2">
                     <label className="text-sm font-medium">域名</label>
                     <Input
-                      value={storeData.domain}
+                      value={storeData.domain || ""}
                       onChange={(e) =>
                         setStoreData({ ...storeData, domain: e.target.value })
                       }
@@ -533,7 +533,7 @@ export function StoreDetailsPage({
                     <label className="text-sm font-medium">STORE_Token</label>
                     <Input
                       type="password"
-                      value={storeData.shopline_token}
+                      value={storeData.shopline_token || ""}
                       onChange={(e) =>
                         setStoreData({
                           ...storeData,

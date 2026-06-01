@@ -4,6 +4,7 @@ import axios from "axios";
 import { Plus, Store, Link as LinkIcon, Trash2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 
 export function StoresDashboard() {
   const navigate = useNavigate();
@@ -11,8 +12,11 @@ export function StoresDashboard() {
   const [mappings, setMappings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // For modal (can be simplified)
-  // Let's implement a very simple fetching logic first
+  // States for store deletion
+  const [deletingStoreId, setDeletingStoreId] = useState<number | null>(null);
+  const [deleteStoreName, setDeleteStoreName] = useState("");
+  const [deleteLoading, setDeleteLoading] = useState(false);
+
   const fetchStoresAndMappings = async () => {
     setLoading(true);
     try {
@@ -32,6 +36,23 @@ export function StoresDashboard() {
   useEffect(() => {
     fetchStoresAndMappings();
   }, []);
+
+  const handleDeleteStore = async (storeId: number) => {
+    setDeleteLoading(true);
+    try {
+      const res = await axios.delete(`/api/stores/${storeId}`);
+      toast.success(res.data.message || "店铺删除成功");
+      setDeletingStoreId(null);
+      setDeleteStoreName("");
+      // Refresh list
+      fetchStoresAndMappings();
+    } catch (err: any) {
+      console.error(err);
+      toast.error(err.response?.data?.error || "删除店铺失败，请重试");
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
 
   return (
     <div className="flex-1 overflow-y-auto space-y-6 pb-12">
@@ -84,6 +105,20 @@ export function StoresDashboard() {
                       </p>
                     </div>
                   </div>
+                  
+                  {/* Delete Button */}
+                  <button
+                    type="button"
+                    title="删除店铺"
+                    className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeletingStoreId(store.id);
+                      setDeleteStoreName(store.name);
+                    }}
+                  >
+                    <Trash2 className="h-5 w-5" />
+                  </button>
                 </div>
 
                 <div className="flex items-center gap-2 text-sm text-gray-600 mt-4 border-t pt-4">
@@ -101,6 +136,42 @@ export function StoresDashboard() {
               </CardContent>
             </Card>
           ))}
+        </div>
+      )}
+
+      {/* Modern Confirmation Overlay Dialog */}
+      {deletingStoreId !== null && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 transition-opacity duration-300">
+          <div className="bg-white p-6 rounded-[12px] max-w-md w-full shadow-xl border border-gray-100 transform scale-100 transition-transform duration-300">
+            <div className="flex items-center gap-3 mb-4 text-red-600">
+              <div className="h-10 w-10 bg-red-50 rounded-full flex items-center justify-center">
+                <Trash2 className="h-5 w-5" />
+              </div>
+              <h3 className="text-lg font-bold text-gray-900">确认删除店铺</h3>
+            </div>
+            
+            <p className="text-sm text-gray-600 mb-6 leading-relaxed">
+              您确定要删除店铺 <span className="font-semibold text-gray-900">"{deleteStoreName}"</span> 吗？
+              这将硬删除该店铺关联的所有配置、广告账户关联信息和离线缓存指标，此操作无法撤销。
+            </p>
+
+            <div className="flex justify-end gap-3 border-t pt-4">
+              <Button 
+                variant="outline" 
+                onClick={() => { setDeletingStoreId(null); setDeleteStoreName(""); }}
+                disabled={deleteLoading}
+              >
+                取消
+              </Button>
+              <Button 
+                variant="destructive" 
+                onClick={() => handleDeleteStore(deletingStoreId)}
+                disabled={deleteLoading}
+              >
+                {deleteLoading ? "正在删除..." : "确认删除"}
+              </Button>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -129,13 +129,15 @@ export function Dashboard({ onLogout }: DashboardProps) {
     }
   }, [location.search]);
 
-  const [startDate, setStartDate] = useState<Date>(subDays(new Date(), 7));
-  const [endDate, setEndDate] = useState<Date>(new Date());
+  const [startDate, setStartDate] = useState<Date>(subDays(new Date(), 1));
+  const [endDate, setEndDate] = useState<Date>(subDays(new Date(), 1));
   const [search, setSearch] = useState("");
   const [data, setData] = useState<AdInsight[]>([]);
   const [storeSummaries, setStoreSummaries] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [syncProduct, setSyncProduct] = useState(false);
+  const [syncCreative, setSyncCreative] = useState(false);
   const [mappings, setMappings] = useState<Record<string, any>>({});
 
   const fetchMappings = async () => {
@@ -232,6 +234,8 @@ export function Dashboard({ onLogout }: DashboardProps) {
       const response = await axios.post("/api/sync", {
         startDate: format(startDate, "yyyy-MM-dd"),
         endDate: format(endDate, "yyyy-MM-dd"),
+        syncProduct,
+        syncCreative,
       });
       toast.success(`同步成功: ${response.data.count} 条记录`, {
         id: syncToast,
@@ -608,16 +612,36 @@ export function Dashboard({ onLogout }: DashboardProps) {
                 )}
               </div>
               {isAdmin && (
-                <Button
-                  className="bg-meta-blue hover:bg-blue-600 text-white h-9 px-4 rounded-[6px] font-semibold text-[13px] flex items-center gap-[6px]"
-                  onClick={handleSync}
-                  disabled={syncing}
-                >
-                  <RefreshCcw
-                    className={cn("w-4 h-4", syncing && "animate-spin")}
-                  />
-                  同步 Meta 数据
-                </Button>
+                <div className="flex items-center gap-4 bg-gray-50 border border-gray-100 px-3 py-1 rounded-[6px] h-9">
+                  <label className="flex items-center gap-1.5 text-xs text-meta-text-muted hover:text-meta-dark cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      className="rounded border-gray-300 text-meta-blue focus:ring-meta-blue w-3.5 h-3.5 cursor-pointer"
+                      checked={syncProduct}
+                      onChange={(e) => setSyncProduct(e.target.checked)}
+                    />
+                    <span>商品智能分析</span>
+                  </label>
+                  <label className="flex items-center gap-1.5 text-xs text-meta-text-muted hover:text-meta-dark cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      className="rounded border-gray-300 text-meta-blue focus:ring-meta-blue w-3.5 h-3.5 cursor-pointer"
+                      checked={syncCreative}
+                      onChange={(e) => setSyncCreative(e.target.checked)}
+                    />
+                    <span>素材智能分析</span>
+                  </label>
+                  <Button
+                    className="bg-meta-blue hover:bg-blue-600 text-white h-7 px-3 rounded-[4px] font-semibold text-[12px] flex items-center gap-[4px]"
+                    onClick={handleSync}
+                    disabled={syncing}
+                  >
+                    <RefreshCcw
+                      className={cn("w-3.5 h-3.5", syncing && "animate-spin")}
+                    />
+                    同步 Meta 数据
+                  </Button>
+                </div>
               )}
             </div>
 
@@ -632,13 +656,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
             ) : currentTab === "audience_analysis" ? (
               <AudienceAnalysisDashboard startDate={startDate} endDate={endDate} />
             ) : currentTab === "creative_analysis" ? (
-              <div className="flex-grow flex items-center justify-center bg-white rounded-xl shadow-sm border border-gray-100">
-                <div className="text-center text-gray-500">
-                  <ImageIcon className="w-12 h-12 mx-auto mb-3 text-gray-300" />
-                  <p className="text-lg font-medium text-gray-900">素材分析</p>
-                  <p className="mt-1">此功能正在开发中</p>
-                </div>
-              </div>
+              <CreativeIntelligenceDashboard data={data} startDate={startDate} endDate={endDate} />
             ) : (
               <>
                 <div className="grid grid-cols-4 gap-[16px] mb-[20px]">
@@ -2205,8 +2223,8 @@ function SettingsPage() {
 
 function CategoryDashboard({ mappings, onManageAccounts }: { mappings: Record<string, any>, onManageAccounts: () => void }) {
   const navigate = useNavigate();
-  const [startDate, setStartDate] = useState<Date>(subDays(new Date(), 7));
-  const [endDate, setEndDate] = useState<Date>(new Date());
+  const [startDate, setStartDate] = useState<Date>(subDays(new Date(), 1));
+  const [endDate, setEndDate] = useState<Date>(subDays(new Date(), 1));
   const [rawInsights, setRawInsights] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 

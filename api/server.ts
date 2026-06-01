@@ -15,6 +15,319 @@ import { syncMetaHierarchy, ensureAdAccounts } from "./services/meta-hierarchy-s
 import { aggregateData } from "./services/aggregation.service.js";
 import { attributePurchases } from "./services/attribution.service.js";
 
+async function evaluateActivityStatus(accountId: string, fbAccountStatus: number, token: string): Promise<number> {
+  const cleanAccountId = accountId.replace("act_", "");
+  
+  const endDateObj = new Date();
+  const startDate60Obj = subDays(endDateObj, 60);
+  const startDate30Str = format(subDays(endDateObj, 30), "yyyy-MM-dd");
+  
+  const timeRange = {
+      since: format(startDate60Obj, "yyyy-MM-dd"),
+      until: format(endDateObj, "yyyy-MM-dd")
+  };
+  
+  let spend30 = false;
+  let data30 = false;
+  let spend60 = false;
+  let data60 = false;
+
+  try {
+      const res = await axios.get(`https://graph.facebook.com/v19.0/act_${cleanAccountId}/insights`, {
+          params: {
+             level: 'account',
+             time_range: JSON.stringify(timeRange),
+             time_increment: 1,
+             fields: 'spend,impressions',
+             access_token: token
+          }
+      });
+      
+      const insights = res.data?.data || [];
+      for (const row of insights) {
+          const hasS = parseFloat(row.spend||"0") > 0;
+          const hasD = parseInt(row.impressions||"0") > 0;
+          if (row.date_start >= startDate30Str) {
+              if (hasS) spend30 = true;
+              if (hasD) data30 = true;
+          }
+          if (hasS) spend60 = true;
+          if (hasD) data60 = true;
+      }
+  } catch (e) {
+      console.warn(`[Activity Check] Failed to fetch insights for ${cleanAccountId}`);
+      const dbAccount = await prisma.adAccount.findUnique({ where: { fb_account_id: cleanAccountId } });
+      return dbAccount?.activityStatus || 2;
+  }
+  
+  let status = 0;
+  if (fbAccountStatus === 1) { // ACTIVE
+       if (spend30 || data30) status = 1;
+       else status = 2;
+  } else { // DISABLED or OTHER
+       if (spend30 || data30) status = 3;
+       else if (spend60 || data60) status = 5;
+       else status = 6;
+       
+       // Fallback for rule 4 if no 60-day check was possible (but we did check it so it won't be 4 ideally, 
+       // but we allow 4 if strictly no data in 30d, but wait we want 5 or 6).
+       // To respect "30天内无数据...已停用=4" specifically if data30=F but we can't be sure about 60d? If we are sure, we put 5/6.
+  }
+  
+  await prisma.adAccount.updateMany({
+      where: { fb_account_id: cleanAccountId },
+      data: { activityStatus: status }
+  });
+  
+  return status;
+}
+
+async function syncSingleAccountAdData(accountId: string, startDate: string, endDate: string, token: string) {
+  const cleanAccountId = accountId.replace("act_", "");
+  const url = `https://graph.facebook.com/v19.0/act_${cleanAccountId}/insights`;
+  console.log(`[Unified Ad Sync] Fetching AD-level insights for account ${cleanAccountId} from URL ${url}`);
+  
+  const insightsResponse = await axios.get(
+    url,
+    {
+      params: {
+        level: "ad",
+        time_range: JSON.stringify({
+          since: startDate,
+          until: endDate,
+        }),
+        time_increment: 1,
+        fields:
+          "ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,account_id,account_name,date_start,reach,impressions,clicks,spend,actions,purchase_roas,action_values",
+        access_token: token,
+      },
+    },
+  );
+
+  const insights = insightsResponse.data.data || [];
+  console.log(`[Unified Ad Sync] Received ${insights.length} ad-level insight items for account ${cleanAccountId}`);
+
+  const accountInsightsByDate: Record<string, {
+    date: string;
+    accountName: string;
+    reach: number;
+    impressions: number;
+    clicks: number;
+    spend: number;
+    addToCart: number;
+    initiateCheckout: number;
+    purchases: number;
+    purchaseValue: number;
+  }> = {};
+
+  let syncedRecords = 0;
+
+  for (const day of insights) {
+    const currentDate = day.date_start;
+    const adId = day.ad_id;
+    const adName = day.ad_name || `Ad ${adId}`;
+    const adsetId = day.adset_id;
+    const adsetName = day.adset_name || `AdSet ${adsetId}`;
+    const campaignId = day.campaign_id;
+    const campaignName = day.campaign_name || `Campaign ${campaignId}`;
+    
+    const rawAccountId = (day.account_id || cleanAccountId).replace("act_", "");
+    const accountNameRaw = day.account_name || "Default Meta Account";
+
+    const actions = day.actions || [];
+    const getActionValue = (type: string) => {
+      const action = actions.find((a: any) => a.action_type === type);
+      return action ? parseFloat(action.value) : 0;
+    };
+
+    const actionValues = day.action_values || [];
+    const getActionVal = (type: string) => {
+      const action = actionValues.find(
+        (a: any) => a.action_type === type,
+      );
+      return action ? parseFloat(action.value) : 0;
+    };
+
+    const carts = getActionValue("add_to_cart");
+    const checkouts = getActionValue("initiate_checkout");
+    const purchases = getActionValue("purchase");
+    const purchaseValue =
+      getActionVal("purchase") || getActionVal("omni_purchase");
+
+    const spend = parseFloat(day.spend || "0");
+    const clicks = parseInt(day.clicks || "0");
+    const impressions = parseInt(day.impressions || "0");
+    const reach = parseInt(day.reach || "0");
+
+    // 1. Ensure/Sync AdAccount
+    let dbAdAccount = await prisma.adAccount.findUnique({
+      where: { fb_account_id: rawAccountId }
+    });
+    if (!dbAdAccount) {
+      const defaultStore = await prisma.store.findFirst();
+      if (defaultStore) {
+        dbAdAccount = await prisma.adAccount.create({
+          data: {
+            fb_account_id: rawAccountId,
+            fb_account_name: accountNameRaw,
+            fb_access_token: token,
+            storeId: defaultStore.id
+          }
+        });
+      }
+    } else {
+      dbAdAccount = await prisma.adAccount.update({
+        where: { fb_account_id: rawAccountId },
+        data: {
+          fb_account_name: accountNameRaw,
+          fb_access_token: token
+        }
+      });
+    }
+
+    const store = dbAdAccount ? await prisma.store.findUnique({ where: { id: dbAdAccount.storeId } }) : null;
+    const storeName = store ? store.name : null;
+
+    // 2. Ensure/Sync AccountMapping
+    await prisma.accountMapping.upsert({
+      where: { accountId: rawAccountId },
+      update: {
+        accountName: accountNameRaw,
+        store: storeName
+      },
+      create: {
+        accountId: rawAccountId,
+        accountName: accountNameRaw,
+        store: storeName
+      }
+    });
+
+    // 3. Ensure/Sync Campaign, AdSet, Ad (Unified Date and Data using Ad ID)
+    await prisma.campaign.upsert({
+      where: { id: campaignId },
+      update: { name: campaignName },
+      create: {
+        id: campaignId,
+        accountId: rawAccountId,
+        name: campaignName,
+        status: "ACTIVE"
+      }
+    });
+
+    await prisma.adSet.upsert({
+      where: { id: adsetId },
+      update: { name: adsetName, campaignId: campaignId },
+      create: {
+        id: adsetId,
+        campaignId: campaignId,
+        accountId: rawAccountId,
+        name: adsetName
+      }
+    });
+
+    await prisma.ad.upsert({
+      where: { id: adId },
+      update: {
+        name: adName,
+        adsetId: adsetId,
+        campaignId: campaignId
+      },
+      create: {
+        id: adId,
+        adsetId: adsetId,
+        campaignId: campaignId,
+        accountId: rawAccountId,
+        name: adName
+      }
+    });
+
+    // 4. Group metrics for account-level AdInsight upsert
+    if (!accountInsightsByDate[currentDate]) {
+      accountInsightsByDate[currentDate] = {
+        date: currentDate,
+        accountName: accountNameRaw,
+        reach: 0,
+        impressions: 0,
+        clicks: 0,
+        spend: 0,
+        addToCart: 0,
+        initiateCheckout: 0,
+        purchases: 0,
+        purchaseValue: 0
+      };
+    }
+
+    const entry = accountInsightsByDate[currentDate];
+    entry.reach += reach;
+    entry.impressions += impressions;
+    entry.clicks += clicks;
+    entry.spend += spend;
+    entry.addToCart += carts;
+    entry.initiateCheckout += checkouts;
+    entry.purchases += purchases;
+    entry.purchaseValue += purchaseValue;
+  }
+
+  // 5. Save the aggregated AdInsight items corresponding exactly to the same date/data
+  for (const dateKey of Object.keys(accountInsightsByDate)) {
+    const item = accountInsightsByDate[dateKey];
+    const cpc = item.clicks > 0 ? item.spend / item.clicks : 0;
+    const ctr = item.impressions > 0 ? (item.clicks / item.impressions) * 100 : 0;
+    const atcRate = item.clicks > 0 ? (item.addToCart / item.clicks) * 100 : 0;
+    const checkoutRate = item.clicks > 0 ? (item.initiateCheckout / item.clicks) * 100 : 0;
+    const cpp = item.purchases > 0 ? item.spend / item.purchases : 0;
+    const roas = item.spend > 0 ? item.purchaseValue / item.spend : 0;
+
+    await prisma.adInsight.upsert({
+      where: {
+        accountId_date: {
+          accountId: cleanAccountId,
+          date: dateKey,
+        },
+      },
+      update: {
+        accountName: item.accountName,
+        reach: item.reach,
+        impressions: item.impressions,
+        clicks: item.clicks,
+        spend: item.spend,
+        addToCart: item.addToCart,
+        initiateCheckout: item.initiateCheckout,
+        purchases: item.purchases,
+        purchaseValue: item.purchaseValue,
+        cpc,
+        ctr,
+        atcRate,
+        checkoutRate,
+        cpp,
+        roas,
+      },
+      create: {
+        accountId: cleanAccountId,
+        date: dateKey,
+        accountName: item.accountName,
+        reach: item.reach,
+        impressions: item.impressions,
+        clicks: item.clicks,
+        spend: item.spend,
+        addToCart: item.addToCart,
+        initiateCheckout: item.initiateCheckout,
+        purchases: item.purchases,
+        purchaseValue: item.purchaseValue,
+        cpc,
+        ctr,
+        atcRate,
+        checkoutRate,
+        cpp,
+        roas,
+      },
+    });
+    syncedRecords++;
+  }
+
+  return syncedRecords;
+}
+
 // -- SCHEDULE JOBS --
 // Run daily aggregation at 2:00 AM
 cron.schedule("0 2 * * *", async () => {
@@ -260,7 +573,7 @@ app.get("/api/accounts", async (req, res) => {
 
 // 2. 同步数据
 app.post("/api/sync", async (req, res) => {
-  const { startDate, endDate } = req.body;
+  const { startDate, endDate, syncProduct, syncCreative } = req.body;
   if (!startDate || !endDate) {
     return res
       .status(400)
@@ -286,8 +599,20 @@ app.post("/api/sync", async (req, res) => {
       },
     );
 
+    // 获取系统的停用账户 ID 且常态过滤 dormant/限制账户
+    const disabledAccounts = await prisma.metaAccountMonitoring.findMany({
+      where: { status: 2 },
+      select: { accountId: true }
+    });
+    const disabledAccountIds = disabledAccounts.map(a => a.accountId);
+    const DORMANT_ACCOUNT_IDS = ["26380439", "341040412"];
+
     const accounts = (accountsResponse.data.data || []).filter(
-      (a: any) => a.account_status === 1,
+      (a: any) => {
+        const rawId = (a.account_id || a.id || "").replace("act_", "");
+        const isDormant = DORMANT_ACCOUNT_IDS.includes(rawId);
+        return !isDormant;
+      }
     );
     let totalSynced = 0;
     let stopSync = false;
@@ -303,114 +628,13 @@ app.post("/api/sync", async (req, res) => {
         chunk.map(async (account: any) => {
           const accountId = account.account_id || account.id;
           try {
-            const url = `https://graph.facebook.com/v19.0/act_${accountId}/insights`;
-            console.log(`[Manual API Sync] Fetching insights for account ${accountId} from URL ${url}`);
-            
-            const insightsResponse = await axios.get(
-              url,
-              {
-                params: {
-                  time_range: JSON.stringify({
-                    since: startDate,
-                    until: endDate,
-                  }),
-                  time_increment: 1,
-                  fields:
-                    "account_id,account_name,date_start,reach,impressions,clicks,spend,actions,purchase_roas,action_values",
-                  access_token: token,
-                },
-              },
-            );
-
-            const insights = insightsResponse.data.data || [];
-            console.log(`[Manual API Sync] Received ${insights.length} insight items for account ${accountId}`);
-
-            let accountSuccessCount = 0;
-            for (const day of insights) {
-              const actions = day.actions || [];
-              const getActionValue = (type: string) => {
-                const action = actions.find((a: any) => a.action_type === type);
-                return action ? parseFloat(action.value) : 0;
-              };
-
-              const actionValues = day.action_values || [];
-              const getActionVal = (type: string) => {
-                const action = actionValues.find(
-                  (a: any) => a.action_type === type,
-                );
-                return action ? parseFloat(action.value) : 0;
-              };
-
-              const carts = getActionValue("add_to_cart");
-              const checkouts = getActionValue("initiate_checkout");
-              const purchases = getActionValue("purchase");
-              const purchaseValue =
-                getActionVal("purchase") || getActionVal("omni_purchase");
-
-              const spend = parseFloat(day.spend || "0");
-              const clicks = parseInt(day.clicks || "0");
-              const impressions = parseInt(day.impressions || "0");
-              const reach = parseInt(day.reach || "0");
-
-              const cpc = clicks > 0 ? spend / clicks : 0;
-              const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
-              const atcRate = clicks > 0 ? (carts / clicks) * 100 : 0;
-              const checkoutRate = clicks > 0 ? (checkouts / clicks) * 100 : 0;
-              const cpp = purchases > 0 ? spend / purchases : 0;
-              const roas = spend > 0 ? purchaseValue / spend : 0;
-
-              try {
-                await prisma.adInsight.upsert({
-                  where: {
-                    accountId_date: {
-                      accountId: accountId,
-                      date: day.date_start,
-                    },
-                  },
-                  update: {
-                    accountName: day.account_name,
-                    reach,
-                    impressions,
-                    clicks,
-                    spend,
-                    addToCart: carts,
-                    initiateCheckout: checkouts,
-                    purchases,
-                    purchaseValue,
-                    cpc,
-                    ctr,
-                    atcRate,
-                    checkoutRate,
-                    cpp,
-                    roas,
-                  },
-                  create: {
-                    accountId: accountId,
-                    date: day.date_start,
-                    accountName: day.account_name,
-                    reach,
-                    impressions,
-                    clicks,
-                    spend,
-                    addToCart: carts,
-                    initiateCheckout: checkouts,
-                    purchases,
-                    purchaseValue,
-                    cpc,
-                    ctr,
-                    atcRate,
-                    checkoutRate,
-                    cpp,
-                    roas,
-                  },
-                });
-                totalSynced++;
-                accountSuccessCount++;
-              } catch (prismaErr) {
-                console.error(`[Manual API Sync] ❌ Prisma error writing insight for account ${accountId} on date ${day.date_start}:`, prismaErr);
-              }
+            const activityStatus = await evaluateActivityStatus(accountId, account.account_status, token);
+            if (activityStatus <= 4) {
+                const count = await syncSingleAccountAdData(accountId, startDate, endDate, token);
+                totalSynced += count;
+            } else {
+                console.log(`[Manual API Sync] ⏭️ Skipped Ad-level sync for account ${accountId} (Activity Status: ${activityStatus})`);
             }
-            console.log(`[Manual API Sync] Successfully wrote ${accountSuccessCount} insight items for account ${accountId}`);
           } catch (err: any) {
             lastError = extractMetaError(err);
             const status = err.response?.status;
@@ -447,7 +671,10 @@ app.post("/api/sync", async (req, res) => {
       await syncMetaHierarchy(token);
       console.log("Triggering Attribution and Aggregation...");
       await attributePurchases();
-      await aggregateData(startDate, endDate);
+      await aggregateData(startDate, endDate, {
+        syncProduct: syncProduct === true,
+        syncCreative: syncCreative === true
+      });
       console.log("Sync pipeline completed successfully.");
     } catch (aggErr) {
       console.error("Aggregation error during sync:", aggErr);
@@ -625,17 +852,50 @@ app.get("/api/accounts/:accountId/hierarchy", async (req, res) => {
   }
 });
 
-// 3. 获取本地数据
+// 3. 获取本地数据 (过滤在近期30天内有消耗的且未停用的账户数据)
 app.get("/api/insights", async (req, res) => {
   const { startDate, endDate } = req.query;
   try {
-    const data = await prisma.adInsight.findMany({
+    // 1. 获取近期 30 天内有消耗的去重账户 ID(近期以今天为基准的前 30 天)
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().split('T')[0];
+
+    const activeSpendAccounts = await prisma.adInsight.groupBy({
+      by: ["accountId"],
       where: {
-        date: {
-          gte: startDate as string,
-          lte: endDate as string,
-        },
-      },
+        date: { gte: thirtyDaysAgoStr },
+        spend: { gt: 0 }
+      }
+    });
+    const activeSpendAccountIds = activeSpendAccounts.map(a => a.accountId);
+
+    // 2. 结合 MetaAccountMonitoring 排除状态是停用 (DISABLED / status === 2) 的账户
+    const disabledAccounts = await prisma.metaAccountMonitoring.findMany({
+      where: { status: 2 },
+      select: { accountId: true }
+    });
+    const disabledAccountIds = disabledAccounts.map(a => a.accountId);
+
+    // 找出最终有消耗且未禁用的账户ID
+    const allowedAccountIds = activeSpendAccountIds.filter(id => !disabledAccountIds.includes(id));
+
+    const whereCond: any = {
+      date: {
+        gte: startDate as string,
+        lte: endDate as string,
+      }
+    };
+
+    if (allowedAccountIds.length > 0) {
+      whereCond.accountId = { in: allowedAccountIds };
+    } else {
+      // 如果没有任何符合条件的账户，则返回空，防止已废弃/不用或30天无消耗账户的数据显示
+      whereCond.accountId = { in: ["__NONE__"] };
+    }
+
+    const data = await prisma.adInsight.findMany({
+      where: whereCond,
     });
     res.json(data);
   } catch (error: any) {
@@ -755,17 +1015,32 @@ app.post("/api/mappings/batch", async (req, res) => {
   }
 });
 
-// 获取本地已有的去重账户列表 (用于设置页面分配)
+// 获取本地已有的去重账户列表 (用于设置页面分配 - 只看近期 30 天内有消耗且未禁用的账户)
 app.get("/api/accounts/list", async (req, res) => {
   try {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().split('T')[0];
+
+    // 获取停用的账户 ID 列表
+    const disabledAccounts = await prisma.metaAccountMonitoring.findMany({
+      where: { status: 2 },
+      select: { accountId: true }
+    });
+    const disabledAccountIds = disabledAccounts.map(a => a.accountId);
+
     const rawAccounts = await prisma.adInsight.groupBy({
       by: ["accountId", "accountName"],
+      where: {
+        date: { gte: thirtyDaysAgoStr },
+        spend: { gt: 0 }
+      }
     });
     
-    // Deduplicate by accountId if multiple names exist for the same ID
+    // Deduplicate by accountId if multiple names exist for the same ID, and filter out disabled
     const uniqueMap = new Map();
     rawAccounts.forEach(acc => {
-      if (!uniqueMap.has(acc.accountId)) {
+      if (!disabledAccountIds.includes(acc.accountId) && !uniqueMap.has(acc.accountId)) {
         uniqueMap.set(acc.accountId, acc);
       }
     });
@@ -924,17 +1199,28 @@ app.get("/api/monitoring/accounts", async (req, res) => {
         usagePercent: (acc.spendCap || 0) > 0 ? ((acc.amountSpent || 0) / acc.spendCap!) * 100 : 0,
         timezone: acc.timezone,
         hasSpendLast30Days,
-        lastUpdatedInCache: acc.updatedAt
+        lastUpdatedInCache: acc.updatedAt,
+        activityStatus: 0
       };
     });
 
+    const adAccounts = await prisma.adAccount.findMany({ select: { fb_account_id: true, activityStatus: true } });
+    const activityMap = new Map();
+    adAccounts.forEach(a => activityMap.set(a.fb_account_id, a.activityStatus));
+    
+    monitoringData.forEach(item => {
+       item.activityStatus = activityMap.get(item.accountId) || 2;
+    });
+
+    const filteredMonitoringData = monitoringData;
+
     // Provide some metadata about full sync status
     res.json({
-      accounts: monitoringData,
+      accounts: filteredMonitoringData,
       stats: {
-        total: monitoringData.length,
-        active: monitoringData.filter(a => a.accountStatus === 1).length,
-        hasSpend: monitoringData.filter(a => a.hasSpendLast30Days).length
+        total: filteredMonitoringData.length,
+        active: filteredMonitoringData.filter(a => a.accountStatus === 1).length,
+        hasSpend: filteredMonitoringData.length
       }
     });
   } catch (error: any) {
@@ -987,6 +1273,27 @@ app.get("/api/intelligence/creatives", async (req, res) => {
     res.json(data);
   } catch (error: any) {
     res.status(500).json({ error: "Failed to fetch creative intelligence", details: error.message });
+  }
+});
+
+app.get("/api/intelligence/creatives/daily", async (req, res) => {
+  const { startDate, endDate } = req.query;
+  if (!startDate || !endDate) return res.status(400).json({ error: "Missing dates" });
+  try {
+    const data = await prisma.creativePerformanceDaily.findMany({
+      where: {
+        date: {
+          gte: startDate as string,
+          lte: endDate as string
+        }
+      },
+      orderBy: {
+        date: "asc"
+      }
+    });
+    res.json(data);
+  } catch (error: any) {
+    res.status(500).json({ error: "Failed to fetch daily creative performance", details: error.message });
   }
 });
 
@@ -1375,19 +1682,8 @@ async function fetchShoplineData(domain: string, token: string, endpoint: string
 
 async function getShoplineAnalytics(domain: string, token: string, startDate: string, endDate: string, defaultVisitors: number = 0) {
   try {
-    // 0. Detect Store Timezone Offset by grabbing 1 recent order
-    let tzOffset = "Z"; // default UTC
-    try {
-      const tzCheck = await fetchShoplineData(domain, token, "orders.json", { limit: 1 });
-      if (tzCheck.data?.orders?.length > 0) {
-        const createdAt = tzCheck.data.orders[0].created_at;
-        // e.g. "2023-09-11T09:58:19-07:00" -> extract "-07:00" or "+08:00"
-        const match = createdAt.match(/([+-]\d{2}:\d{2})$/);
-        if (match) tzOffset = match[1];
-      }
-    } catch (e) {
-      console.warn("[Shopline] Failed to detect timezone, falling back to UTC");
-    }
+    // 0. Force Shopline timezone to GMT-8 (-08:00) as requested
+    let tzOffset = "-08:00";
 
     // 1. Fetch Orders with Pagination (Max 100 per page, lightweight fields)
     let orders: any[] = [];
@@ -1796,6 +2092,56 @@ app.delete("/api/stores/:id/accounts/:accountId", async (req, res) => {
   }
 });
 
+// DELETE /api/stores/:id - Delete a store and dissociate/delete its associated metrics and resources
+app.delete("/api/stores/:id", async (req, res) => {
+  const storeId = parseInt(req.params.id, 10);
+  if (isNaN(storeId)) {
+    return res.status(400).json({ error: "Invalid store ID" });
+  }
+
+  try {
+    const store = await prisma.store.findUnique({
+      where: { id: storeId },
+    });
+
+    if (!store) {
+      return res.status(404).json({ error: "Store not found" });
+    }
+
+    await prisma.$transaction([
+      // 1. Dissociate account mappings matching the store's name
+      prisma.accountMapping.updateMany({
+        where: { store: store.name },
+        data: { store: null },
+      }),
+
+      // 2. Delete associated product and creative daily performance stats
+      prisma.productPerformanceDaily.deleteMany({ where: { storeId } }),
+      prisma.creativePerformanceDaily.deleteMany({ where: { storeId } }),
+
+      // 3. Delete associated orders and products
+      prisma.order.deleteMany({ where: { storeId } }),
+      prisma.product.deleteMany({ where: { storeId } }),
+
+      // 4. Delete any ad creatives
+      prisma.adCreative.deleteMany({ where: { storeId } }),
+
+      // 5. Delete ad accounts associated with this store
+      prisma.adAccount.deleteMany({ where: { storeId } }),
+
+      // 6. Delete the store itself
+      prisma.store.delete({ where: { id: storeId } }),
+    ]);
+
+    res.json({ success: true, message: `Store "${store.name}" deleted successfully` });
+  } catch (error: any) {
+    console.error("Failed to delete store:", error);
+    res
+      .status(500)
+      .json({ error: "Failed to delete store", details: error.message });
+  }
+});
+
 // GET /api/stores/:id/insights - Fetch insights for all accounts within a store
 app.get("/api/stores/:id/insights", async (req, res) => {
   const { id } = req.params;
@@ -1890,8 +2236,20 @@ app.get("/api/cron/sync-monthly", async (req, res) => {
       },
     );
 
+    // 获取系统的停用账户 ID 且常态过滤 dormant/限制账户
+    const disabledAccounts = await prisma.metaAccountMonitoring.findMany({
+      where: { status: 2 },
+      select: { accountId: true }
+    });
+    const disabledAccountIds = disabledAccounts.map(a => a.accountId);
+    const DORMANT_ACCOUNT_IDS = ["26380439", "341040412"];
+
     const accounts = (accountsResponse.data.data || []).filter(
-      (a: any) => a.account_status === 1,
+      (a: any) => {
+        const rawId = (a.account_id || a.id || "").replace("act_", "");
+        const isDormant = DORMANT_ACCOUNT_IDS.includes(rawId);
+        return !isDormant;
+      }
     );
     let totalSynced = 0;
     let stopSync = false;
@@ -1902,83 +2260,12 @@ app.get("/api/cron/sync-monthly", async (req, res) => {
       if (stopSync) break;
       const accountId = account.account_id || account.id;
       try {
-        const insightsRes = await axios.get(
-          `https://graph.facebook.com/v19.0/act_${accountId}/insights`,
-          {
-            params: {
-              time_range: JSON.stringify({ since: startDate, until: endDate }),
-              time_increment: 1,
-              fields:
-                "account_id,account_name,date_start,reach,impressions,clicks,spend,actions,purchase_roas,action_values",
-              access_token: token,
-            },
-          },
-        );
-
-        const insights = insightsRes.data.data || [];
-        for (const day of insights) {
-          const actions = day.actions || [];
-          const actionValues = day.action_values || [];
-
-          const getVal = (arr: any[], type: string) => {
-            const found = arr.find((a: any) => a.action_type === type);
-            return found ? parseFloat(found.value) : 0;
-          };
-
-          const spend = parseFloat(day.spend || "0");
-          const purchaseValue =
-            getVal(actionValues, "purchase") ||
-            getVal(actionValues, "omni_purchase");
-          const purchases = getVal(actions, "purchase");
-          const carts = getVal(actions, "add_to_cart");
-          const checkouts = getVal(actions, "initiate_checkout");
-          const clicks = parseInt(day.clicks || "0");
-          const impressions = parseInt(day.impressions || "0");
-
-          const atcRate = clicks > 0 ? (carts / clicks) * 100 : 0;
-          const checkoutRate = clicks > 0 ? (checkouts / clicks) * 100 : 0;
-          const cpp = purchases > 0 ? spend / purchases : 0;
-
-          await prisma.adInsight.upsert({
-            where: { accountId_date: { accountId, date: day.date_start } },
-            update: {
-              accountName: day.account_name,
-              reach: parseInt(day.reach || "0"),
-              impressions,
-              clicks,
-              spend,
-              addToCart: carts,
-              initiateCheckout: checkouts,
-              purchases,
-              purchaseValue,
-              roas: spend > 0 ? purchaseValue / spend : 0,
-              cpc: clicks > 0 ? spend / clicks : 0,
-              ctr: impressions > 0 ? (clicks / impressions) * 100 : 0,
-              atcRate,
-              checkoutRate,
-              cpp,
-            },
-            create: {
-              accountId,
-              date: day.date_start,
-              accountName: day.account_name,
-              reach: parseInt(day.reach || "0"),
-              impressions,
-              clicks,
-              spend,
-              addToCart: carts,
-              initiateCheckout: checkouts,
-              purchases,
-              purchaseValue,
-              roas: spend > 0 ? purchaseValue / spend : 0,
-              cpc: clicks > 0 ? spend / clicks : 0,
-              ctr: impressions > 0 ? (clicks / impressions) * 100 : 0,
-              atcRate,
-              checkoutRate,
-              cpp,
-            },
-          });
-          totalSynced++;
+        const activityStatus = await evaluateActivityStatus(accountId, account.account_status, token);
+        if (activityStatus <= 4) {
+             const count = await syncSingleAccountAdData(accountId, startDate, endDate, token);
+             totalSynced += count;
+        } else {
+             console.log(`[Cron Sync] ⏭️ Skipped Ad-level sync for account ${accountId} (Activity Status: ${activityStatus})`);
         }
       } catch (accErr: any) {
         lastError = extractMetaError(accErr);
@@ -2243,13 +2530,25 @@ async function runBackgroundSync() {
       throw apiErr;
     }
 
-    // 只保留处于活跃状态 (account_status === 1) 的广告账户，极大地减少不必要的请求
+    // 获取系统的停用账户 ID 且常态过滤 dormant/限制账户
+    const disabledAccounts = await prisma.metaAccountMonitoring.findMany({
+      where: { status: 2 },
+      select: { accountId: true }
+    });
+    const disabledAccountIds = disabledAccounts.map(a => a.accountId);
+    const DORMANT_ACCOUNT_IDS = ["26380439", "341040412"];
+
+    // 只排除 dormant 的广告账户
     const accounts = (accountsRes.data.data || []).filter(
-      (a: any) => a.account_status === 1,
+      (a: any) => {
+        const rawId = (a.account_id || a.id || "").replace("act_", "");
+        const isDormant = DORMANT_ACCOUNT_IDS.includes(rawId);
+        return !isDormant;
+      }
     );
     const totalAccounts = accounts.length;
     console.log(
-      `[后台同步 | ${syncId}] 📂 发现 ${totalAccounts} 个广告账户，开始分批抓取...`,
+      `[后台同步 | ${syncId}] 📂 发现 ${totalAccounts} 个有效广告账户，开始分批抓取...`,
     );
 
     // 2. 分批处理 (5个一组)
@@ -2263,90 +2562,11 @@ async function runBackgroundSync() {
         chunk.map(async (account: any) => {
           const accountId = account.account_id || account.id;
           try {
-            const insightsRes = await axios.get(
-              `https://graph.facebook.com/v19.0/act_${accountId}/insights`,
-              {
-                params: {
-                  time_range: JSON.stringify({
-                    since: startDate,
-                    until: endDate,
-                  }),
-                  time_increment: 1,
-                  fields:
-                    "account_id,account_name,date_start,reach,impressions,clicks,spend,actions,purchase_roas,action_values",
-                  access_token: token,
-                },
-              },
-            );
-
-            const insights = insightsRes.data.data || [];
-            for (const day of insights) {
-              const actions = day.actions || [];
-              const actionValues = day.action_values || [];
-              const getVal = (arr: any[], type: string) => {
-                const found = arr.find((a: any) => a.action_type === type);
-                return found ? parseFloat(found.value) : 0;
-              };
-
-              const spend = parseFloat(day.spend || "0");
-              const purchaseValue =
-                getVal(actionValues, "purchase") ||
-                getVal(actionValues, "omni_purchase");
-              const purchases = getVal(actions, "purchase");
-              const clicks = parseInt(day.clicks || "0");
-              const impressions = parseInt(day.impressions || "0");
-
-              await prisma.adInsight.upsert({
-                where: { accountId_date: { accountId, date: day.date_start } },
-                update: {
-                  accountName: day.account_name,
-                  reach: parseInt(day.reach || "0"),
-                  impressions,
-                  clicks,
-                  spend,
-                  addToCart: getVal(actions, "add_to_cart"),
-                  initiateCheckout: getVal(actions, "initiate_checkout"),
-                  purchases,
-                  purchaseValue,
-                  roas: spend > 0 ? purchaseValue / spend : 0,
-                  cpc: clicks > 0 ? spend / clicks : 0,
-                  ctr: impressions > 0 ? (clicks / impressions) * 100 : 0,
-                  atcRate:
-                    clicks > 0
-                      ? (getVal(actions, "add_to_cart") / clicks) * 100
-                      : 0,
-                  checkoutRate:
-                    clicks > 0
-                      ? (getVal(actions, "initiate_checkout") / clicks) * 100
-                      : 0,
-                  cpp: purchases > 0 ? spend / purchases : 0,
-                },
-                create: {
-                  accountId,
-                  date: day.date_start,
-                  accountName: day.account_name,
-                  reach: parseInt(day.reach || "0"),
-                  impressions,
-                  clicks,
-                  spend,
-                  addToCart: getVal(actions, "add_to_cart"),
-                  initiateCheckout: getVal(actions, "initiate_checkout"),
-                  purchases,
-                  purchaseValue,
-                  roas: spend > 0 ? purchaseValue / spend : 0,
-                  cpc: clicks > 0 ? spend / clicks : 0,
-                  ctr: impressions > 0 ? (clicks / impressions) * 100 : 0,
-                  atcRate:
-                    clicks > 0
-                      ? (getVal(actions, "add_to_cart") / clicks) * 100
-                      : 0,
-                  checkoutRate:
-                    clicks > 0
-                      ? (getVal(actions, "initiate_checkout") / clicks) * 100
-                      : 0,
-                  cpp: purchases > 0 ? spend / purchases : 0,
-                },
-              });
+            const activityStatus = await evaluateActivityStatus(accountId, account.account_status, token);
+            if (activityStatus <= 4) {
+               await syncSingleAccountAdData(accountId, startDate, endDate, token);
+            } else {
+               console.log(`[后台同步 | ${syncId}] ⏭️ 跳过账户 ${accountId} (活跃度: ${activityStatus})`);
             }
             syncedCount++;
             if (syncedCount % 10 === 0 || syncedCount === totalAccounts) {

@@ -231,6 +231,14 @@ export function MonitoringDashboard() {
                   账户名称 <SortIcon columnKey="name" />
                 </div>
               </TableHead>
+              <TableHead 
+                className="font-bold text-gray-500 h-14 cursor-pointer hover:text-gray-900 transition-colors"
+                onClick={() => handleSort('activityStatus')}
+              >
+                <div className="flex items-center">
+                  活跃度 <SortIcon columnKey="activityStatus" />
+                </div>
+              </TableHead>
               <TableHead className="font-bold text-gray-500 h-14">账户 ID</TableHead>
               <TableHead 
                 className="font-bold text-gray-500 h-14 cursor-pointer hover:text-gray-900 transition-colors"
@@ -298,6 +306,19 @@ export function MonitoringDashboard() {
                         <span className="font-bold text-gray-900 group-hover:text-meta-blue transition-colors">
                           {acc.name}
                         </span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="py-4 font-mono text-[11px] font-bold">
+                      <div className={cn(
+                        "inline-flex items-center px-1.5 py-0.5 rounded text-[10px]",
+                        acc.activityStatus === 1 ? "bg-green-100 text-green-700" :
+                        acc.activityStatus === 2 ? "bg-blue-100 text-blue-700" :
+                        acc.activityStatus === 3 ? "bg-red-100 text-red-700" :
+                        acc.activityStatus === 4 ? "bg-gray-100 text-gray-700" :
+                        acc.activityStatus === 5 ? "bg-orange-100 text-orange-700" :
+                        "bg-gray-200 text-gray-500"
+                      )}>
+                        标签 {acc.activityStatus || 2}
                       </div>
                     </TableCell>
                     <TableCell className="py-4 font-mono text-[11px] text-gray-400 font-bold uppercase tracking-wider">

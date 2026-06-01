@@ -52,11 +52,11 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
   const { accountId } = useParams<{ accountId: string }>();
   const navigate = useNavigate();
 
-  const [startDate, setStartDate] = useState<Date>(subDays(new Date(), 7));
-  const [endDate, setEndDate] = useState<Date>(new Date());
+  const [startDate, setStartDate] = useState<Date>(subDays(new Date(), 1));
+  const [endDate, setEndDate] = useState<Date>(subDays(new Date(), 1));
   const [tempDateRange, setTempDateRange] = useState<{ from: Date; to?: Date }>({
-    from: subDays(new Date(), 7),
-    to: new Date(),
+    from: subDays(new Date(), 1),
+    to: subDays(new Date(), 1),
   });
   const [datePickerOpen, setDatePickerOpen] = useState(false);
 
