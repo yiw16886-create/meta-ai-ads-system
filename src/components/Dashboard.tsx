@@ -231,11 +231,16 @@ export function Dashboard({ onLogout }: DashboardProps) {
     setSyncing(true);
     const syncToast = toast.loading("正在同步 Meta 数据...");
     try {
+      const activeAccountIds = Array.isArray(sortedAggregatedData) 
+        ? sortedAggregatedData.map(d => d.accountId).filter(Boolean)
+        : [];
+
       const response = await axios.post("/api/sync", {
         startDate: format(startDate, "yyyy-MM-dd"),
         endDate: format(endDate, "yyyy-MM-dd"),
         syncProduct,
         syncCreative,
+        accounts: activeAccountIds // Only pass the currently visible accounts
       });
       toast.success(`同步成功: ${response.data.count} 条记录`, {
         id: syncToast,
@@ -2305,8 +2310,9 @@ function CategoryDashboard({ mappings, onManageAccounts }: { mappings: Record<st
         store: mapping?.store || "未分配",
         owner: mapping?.owner || "未分配",
         roas,
+        hasMapping: !!mapping
       };
-    });
+    }).filter((item: any) => item.spend > 0 && item.hasMapping && item.store !== "未分配");
   }, [rawInsights, mappings]);
 
   const projects = useMemo(() => {

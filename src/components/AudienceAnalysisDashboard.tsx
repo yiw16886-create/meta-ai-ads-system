@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import axios from "axios";
 import { format } from "date-fns";
 import { 
@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2, Users, MapPin, MonitorPlay, CalendarDays, AlertTriangle, Search, ChevronsUpDown, Check } from "lucide-react";
+import { Loader2, Users, MapPin, MonitorPlay, CalendarDays, AlertTriangle, Search, ChevronsUpDown, Check, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
 import { toast } from "sonner";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
@@ -22,6 +22,22 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
   const [activeTab, setActiveTab] = useState<"gender_age" | "country" | "placement">("gender_age");
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<any[]>([]);
+
+  // Sorting and Slider states
+  const [sortField, setSortField] = useState<string>("purchases");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+  const [scrollPercent, setScrollPercent] = useState<number>(0);
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+
+  const handleTableScroll = () => {
+    if (tableContainerRef.current) {
+      const { scrollLeft, scrollWidth, clientWidth } = tableContainerRef.current;
+      const maxScroll = scrollWidth - clientWidth;
+      if (maxScroll > 0) {
+        setScrollPercent((scrollLeft / maxScroll) * 100);
+      }
+    }
+  };
   
   const [open, setOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -184,8 +200,8 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
           };
         });
         
-        // Sort by spend descending
-        processedData.sort((a: any, b: any) => b.spend - a.spend);
+        // Default to sorting by purchases descending as requested
+        processedData.sort((a: any, b: any) => (b.purchases || 0) - (a.purchases || 0));
 
         setData(processedData);
       } catch (err) {
@@ -198,6 +214,66 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
 
     fetchInsights();
   }, [selectedAccount, startDate, endDate, activeTab]);
+
+  const sortedData = useMemo(() => {
+    const sorted = [...data];
+    if (sortField) {
+      sorted.sort((a, b) => {
+        let valA = a[sortField];
+        let valB = b[sortField];
+
+        if (valA === undefined || valA === null) return 1;
+        if (valB === undefined || valB === null) return -1;
+
+        if (typeof valA === "string" && typeof valB === "string") {
+          return sortDirection === "asc"
+            ? valA.localeCompare(valB)
+            : valB.localeCompare(valA);
+        }
+
+        return sortDirection === "asc" ? valA - valB : valB - valA;
+      });
+    }
+    return sorted;
+  }, [data, sortField, sortDirection]);
+
+  const toggleSort = (field: string) => {
+    if (sortField === field) {
+      setSortDirection(prev => (prev === "asc" ? "desc" : "asc"));
+    } else {
+      setSortField(field);
+      setSortDirection("desc");
+    }
+  };
+
+  const renderSortHeader = (label: string, field: string, align: "left" | "right" = "right") => {
+    const isSorted = sortField === field;
+    return (
+      <TableHead
+        className={cn(
+          "font-semibold select-none cursor-pointer hover:bg-slate-100 transition-colors whitespace-nowrap h-11 text-slate-800",
+          align === "right" ? "text-right" : "text-left",
+          field === "name" ? "sticky left-0 z-30 bg-[#f9fafb] shadow-[1px_0_0_#e5e7eb] px-4" : ""
+        )}
+        onClick={() => toggleSort(field)}
+      >
+        <div className={cn("inline-flex items-center gap-1.5", align === "right" ? "justify-end w-full" : "justify-start")}>
+          <span>{label}</span>
+          <span className={cn("inline-block text-slate-400 group-hover:text-slate-600 transition-colors", isSorted && "text-meta-blue")}>
+            {isSorted ? (
+              sortDirection === "asc" ? (
+                <ArrowUp className="w-3.5 h-3.5" />
+              ) : (
+                <ArrowDown className="w-3.5 h-3.5" />
+              )
+            ) : (
+              <ArrowUpDown className="w-3.5 h-3.5 opacity-40 hover:opacity-100" />
+            )}
+          </span>
+        </div>
+      </TableHead>
+    );
+  };
 
   const filteredAccounts = accounts.filter(acc => 
     (acc.accountName || acc.accountId).toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -352,32 +428,36 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
               </CardContent>
             </Card>
 
-            <Card className="shadow-sm border-none overflow-hidden">
+            <Card className="shadow-sm border-none overflow-hidden flex flex-col">
               <CardHeader className="bg-[#f9fafb] border-b pb-3">
                 <CardTitle className="text-[15px]">受众成效明细报表</CardTitle>
               </CardHeader>
-              <div className="overflow-auto custom-scrollbar max-h-[500px] mb-2 border-b">
+              <div 
+                ref={tableContainerRef}
+                onScroll={handleTableScroll}
+                className="overflow-auto custom-scrollbar max-h-[500px] mb-0 border-b"
+              >
                 <Table className="text-[13px] border-collapse relative w-max min-w-full">
                   <TableHeader className="sticky top-0 z-20 bg-[#f9fafb] shadow-sm">
                     <TableRow>
-                      <TableHead className="font-semibold px-4 h-11 sticky left-0 z-30 bg-[#f9fafb] shadow-[1px_0_0_#e5e7eb]">受众维度</TableHead>
-                      <TableHead className="font-semibold text-right">购物次数</TableHead>
-                      <TableHead className="font-semibold text-right">单次购物费用</TableHead>
-                      <TableHead className="font-semibold text-right whitespace-nowrap">花费金额</TableHead>
-                      <TableHead className="font-semibold text-right whitespace-nowrap">展示次数</TableHead>
-                      <TableHead className="font-semibold text-right whitespace-nowrap">覆盖人数</TableHead>
-                      <TableHead className="font-semibold text-right whitespace-nowrap">频次</TableHead>
-                      <TableHead className="font-semibold text-right whitespace-nowrap">链接点击量</TableHead>
-                      <TableHead className="font-semibold text-right whitespace-nowrap">链接点击率</TableHead>
-                      <TableHead className="font-semibold text-right whitespace-nowrap">单次链接点击</TableHead>
-                      <TableHead className="font-semibold text-right whitespace-nowrap">点击量</TableHead>
-                      <TableHead className="font-semibold text-right whitespace-nowrap">点击率</TableHead>
-                      <TableHead className="font-semibold text-right whitespace-nowrap">单次点击</TableHead>
-                      <TableHead className="font-semibold text-right whitespace-nowrap">加入购物车</TableHead>
+                      {renderSortHeader("受众维度", "name", "left")}
+                      {renderSortHeader("购物次数", "purchases", "right")}
+                      {renderSortHeader("单次购物费用", "cpp", "right")}
+                      {renderSortHeader("花费金额", "spend", "right")}
+                      {renderSortHeader("展示次数", "impressions", "right")}
+                      {renderSortHeader("覆盖人数", "reach", "right")}
+                      {renderSortHeader("频次", "frequency", "right")}
+                      {renderSortHeader("链接点击量", "linkClicks", "right")}
+                      {renderSortHeader("链接点击率", "linkCTR", "right")}
+                      {renderSortHeader("单次链接点击", "cpcLink", "right")}
+                      {renderSortHeader("点击量", "clicks", "right")}
+                      {renderSortHeader("点击率", "ctr", "right")}
+                      {renderSortHeader("单次点击", "cpc", "right")}
+                      {renderSortHeader("加入购物车", "addsToCart", "right")}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {data.map((row, idx) => {
+                    {sortedData.map((row, idx) => {
                       return (
                         <TableRow key={idx} className="hover:bg-gray-50 border-b group">
                           <TableCell className="font-medium px-4 sticky left-0 z-10 bg-white group-hover:bg-gray-50 shadow-[1px_0_0_#e5e7eb] text-meta-blue max-w-[200px] truncate" title={row.name}>{row.name}</TableCell>
@@ -400,7 +480,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
                       );
                     })}
                   </TableBody>
-                  {data.length > 0 && (
+                  {sortedData.length > 0 && (
                     <TableFooter className="sticky bottom-0 z-20 bg-gray-50 shadow-[0_-1px_0_#e5e7eb] font-semibold border-t">
                       <TableRow className="hover:bg-gray-50">
                         <TableCell className="px-4 sticky left-0 z-30 bg-gray-50 shadow-[1px_0_0_#e5e7eb]">
@@ -427,6 +507,66 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
                   )}
                 </Table>
               </div>
+
+              {/* Slider & Scrolling controls right beneath the summary footer */}
+              {data.length > 0 && (
+                <div className="px-4 py-3 bg-slate-50 border-t flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs text-slate-500">
+                  <div className="flex items-center gap-3 flex-1">
+                    <span className="shrink-0 font-bold text-slate-700 select-none">左右滑动 ↔:</span>
+                    <div className="flex-1 max-w-sm h-1.5 bg-slate-200 rounded-full relative group">
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        value={scrollPercent}
+                        onChange={(e) => {
+                          const percent = parseFloat(e.target.value);
+                          setScrollPercent(percent);
+                          if (tableContainerRef.current) {
+                            const { scrollWidth, clientWidth } = tableContainerRef.current;
+                            tableContainerRef.current.scrollLeft = (percent / 100) * (scrollWidth - clientWidth);
+                          }
+                        }}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20"
+                      />
+                      <div 
+                        className="absolute left-0 top-0 h-full bg-meta-blue rounded-full transition-all duration-75"
+                        style={{ width: `${scrollPercent}%` }}
+                      />
+                      <div 
+                        className="absolute h-3.5 w-3.5 bg-white border-2 border-meta-blue rounded-full -top-1 shadow cursor-pointer transition-transform group-hover:scale-110"
+                        style={{ left: `calc(${scrollPercent}% - 7px)` }}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 justify-end">
+                    <Button
+                      variant="outline"
+                      size="xs"
+                      className="h-7 text-xs px-3 border-slate-200 bg-white"
+                      onClick={() => {
+                        if (tableContainerRef.current) {
+                          tableContainerRef.current.scrollBy({ left: -250, behavior: "smooth" });
+                        }
+                      }}
+                    >
+                      ← 向左
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="xs"
+                      className="h-7 text-xs px-3 border-slate-200 bg-white"
+                      onClick={() => {
+                        if (tableContainerRef.current) {
+                          tableContainerRef.current.scrollBy({ left: 250, behavior: "smooth" });
+                        }
+                      }}
+                    >
+                      向右 →
+                    </Button>
+                  </div>
+                </div>
+              )}
             </Card>
           </div>
         )}

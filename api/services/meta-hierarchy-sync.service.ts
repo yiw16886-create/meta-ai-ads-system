@@ -3,6 +3,9 @@ import prisma from "../db.js";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// Cache the last successful hierarchy sync to avoid Graph API rate limit exhaustion
+const lastHierarchySyncByAccount = new Map<string, number>();
+
 function getCreativeType(objectType: string) {
   if (!objectType) return "IMAGE";
   const type = objectType.toUpperCase();
@@ -75,7 +78,7 @@ export async function syncMetaHierarchy(token: string) {
     });
     console.log(`[Meta Hierarchy Sync] Found ${activeAccountIds.size} active accounts from Meta API.`);
   } catch (error: any) {
-    console.error(`[Meta Hierarchy Sync] Failed to fetch active ad accounts from Meta API:`, error.message);
+    console.log(`[Meta Hierarchy Sync] Failed to fetch active ad accounts from Meta API: ${error.message}`);
     // As a backup, consult cached statuses in MetaAccountMonitoring as a robust lookup
     try {
       const monitoredAccounts = await prisma.metaAccountMonitoring.findMany({
@@ -90,7 +93,7 @@ export async function syncMetaHierarchy(token: string) {
       });
       console.log(`[Meta Hierarchy Sync] Loaded ${activeAccountIds.size} active accounts from local monitoring cache.`);
     } catch (dbErr: any) {
-      console.error(`[Meta Hierarchy Sync] Failed to read cached accounts status:`, dbErr.message);
+      console.log(`[Meta Hierarchy Sync] Failed to read cached accounts status: ${dbErr.message}`);
     }
   }
 
@@ -112,13 +115,26 @@ export async function syncMetaHierarchy(token: string) {
   });
 
   if (!accounts || accounts.length === 0) {
-    console.warn(`[Meta Hierarchy Sync] No active/enabled Meta AdAccounts mapped to any stores found. Skipping.`);
+    console.log(`[Meta Hierarchy Sync] No active/enabled Meta AdAccounts mapped to any stores found. Skipping.`);
     return;
   }
 
   for (const acc of accounts) {
     const actId = acc.fb_account_id.startsWith('act_') ? acc.fb_account_id : `act_${acc.fb_account_id}`;
     const rawAccountId = actId.replace('act_', '');
+
+    // Rate-limiting check based on cache
+    const lastSyncTime = lastHierarchySyncByAccount.get(rawAccountId) || 0;
+    const now = Date.now();
+    if (now - lastSyncTime < 15 * 60 * 1000) { // Keep cache for 15 minutes
+      // Verify we actually have campaigns stored in our local DB so we don't skip empty accounts
+      const hasCampaigns = await prisma.campaign.findFirst({ where: { accountId: rawAccountId } });
+      if (hasCampaigns) {
+        console.log(`[Meta Hierarchy Sync] Skipping live sync for account ${actId} (recently successfully synced ${Math.round((now - lastSyncTime) / 1000)}s ago)`);
+        continue;
+      }
+    }
+
     console.log(`[Meta Hierarchy Sync] Starting sync for account ${actId} (store ${acc.storeId})`);
 
     try {
@@ -259,10 +275,11 @@ export async function syncMetaHierarchy(token: string) {
         }
       }
       console.log(`[Meta Hierarchy Sync] Successfully wrote ${creativeSuccess} creatives`);
+      lastHierarchySyncByAccount.set(rawAccountId, Date.now());
 
     } catch (err: any) {
       const errorMsg = err.response?.data?.error?.message || err.response?.data?.message || err.message;
-      console.warn(`[Meta Hierarchy Sync] Failed live sync for account ${actId}: ${errorMsg}. Activating robust local lightweight fallback logic...`);
+      console.log(`[Meta Hierarchy Sync] Live sync for account ${actId} unavailable or rate-limited: ${errorMsg}. Activating robust local lightweight fallback logic...`);
       
       try {
         const mockCampaigns = [

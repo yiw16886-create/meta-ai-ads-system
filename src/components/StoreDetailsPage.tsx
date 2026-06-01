@@ -11,6 +11,8 @@ import {
   ArrowUpDown,
   ChevronRight,
   Settings,
+  Store,
+  Key,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -45,6 +47,7 @@ export function StoreDetailsPage({
     shopline_token: "",
     shopify_token: "",
     domain: "",
+    timezone: "GMT+8",
     visitors: 0,
     accounts: [],
   });
@@ -153,7 +156,7 @@ export function StoreDetailsPage({
   const fetchInsights = async (storeName: string) => {
     setLoadingInsights(true);
     try {
-      const [insightsRes, mappingsRes] = await Promise.all([
+      const [insightsRes, mappingsRes, storeRes] = await Promise.all([
         axios.get("/api/insights", {
           params: {
             startDate: format(startDate, "yyyy-MM-dd"),
@@ -161,63 +164,79 @@ export function StoreDetailsPage({
           },
         }),
         axios.get("/api/mappings"),
+        axios.get(`/api/stores/${storeId}`).catch(() => ({ data: null })),
       ]);
 
       const data = insightsRes.data || [];
       const mappingList = mappingsRes.data || [];
       const mappingMap: Record<string, any> = {};
       mappingList.forEach((m: any) => {
-        mappingMap[m.accountId] = m;
+        const key = m.accountId.replace("act_", "").trim().toLowerCase();
+        mappingMap[key] = m;
       });
 
-      // Group data by accountId
-      const grouped = data.reduce((acc: any, curr: any) => {
-        const key = curr.accountId;
-        if (!acc[key]) {
-          acc[key] = { ...curr };
+      // Group data by normalized accountId
+      const groupedNormalized: Record<string, any> = {};
+      data.forEach((curr: any) => {
+        const cleanId = curr.accountId.replace("act_", "").trim().toLowerCase();
+        if (!groupedNormalized[cleanId]) {
+          groupedNormalized[cleanId] = { ...curr };
         } else {
-          acc[key].reach += curr.reach;
-          acc[key].impressions += curr.impressions;
-          acc[key].clicks += curr.clicks;
-          acc[key].spend += curr.spend;
-          acc[key].addToCart += curr.addToCart;
-          acc[key].initiateCheckout += curr.initiateCheckout;
-          acc[key].purchases += curr.purchases;
-          acc[key].purchaseValue += curr.purchaseValue;
+          groupedNormalized[cleanId].reach = (groupedNormalized[cleanId].reach || 0) + (curr.reach || 0);
+          groupedNormalized[cleanId].impressions = (groupedNormalized[cleanId].impressions || 0) + (curr.impressions || 0);
+          groupedNormalized[cleanId].clicks = (groupedNormalized[cleanId].clicks || 0) + (curr.clicks || 0);
+          groupedNormalized[cleanId].spend = (groupedNormalized[cleanId].spend || 0) + (curr.spend || 0);
+          groupedNormalized[cleanId].addToCart = (groupedNormalized[cleanId].addToCart || 0) + (curr.addToCart || 0);
+          groupedNormalized[cleanId].initiateCheckout = (groupedNormalized[cleanId].initiateCheckout || 0) + (curr.initiateCheckout || 0);
+          groupedNormalized[cleanId].purchases = (groupedNormalized[cleanId].purchases || 0) + (curr.purchases || 0);
+          groupedNormalized[cleanId].purchaseValue = (groupedNormalized[cleanId].purchaseValue || 0) + (curr.purchaseValue || 0);
         }
-        return acc;
-      }, {});
+      });
 
-      // Apply mappings and filter
-      const aggregatedData = Object.values(grouped)
-        .map((item: any) => {
-          const mapping = mappingMap[item.accountId];
-          const spend = item.spend || 0;
-          const purchaseValue = item.purchaseValue || 0;
-          const clicks = item.clicks || 0;
-          const addToCart = item.addToCart || 0;
-          const initiateCheckout = item.initiateCheckout || 0;
-          const purchases = item.purchases || 0;
-          return {
-            ...item,
-            account_id: item.accountId,
-            account_name: mapping?.accountName || item.accountName || item.accountId,
-            owner: mapping?.owner || "",
-            store: mapping?.store || "",
-            project: mapping?.project || "",
-            roas: spend > 0 ? purchaseValue / spend : 0,
-            atcRate: clicks > 0 ? (addToCart / clicks) * 100 : 0,
-            checkoutRate: clicks > 0 ? (initiateCheckout / clicks) * 100 : 0,
-            cpp: purchases > 0 ? spend / purchases : 0,
-            sales_amount: 0,
-            orders_count: 0,
-            visitors: 0,
-            conversion_rate: 0,
-          };
-        })
-        .filter((item: any) => (item.store || "").toLowerCase() === (storeName || "").toLowerCase());
+      // Filter mappingList to only those mapped to this store (case insensitive)
+      const currentStoreName = storeRes?.data?.name || storeName;
+      const storeMappings = mappingList.filter((m: any) => 
+        (m.store || "").toLowerCase() === (currentStoreName || "").toLowerCase()
+      );
 
-      setAccountsInsights(aggregatedData);
+      const finalInsights = storeMappings.map((mapping: any) => {
+        const cleanAccId = mapping.accountId.replace("act_", "").trim().toLowerCase();
+        const item = groupedNormalized[cleanAccId] || {};
+        const spend = item.spend || 0;
+        const purchaseValue = item.purchaseValue || 0;
+        const clicks = item.clicks || 0;
+        const addToCart = item.addToCart || 0;
+        const initiateCheckout = item.initiateCheckout || 0;
+        const purchases = item.purchases || 0;
+
+        return {
+          ...item,
+          accountId: mapping.accountId,
+          account_id: mapping.accountId,
+          account_name: mapping.accountName || item.accountName || mapping.accountId,
+          owner: mapping.owner || "",
+          store: mapping.store || "",
+          project: mapping.project || "",
+          reach: item.reach || 0,
+          impressions: item.impressions || 0,
+          clicks,
+          spend,
+          addToCart,
+          initiateCheckout,
+          purchases,
+          purchaseValue,
+          roas: spend > 0 ? purchaseValue / spend : 0,
+          atcRate: clicks > 0 ? (addToCart / clicks) * 100 : 0,
+          checkoutRate: clicks > 0 ? (initiateCheckout / clicks) * 100 : 0,
+          cpp: purchases > 0 ? spend / purchases : 0,
+          sales_amount: 0,
+          orders_count: 0,
+          visitors: 0,
+          conversion_rate: 0,
+        };
+      });
+
+      setAccountsInsights(finalInsights);
     } catch (err: any) {
       toast.error("加载聚合数据失败");
     } finally {
@@ -269,18 +288,6 @@ export function StoreDetailsPage({
     }
   };
 
-  const handleRemoveAccount = async (fb_account_id: string) => {
-    try {
-      await axios.delete(`/api/stores/${storeId}/accounts/${fb_account_id}`);
-      toast.success("广告账户已移除");
-      fetchStore();
-      setAccountsInsights((prev) =>
-        prev.filter((a) => a.account_id !== fb_account_id.replace("act_", "")),
-      );
-    } catch (err) {
-      toast.error("移除账户失败");
-    }
-  };
 
   const summaryRow = useMemo(() => {
     if (!sortedInsights || sortedInsights.length === 0) return null;
@@ -341,58 +348,101 @@ export function StoreDetailsPage({
                 <DialogTrigger render={<Button variant="outline" className="text-blue-600 border-blue-600 hover:bg-blue-50" />}>
                   <Settings className="w-4 h-4 mr-2" /> 设置
                 </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>店铺基础配置</DialogTitle>
+                <DialogContent className="max-w-2xl rounded-xl bg-white p-6 shadow-xl border border-slate-100">
+                  <DialogHeader className="border-b pb-3 mb-4">
+                    <DialogTitle className="flex items-center gap-2 text-slate-800 font-bold text-base">
+                      <span className="p-1 rounded bg-blue-50 text-meta-blue">
+                        <Settings className="w-4 h-4" />
+                      </span>
+                      店铺基础配置
+                    </DialogTitle>
                   </DialogHeader>
-                  <div className="space-y-4 mt-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">店铺名称</label>
-                        <Input
-                          value={storeData.name || ""}
-                          onChange={(e) => setStoreData({ ...storeData, name: e.target.value })}
-                          placeholder="例如: Kolaich"
-                        />
+                  <div className="space-y-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {/* Left Column */}
+                      <div className="space-y-4">
+                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider border-b pb-1">基本属性</h4>
+                        
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-bold text-slate-700">店铺名称</label>
+                          <Input
+                            value={storeData.name || ""}
+                            onChange={(e) => setStoreData({ ...storeData, name: e.target.value })}
+                            placeholder="例如: Kolaich"
+                            className="h-9 text-sm border-slate-200 focus:border-meta-blue focus:ring-meta-blue rounded-lg"
+                          />
+                        </div>
+                        
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-bold text-slate-700">域名</label>
+                          <Input
+                            value={storeData.domain || ""}
+                            onChange={(e) => setStoreData({ ...storeData, domain: e.target.value })}
+                            placeholder="例如: xxxx.myshopline.com"
+                            className="h-9 text-sm border-slate-200 focus:border-meta-blue focus:ring-meta-blue rounded-lg"
+                          />
+                          <p className="text-[10px] text-slate-400 leading-normal mt-1">
+                            提示: 请使用 SHOPLINE 授予的内部域名以绕过自定义域名的 Cloudflare 防火墙。
+                          </p>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-bold text-slate-700">店铺时区</label>
+                          <select
+                            className="flex h-9 w-full rounded-md border border-slate-200 bg-background px-3 py-1 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus:border-meta-blue focus:ring-1 focus:ring-meta-blue cursor-pointer font-medium text-slate-800"
+                            value={storeData.timezone || "GMT+8"}
+                            onChange={(e) => setStoreData({ ...storeData, timezone: e.target.value })}
+                          >
+                            <option value="GMT+8">GMT+8 (北京时间 / 台北 / 新加坡)</option>
+                            <option value="UTC">UTC (世界协调时间)</option>
+                            <option value="GMT-5">GMT-5 (美国东部时间 - EST)</option>
+                            <option value="GMT-8">GMT-8 (美国太平洋时间 - PST)</option>
+                            <option value="GMT+0">GMT+0 (伦敦 / 格林威治 - GMT)</option>
+                            <option value="GMT+1">GMT+1 (巴黎 / 柏林 - CET)</option>
+                            <option value="GMT+2">GMT+2 (雅典 / 开罗 - EET)</option>
+                            <option value="GMT+9">GMT+9 (东京 / 首尔 - JST)</option>
+                          </select>
+                        </div>
                       </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">域名</label>
-                        <Input
-                          value={storeData.domain || ""}
-                          onChange={(e) => setStoreData({ ...storeData, domain: e.target.value })}
-                          placeholder="例如: xxxx.myshopline.com"
-                        />
-                        <p className="text-[10px] text-gray-400 mt-1">
-                          提示: 请使用 SHOPLINE 授予的内部域名 (如 xxxx.myshopline.com) 以绕过自定义域名的 Cloudflare 防火墙。
-                        </p>
-                      </div>
-                      <div className="space-y-2 col-span-2">
-                        <label className="text-sm font-medium">STORE_Token</label>
-                        <Input
-                          type="password"
-                          value={storeData.shopline_token || ""}
-                          onChange={(e) =>
-                            setStoreData({
-                              ...storeData,
-                              shopline_token: e.target.value,
-                            })
-                          }
-                          placeholder="填入可拉取订单"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium">预设访客数</label>
-                        <Input
-                          type="number"
-                          value={storeData.visitors ?? ""}
-                          onChange={(e) => setStoreData({ ...storeData, visitors: parseInt(e.target.value) || 0 })}
-                          placeholder="0"
-                        />
+
+                      {/* Right Column */}
+                      <div className="space-y-4">
+                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider border-b pb-1">API & 其它参数</h4>
+
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-bold text-slate-700">STORE_Token</label>
+                          <Input
+                            type="password"
+                            value={storeData.shopline_token || ""}
+                            onChange={(e) =>
+                              setStoreData({
+                                ...storeData,
+                                shopline_token: e.target.value,
+                              })
+                            }
+                            placeholder="填入秘钥可拉取订单"
+                            className="h-9 text-sm border-slate-200 focus:border-meta-blue focus:ring-meta-blue rounded-lg"
+                          />
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-bold text-slate-700">预设访客数</label>
+                          <Input
+                            type="number"
+                            value={storeData.visitors ?? ""}
+                            onChange={(e) => setStoreData({ ...storeData, visitors: parseInt(e.target.value) || 0 })}
+                            placeholder="0"
+                            className="h-9 text-sm border-slate-200 focus:border-meta-blue focus:ring-meta-blue rounded-lg"
+                          />
+                        </div>
                       </div>
                     </div>
-                    <Button onClick={handleSaveStore} disabled={saving} className="mt-2 w-full">
-                      <Save className="w-4 h-4 mr-2" /> 保存配置
-                    </Button>
+
+                    <div className="pt-4 border-t flex justify-end gap-2">
+                      <Button onClick={handleSaveStore} disabled={saving} className="w-full h-10 bg-meta-blue hover:bg-meta-blue/90 flex items-center justify-center gap-1.5 text-sm font-semibold text-white rounded-lg shadow-sm">
+                        <Save className="w-4 h-4" /> 保存偏好配置
+                      </Button>
+                    </div>
                   </div>
                 </DialogContent>
               </Dialog>
@@ -503,54 +553,135 @@ export function StoreDetailsPage({
           )}
 
           {isNew && (
-            <Card>
-              <CardHeader>
-                <CardTitle>基础配置</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">店铺名称</label>
-                    <Input
-                      value={storeData.name || ""}
-                      onChange={(e) =>
-                        setStoreData({ ...storeData, name: e.target.value })
-                      }
-                      placeholder="例如: Kolaich"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">域名</label>
-                    <Input
-                      value={storeData.domain || ""}
-                      onChange={(e) =>
-                        setStoreData({ ...storeData, domain: e.target.value })
-                      }
-                      placeholder="https://..."
-                    />
-                  </div>
-                  <div className="space-y-2 col-span-2">
-                    <label className="text-sm font-medium">STORE_Token</label>
-                    <Input
-                      type="password"
-                      value={storeData.shopline_token || ""}
-                      onChange={(e) =>
-                        setStoreData({
-                          ...storeData,
-                          shopline_token: e.target.value,
-                        })
-                      }
-                      placeholder="填入可拉取订单"
-                    />
+            <Card className="shadow-lg border border-slate-100 rounded-xl overflow-hidden bg-white">
+              <CardHeader className="bg-slate-50/50 border-b border-slate-100 py-4 px-6">
+                <div className="flex items-center gap-2">
+                  <span className="p-1.5 rounded-lg bg-blue-50 text-meta-blue">
+                    <Store className="w-4 h-4" />
+                  </span>
+                  <div>
+                    <CardTitle className="text-base font-bold text-slate-800">创建新店铺</CardTitle>
+                    <p className="text-xs text-slate-400 mt-0.5">请录入店铺的基本属性与授权信息</p>
                   </div>
                 </div>
-                <Button
-                  onClick={handleSaveStore}
-                  disabled={saving}
-                  className="mt-2"
-                >
-                  <Save className="w-4 h-4 mr-2" /> 保存配置
-                </Button>
+              </CardHeader>
+              <CardContent className="p-6 space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Left Column: Store Details */}
+                  <div className="space-y-4">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 border-b pb-1.5 flex items-center gap-1.5">
+                      <Settings className="w-3.5 h-3.5 text-slate-400" /> 基本属性
+                    </h3>
+                    
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
+                        店铺名称 <span className="text-red-500">*</span>
+                      </label>
+                      <Input
+                        value={storeData.name || ""}
+                        onChange={(e) =>
+                          setStoreData({ ...storeData, name: e.target.value })
+                        }
+                        placeholder="例如: Kolaich"
+                        className="h-10 text-sm border-slate-200 focus:border-meta-blue focus:ring-meta-blue rounded-lg"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
+                        域名 <span className="text-xs text-slate-400 font-normal">(建议内部域名)</span>
+                      </label>
+                      <Input
+                        value={storeData.domain || ""}
+                        onChange={(e) =>
+                          setStoreData({ ...storeData, domain: e.target.value })
+                        }
+                        placeholder="例如: xxxx.myshopline.com"
+                        className="h-10 text-sm border-slate-200 focus:border-meta-blue focus:ring-meta-blue rounded-lg"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
+                        店铺时区 <span className="text-red-500">*</span>
+                      </label>
+                      <select
+                        className="flex h-10 w-full rounded-lg border border-slate-200 bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus:border-meta-blue focus:ring-1 focus:ring-meta-blue cursor-pointer font-medium text-slate-800"
+                        value={storeData.timezone || "GMT+8"}
+                        onChange={(e) => setStoreData({ ...storeData, timezone: e.target.value })}
+                      >
+                        <option value="GMT+8">GMT+8 (北京时间 / 台北 / 新加坡)</option>
+                        <option value="UTC">UTC (世界协调时间)</option>
+                        <option value="GMT-5">GMT-5 (美国东部时间 - EST)</option>
+                        <option value="GMT-8">GMT-8 (美国太平洋时间 - PST)</option>
+                        <option value="GMT+0">GMT+0 (伦敦 / 格林威治 - GMT)</option>
+                        <option value="GMT+1">GMT+1 (巴黎 / 柏林 - CET)</option>
+                        <option value="GMT+2">GMT+2 (雅典 / 开罗 - EET)</option>
+                        <option value="GMT+9">GMT+9 (东京 / 首尔 - JST)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Right Column: Authentication & Metrics */}
+                  <div className="space-y-4">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 border-b pb-1.5 flex items-center gap-1.5">
+                      <Key className="w-3.5 h-3.5 text-slate-400" /> API授权配置
+                    </h3>
+
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
+                        STORE_Token <span className="text-xs text-slate-400 font-normal">(用于增量拉单)</span>
+                      </label>
+                      <Input
+                        type="password"
+                        value={storeData.shopline_token || ""}
+                        onChange={(e) =>
+                          setStoreData({
+                            ...storeData,
+                            shopline_token: e.target.value,
+                          })
+                        }
+                        placeholder="填入 SHOPLINE 秘钥 Access Token"
+                        className="h-10 text-sm border-slate-200 focus:border-meta-blue focus:ring-meta-blue rounded-lg"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
+                        预设访客数 <span className="text-xs text-slate-400 font-normal">(默认首期展示)</span>
+                      </label>
+                      <Input
+                        type="number"
+                        value={storeData.visitors ?? ""}
+                        onChange={(e) =>
+                          setStoreData({
+                            ...storeData,
+                            visitors: parseInt(e.target.value) || 0,
+                          })
+                        }
+                        placeholder="0"
+                        className="h-10 text-sm border-slate-200 focus:border-meta-blue focus:ring-meta-blue rounded-lg"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t flex items-center justify-end gap-3 bg-slate-50/50 -mx-6 -mb-6 p-4">
+                  <Button
+                    variant="outline"
+                    onClick={() => navigate("/stores")}
+                    className="h-10 text-slate-600 border-slate-200 hover:bg-slate-100 rounded-lg px-5 text-sm"
+                  >
+                    取消
+                  </Button>
+                  <Button
+                    onClick={handleSaveStore}
+                    disabled={saving}
+                    className="h-10 bg-meta-blue hover:bg-meta-blue/90 text-white rounded-lg px-6 text-sm flex items-center gap-2 font-semibold"
+                  >
+                    <Save className="w-4 h-4" /> 保存并创建
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           )}
@@ -571,8 +702,12 @@ export function StoreDetailsPage({
                     <table className="w-full text-sm text-left border-collapse min-w-[800px]">
                       <thead className="bg-[#fbfcff] z-[50]">
                         <tr>
-                          <th className="h-10 px-4 align-middle whitespace-nowrap text-foreground border-r border-b border-[#e5e7eb] text-[#4b5563] font-bold text-[12px]">
-                            操作
+                          <th
+                            className="h-10 px-4 align-middle whitespace-nowrap text-foreground border-r border-b border-[#e5e7eb] text-[#4b5563] font-bold text-[12px] cursor-pointer hover:bg-gray-100"
+                            onClick={() => requestSort("store")}
+                          >
+                            店铺{" "}
+                            <ArrowUpDown className="w-3 h-3 inline-block ml-1" />
                           </th>
                           <th
                             className="h-10 px-4 align-middle whitespace-nowrap text-foreground border-r border-b border-[#e5e7eb] text-[#4b5563] font-bold text-[12px] cursor-pointer hover:bg-gray-100"
@@ -656,7 +791,7 @@ export function StoreDetailsPage({
                       <tbody>
                         {sortedInsights.length === 0 ? (
                           <tr>
-                            <td colSpan={10} className="p-4 text-center text-gray-500">
+                            <td colSpan={12} className="p-4 text-center text-gray-500">
                               暂无绑定的广告账户数据
                             </td>
                           </tr>
@@ -666,8 +801,8 @@ export function StoreDetailsPage({
                               key={insight.account_id}
                               className="hover:bg-gray-50 border-b border-[#e5e7eb]"
                             >
-                              <td className="p-2 px-4 border-r border-[#e5e7eb]">
-                                -
+                              <td className="p-2 px-4 border-r border-[#e5e7eb] text-blue-600 font-medium">
+                                {insight.store || "-"}
                               </td>
                               <td className="p-2 px-4 border-r border-[#e5e7eb]">
                                 {insight.owner || "-"}

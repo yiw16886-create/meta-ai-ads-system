@@ -85,27 +85,27 @@ async function evaluateActivityStatus(accountId: string, fbAccountStatus: number
 async function syncSingleAccountAdData(accountId: string, startDate: string, endDate: string, token: string) {
   const cleanAccountId = accountId.replace("act_", "");
   const url = `https://graph.facebook.com/v19.0/act_${cleanAccountId}/insights`;
-  console.log(`[Unified Ad Sync] Fetching AD-level insights for account ${cleanAccountId} from URL ${url}`);
+  console.log(`[Unified Ad Sync] Fetching ACCOUNT-level insights for account ${cleanAccountId} from URL ${url}`);
   
   const insightsResponse = await axios.get(
     url,
     {
       params: {
-        level: "ad",
+        level: "account",
         time_range: JSON.stringify({
           since: startDate,
           until: endDate,
         }),
         time_increment: 1,
         fields:
-          "ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,account_id,account_name,date_start,reach,impressions,clicks,spend,actions,purchase_roas,action_values",
+          "account_id,account_name,date_start,reach,impressions,clicks,spend,actions,purchase_roas,action_values",
         access_token: token,
       },
     },
   );
 
   const insights = insightsResponse.data.data || [];
-  console.log(`[Unified Ad Sync] Received ${insights.length} ad-level insight items for account ${cleanAccountId}`);
+  console.log(`[Unified Ad Sync] Received ${insights.length} account-level insight items for account ${cleanAccountId}`);
 
   const accountInsightsByDate: Record<string, {
     date: string;
@@ -124,12 +124,6 @@ async function syncSingleAccountAdData(accountId: string, startDate: string, end
 
   for (const day of insights) {
     const currentDate = day.date_start;
-    const adId = day.ad_id;
-    const adName = day.ad_name || `Ad ${adId}`;
-    const adsetId = day.adset_id;
-    const adsetName = day.adset_name || `AdSet ${adsetId}`;
-    const campaignId = day.campaign_id;
-    const campaignName = day.campaign_name || `Campaign ${campaignId}`;
     
     const rawAccountId = (day.account_id || cleanAccountId).replace("act_", "");
     const accountNameRaw = day.account_name || "Default Meta Account";
@@ -163,25 +157,57 @@ async function syncSingleAccountAdData(accountId: string, startDate: string, end
     let dbAdAccount = await prisma.adAccount.findUnique({
       where: { fb_account_id: rawAccountId }
     });
+
+    // Look up AccountMapping first to see if this account is mapped to a specific store
+    const mapping = await prisma.accountMapping.findUnique({
+      where: { accountId: rawAccountId }
+    });
+    let targetStoreId: number | null = null;
+    if (mapping?.store) {
+      const mappedStore = await prisma.store.findFirst({
+        where: {
+          name: {
+            equals: mapping.store.trim(),
+            mode: 'insensitive'
+          }
+        }
+      });
+      if (mappedStore) {
+        targetStoreId = mappedStore.id;
+      }
+    }
+
     if (!dbAdAccount) {
-      const defaultStore = await prisma.store.findFirst();
-      if (defaultStore) {
+      // Fallback to defaultStore if no mapping or mapped store does not exist
+      if (!targetStoreId) {
+        const defaultStore = await prisma.store.findFirst();
+        if (defaultStore) {
+          targetStoreId = defaultStore.id;
+        }
+      }
+
+      if (targetStoreId) {
         dbAdAccount = await prisma.adAccount.create({
           data: {
             fb_account_id: rawAccountId,
             fb_account_name: accountNameRaw,
             fb_access_token: token,
-            storeId: defaultStore.id
+            storeId: targetStoreId
           }
         });
       }
     } else {
+      // If dbAdAccount exists, update name/token and also realign storeId if mapping dictates a valid store
+      const updateData: any = {
+        fb_account_name: accountNameRaw,
+        fb_access_token: token
+      };
+      if (targetStoreId) {
+        updateData.storeId = targetStoreId;
+      }
       dbAdAccount = await prisma.adAccount.update({
         where: { fb_account_id: rawAccountId },
-        data: {
-          fb_account_name: accountNameRaw,
-          fb_access_token: token
-        }
+        data: updateData
       });
     }
 
@@ -192,54 +218,17 @@ async function syncSingleAccountAdData(accountId: string, startDate: string, end
     await prisma.accountMapping.upsert({
       where: { accountId: rawAccountId },
       update: {
-        accountName: accountNameRaw,
-        store: storeName
+        accountName: accountNameRaw
       },
       create: {
         accountId: rawAccountId,
         accountName: accountNameRaw,
-        store: storeName
+        store: "未分配"
       }
     });
 
-    // 3. Ensure/Sync Campaign, AdSet, Ad (Unified Date and Data using Ad ID)
-    await prisma.campaign.upsert({
-      where: { id: campaignId },
-      update: { name: campaignName },
-      create: {
-        id: campaignId,
-        accountId: rawAccountId,
-        name: campaignName,
-        status: "ACTIVE"
-      }
-    });
-
-    await prisma.adSet.upsert({
-      where: { id: adsetId },
-      update: { name: adsetName, campaignId: campaignId },
-      create: {
-        id: adsetId,
-        campaignId: campaignId,
-        accountId: rawAccountId,
-        name: adsetName
-      }
-    });
-
-    await prisma.ad.upsert({
-      where: { id: adId },
-      update: {
-        name: adName,
-        adsetId: adsetId,
-        campaignId: campaignId
-      },
-      create: {
-        id: adId,
-        adsetId: adsetId,
-        campaignId: campaignId,
-        accountId: rawAccountId,
-        name: adName
-      }
-    });
+    // 3. (REMOVED) Ensure/Sync Campaign, AdSet, Ad
+    // This is now purely handled by syncMetaHierarchy directly avoiding dummy empty string IDs
 
     // 4. Group metrics for account-level AdInsight upsert
     if (!accountInsightsByDate[currentDate]) {
@@ -573,7 +562,7 @@ app.get("/api/accounts", async (req, res) => {
 
 // 2. 同步数据
 app.post("/api/sync", async (req, res) => {
-  const { startDate, endDate, syncProduct, syncCreative } = req.body;
+  const { startDate, endDate, syncProduct, syncCreative, accounts: requestedAccounts } = req.body;
   if (!startDate || !endDate) {
     return res
       .status(400)
@@ -607,9 +596,30 @@ app.post("/api/sync", async (req, res) => {
     const disabledAccountIds = disabledAccounts.map(a => a.accountId);
     const DORMANT_ACCOUNT_IDS = ["26380439", "341040412"];
 
+    // 仅同步已映射或已绑定的账户 (AccountMapping 或 AdAccount 中的账户)，避免全局请求几千个账户导致封禁
+    const dbMappings = await prisma.accountMapping.findMany();
+    const dbAdAccounts = await prisma.adAccount.findMany();
+    const allowedAccountIds = new Set<string>();
+    dbMappings.forEach(m => { if (m.accountId) allowedAccountIds.add(m.accountId.replace("act_", "")); });
+    dbAdAccounts.forEach(a => { if (a.fb_account_id) allowedAccountIds.add(a.fb_account_id.replace("act_", "")); });
+
+    // 如果客户端显式传了 requestedAccounts 列表，我们就只同步那个列表
+    if (Array.isArray(requestedAccounts) && requestedAccounts.length > 0) {
+        requestedAccounts.forEach(id => allowedAccountIds.add(id.replace("act_", "")));
+    }
+
     const accounts = (accountsResponse.data.data || []).filter(
       (a: any) => {
         const rawId = (a.account_id || a.id || "").replace("act_", "");
+        if (!allowedAccountIds.has(rawId)) return false; // 必须是已配置的账户
+        
+        // 如果端上有特定选择，严格过滤非选中的
+        if (Array.isArray(requestedAccounts) && requestedAccounts.length > 0) {
+            if (!requestedAccounts.map(id => id.replace("act_", "")).includes(rawId)) {
+                return false;
+            }
+        }
+        
         const isDormant = DORMANT_ACCOUNT_IDS.includes(rawId);
         return !isDormant;
       }
@@ -665,8 +675,6 @@ app.post("/api/sync", async (req, res) => {
     try {
       console.log("Triggering Ensure AdAccounts...");
       await ensureAdAccounts(token);
-      console.log("Triggering Store Data Sync...");
-      await syncStoreData(startDate, endDate);
       console.log("Triggering Meta Hierarchy Sync...");
       await syncMetaHierarchy(token);
       console.log("Triggering Attribution and Aggregation...");
@@ -810,23 +818,25 @@ app.get("/api/accounts/:accountId/hierarchy", async (req, res) => {
   const cached = getCachedData(cacheKey);
   if (cached) return res.json(cached);
 
+  const cleanAccId = accountId.replace("act_", "").trim();
+
   try {
     const token = await getMetaToken();
     if (!token) return res.status(400).json({ error: "Meta Token 未配置" });
 
     // 一次性获取三种资源，去掉 insights 以提升速度
     const [campaignsRes, adsetsRes, adsRes] = await Promise.all([
-      axios.get(`https://graph.facebook.com/v19.0/act_${accountId}/campaigns`, {
+      axios.get(`https://graph.facebook.com/v19.0/act_${cleanAccId}/campaigns`, {
         params: { fields: "id,name", limit: 500, access_token: token },
       }),
-      axios.get(`https://graph.facebook.com/v19.0/act_${accountId}/adsets`, {
+      axios.get(`https://graph.facebook.com/v19.0/act_${cleanAccId}/adsets`, {
         params: {
           fields: "id,name,campaign_id",
           limit: 500,
           access_token: token,
         },
       }),
-      axios.get(`https://graph.facebook.com/v19.0/act_${accountId}/ads`, {
+      axios.get(`https://graph.facebook.com/v19.0/act_${cleanAccId}/ads`, {
         params: {
           fields: "id,name,adset_id,campaign_id",
           limit: 500,
@@ -837,65 +847,115 @@ app.get("/api/accounts/:accountId/hierarchy", async (req, res) => {
 
     const result = {
       success: true,
-      campaigns: campaignsRes.data.data,
-      adSets: adsetsRes.data.data,
-      ads: adsRes.data.data,
+      campaigns: campaignsRes.data.data || [],
+      adSets: adsetsRes.data.data || [],
+      ads: adsRes.data.data || [],
     };
     setCachedData(cacheKey, result);
-    res.json(result);
+
+    // BACKGROUND SYNC to persistent DB storage for resilient future fallbacks
+    try {
+      const camps = campaignsRes.data.data || [];
+      const sets = adsetsRes.data.data || [];
+      const adsList = adsRes.data.data || [];
+
+      // Upsert campaigns
+      for (const c of camps) {
+        if (!c.id) continue;
+        await prisma.campaign.upsert({
+          where: { id: c.id },
+          update: { name: c.name, accountId: cleanAccId },
+          create: { id: c.id, name: c.name, accountId: cleanAccId }
+        });
+      }
+
+      // Upsert adSets
+      for (const s of sets) {
+        if (!s.id) continue;
+        await prisma.adSet.upsert({
+          where: { id: s.id },
+          update: { name: s.name, campaignId: s.campaign_id || "", accountId: cleanAccId },
+          create: { id: s.id, name: s.name, campaignId: s.campaign_id || "", accountId: cleanAccId }
+        });
+      }
+
+      // Upsert ads
+      for (const a of adsList) {
+        if (!a.id) continue;
+        await prisma.ad.upsert({
+          where: { id: a.id },
+          update: { name: a.name, adsetId: a.adset_id || "", campaignId: a.campaign_id || "", accountId: cleanAccId },
+          create: { id: a.id, name: a.name, adsetId: a.adset_id || "", campaignId: a.campaign_id || "", accountId: cleanAccId }
+        });
+      }
+    } catch (saveErr: any) {
+      console.warn("Background persistence of hierarchy failed:", saveErr.message);
+    }
+
+    return res.json(result);
   } catch (error: any) {
-    console.error(
-      `Meta API Error for hierarchy:`,
+    console.warn(
+      `[Resilient Fallback Triggered] Meta API Error for hierarchy of ${accountId} (Rate Limit or Access error):`,
       error.response?.data || error.message,
     );
-    res.status(500).json({ error: extractMetaError(error) });
+
+    // Fall back to database metrics so that UI won't fail with a blocking 500 error
+    try {
+      const [dbCampaigns, dbAdSets, dbAds] = await Promise.all([
+        prisma.campaign.findMany({
+          where: {
+            accountId: { in: [cleanAccId, `act_${cleanAccId}`] }
+          }
+        }),
+        prisma.adSet.findMany({
+          where: {
+            accountId: { in: [cleanAccId, `act_${cleanAccId}`] }
+          }
+        }),
+        prisma.ad.findMany({
+          where: {
+            accountId: { in: [cleanAccId, `act_${cleanAccId}`] }
+          }
+        })
+      ]);
+
+      const result = {
+        success: true,
+        campaigns: dbCampaigns.map(c => ({ id: c.id, name: c.name })),
+        adSets: dbAdSets.map(s => ({ id: s.id, name: s.name, campaign_id: s.campaignId })),
+        ads: dbAds.map(a => ({ id: a.id, name: a.name, adset_id: a.adsetId, campaign_id: a.campaignId })),
+        isFallbackCached: true
+      };
+
+      // Set the temporary cache to prevent spamming DB/API during transient rate-limit windows
+      setCachedData(cacheKey, result);
+      return res.json(result);
+    } catch (fallbackDbErr: any) {
+      console.error("Database fallback query also failed:", fallbackDbErr.message);
+      // Even if database has absolutely no records, return empty structures instead of 500 status to allow UI to render gracefully
+      const safeEmptyResult = {
+        success: true,
+        campaigns: [],
+        adSets: [],
+        ads: [],
+        isFallbackCached: true
+      };
+      return res.json(safeEmptyResult);
+    }
   }
 });
 
-// 3. 获取本地数据 (过滤在近期30天内有消耗的且未停用的账户数据)
+// 3. 获取本地数据
 app.get("/api/insights", async (req, res) => {
   const { startDate, endDate } = req.query;
   try {
-    // 1. 获取近期 30 天内有消耗的去重账户 ID(近期以今天为基准的前 30 天)
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().split('T')[0];
-
-    const activeSpendAccounts = await prisma.adInsight.groupBy({
-      by: ["accountId"],
-      where: {
-        date: { gte: thirtyDaysAgoStr },
-        spend: { gt: 0 }
-      }
-    });
-    const activeSpendAccountIds = activeSpendAccounts.map(a => a.accountId);
-
-    // 2. 结合 MetaAccountMonitoring 排除状态是停用 (DISABLED / status === 2) 的账户
-    const disabledAccounts = await prisma.metaAccountMonitoring.findMany({
-      where: { status: 2 },
-      select: { accountId: true }
-    });
-    const disabledAccountIds = disabledAccounts.map(a => a.accountId);
-
-    // 找出最终有消耗且未禁用的账户ID
-    const allowedAccountIds = activeSpendAccountIds.filter(id => !disabledAccountIds.includes(id));
-
-    const whereCond: any = {
-      date: {
-        gte: startDate as string,
-        lte: endDate as string,
-      }
-    };
-
-    if (allowedAccountIds.length > 0) {
-      whereCond.accountId = { in: allowedAccountIds };
-    } else {
-      // 如果没有任何符合条件的账户，则返回空，防止已废弃/不用或30天无消耗账户的数据显示
-      whereCond.accountId = { in: ["__NONE__"] };
-    }
-
     const data = await prisma.adInsight.findMany({
-      where: whereCond,
+      where: {
+        date: {
+          gte: startDate as string,
+          lte: endDate as string,
+        }
+      },
     });
     res.json(data);
   } catch (error: any) {
@@ -982,29 +1042,63 @@ app.post("/api/mappings/batch", async (req, res) => {
     const validMappings = mappings.filter((m: any) => m && m.accountId != null);
 
     const results = await Promise.all(
-      validMappings.map((mapping: any) =>
-        prisma.accountMapping.upsert({
-          where: { accountId: String(mapping.accountId) },
+      validMappings.map(async (mapping: any) => {
+        const cleanAccId = String(mapping.accountId).replace("act_", "").trim();
+        const mappingName = mapping.accountName
+          ? String(mapping.accountName)
+          : "Unknown";
+
+        const upMap = await prisma.accountMapping.upsert({
+          where: { accountId: cleanAccId },
           update: {
-            accountName: mapping.accountName
-              ? String(mapping.accountName)
-              : "Unknown",
+            accountName: mappingName,
             project: mapping.project ? String(mapping.project) : null,
             store: mapping.store ? String(mapping.store) : null,
             owner: mapping.owner ? String(mapping.owner) : null,
             updatedAt: new Date(),
           },
           create: {
-            accountId: String(mapping.accountId),
-            accountName: mapping.accountName
-              ? String(mapping.accountName)
-              : "Unknown",
+            accountId: cleanAccId,
+            accountName: mappingName,
             project: mapping.project ? String(mapping.project) : null,
             store: mapping.store ? String(mapping.store) : null,
             owner: mapping.owner ? String(mapping.owner) : null,
           },
-        }),
-      ),
+        });
+
+        // Sync with AdAccount: find corresponding Store and upsert/update store relation
+        const storeName = mapping.store ? String(mapping.store).trim() : null;
+        if (storeName) {
+          const store = await prisma.store.findFirst({
+            where: {
+              name: {
+                equals: storeName,
+                mode: "insensitive",
+              },
+            },
+          });
+          if (store) {
+            await prisma.adAccount.upsert({
+              where: { fb_account_id: cleanAccId },
+              update: {
+                storeId: store.id,
+                fb_account_name: mappingName,
+              },
+              create: {
+                fb_account_id: cleanAccId,
+                fb_account_name: mappingName,
+                storeId: store.id,
+              },
+            });
+          }
+        } else {
+          // If the mapping specifies no store, remove/disconnect it from AdAccount table
+          await prisma.adAccount.deleteMany({
+            where: { fb_account_id: cleanAccId },
+          });
+        }
+        return upMap;
+      }),
     );
     res.json({ success: true, count: results.length });
   } catch (err: any) {
@@ -1847,43 +1941,108 @@ app.get("/api/stores/:id/dashboard-summary", async (req, res) => {
       let totalPurchaseValue = 0;
       let adResults = [];
 
-      if (store.accounts && store.accounts.length > 0) {
-        for (const account of store.accounts) {
-          const tokenToUse = account.fb_access_token || globalToken;
-          if (!tokenToUse) continue;
-          try {
-            const insightsRes = await axios.get(
-              `https://graph.facebook.com/v19.0/act_${account.fb_account_id}/insights`,
-              {
-                params: {
-                  time_range: JSON.stringify({ since: startDate, until: endDate }),
-                  fields: "spend,purchase_roas,action_values,account_id,account_name",
-                  level: "account",
-                  access_token: tokenToUse,
-                },
-              },
-            );
+      // Get accounts strictly from AccountMapping associated with this store name
+      const mappedAccounts = await prisma.accountMapping.findMany({
+        where: { store: store.name }
+      });
+      
+      const startDateStr = startDate as string;
+      const endDateStr = endDate as string;
 
-            if (insightsRes.data && insightsRes.data.data) {
-              insightsRes.data.data.forEach((d: any) => {
-                const spend = parseFloat(d.spend || "0");
-                totalSpend += spend;
-                
-                const actionValues = d.action_values || [];
-                const value = actionValues.find((v: any) => v.action_type === "purchase" || v.action_type === "omni_purchase")?.value || 0;
-                totalPurchaseValue += parseFloat(value);
-                
-                adResults.push({
-                  accountId: account.fb_account_id,
-                  accountName: account.fb_account_name || d.account_name,
-                  spend,
-                  purchaseValue: parseFloat(value),
-                  roas: spend > 0 ? parseFloat(value) / spend : 0
-                });
-              });
+      if (mappedAccounts && mappedAccounts.length > 0) {
+        for (const mapping of mappedAccounts) {
+          const cleanAccId = mapping.accountId.replace("act_", "").trim();
+          // Find if we have an access token for this account
+          const adAccount = await prisma.adAccount.findFirst({
+            where: {
+              fb_account_id: {
+                in: [cleanAccId, `act_${cleanAccId}`]
+              }
             }
-          } catch (err: any) {
-            console.error(`Meta insight fetch failed for ${account.fb_account_id}:`, err.message);
+          });
+          const tokenToUse = adAccount?.fb_access_token || globalToken;
+          
+          let fetchedSuccessfully = false;
+          
+          if (tokenToUse) {
+            try {
+              const insightsRes = await axios.get(
+                `https://graph.facebook.com/v19.0/act_${cleanAccId}/insights`,
+                {
+                  params: {
+                    time_range: JSON.stringify({ since: startDate, until: endDate }),
+                    fields: "spend,purchase_roas,action_values,account_id,account_name",
+                    level: "account",
+                    access_token: tokenToUse,
+                  },
+                },
+              );
+
+              if (insightsRes.data && insightsRes.data.data) {
+                fetchedSuccessfully = true;
+                insightsRes.data.data.forEach((d: any) => {
+                  const spend = parseFloat(d.spend || "0");
+                  if (spend <= 0) return; // Hide accounts with no spend based on user request (不需要混乱的数据)
+
+                  totalSpend += spend;
+                  
+                  const actionValues = d.action_values || [];
+                  const value = actionValues.find((v: any) => v.action_type === "purchase" || v.action_type === "omni_purchase")?.value || 0;
+                  totalPurchaseValue += parseFloat(value);
+                  
+                  adResults.push({
+                    accountId: mapping.accountId,
+                    accountName: mapping.accountName || d.account_name || `act_${cleanAccId}`,
+                    spend,
+                    purchaseValue: parseFloat(value),
+                    roas: spend > 0 ? parseFloat(value) / spend : 0
+                  });
+                });
+              }
+            } catch (err: any) {
+              console.warn(`[Diagnostic Warning] Meta insight live fetch bypassed/failed for ${mapping.accountId}:`, err.message);
+            }
+          }
+
+          // Fallback to database `AdInsight` table if live API failed or was bypassed
+          if (!fetchedSuccessfully) {
+            try {
+              const dbInsights = await prisma.adInsight.findMany({
+                where: {
+                  accountId: {
+                    in: [cleanAccId, `act_${cleanAccId}`]
+                  },
+                  date: {
+                    gte: startDateStr,
+                    lte: endDateStr,
+                  }
+                }
+              });
+
+              if (dbInsights && dbInsights.length > 0) {
+                // Aggregate db insights
+                let accSpend = 0;
+                let accPurchaseValue = 0;
+                dbInsights.forEach(curr => {
+                  accSpend += curr.spend || 0;
+                  accPurchaseValue += curr.purchaseValue || 0;
+                });
+
+                if (accSpend > 0) {
+                  totalSpend += accSpend;
+                  totalPurchaseValue += accPurchaseValue;
+                  adResults.push({
+                    accountId: mapping.accountId,
+                    accountName: mapping.accountName || `act_${cleanAccId}`,
+                    spend: accSpend,
+                    purchaseValue: accPurchaseValue,
+                    roas: accSpend > 0 ? accPurchaseValue / accSpend : 0
+                  });
+                }
+              }
+            } catch (fallbackErr: any) {
+              console.warn(`[Diagnostic Warning] Fallback db search failed for ${mapping.accountId}:`, fallbackErr.message);
+            }
           }
         }
       }
@@ -2021,7 +2180,7 @@ app.get("/api/stores/:id/shopline-stats", async (req, res) => {
 
 // POST /api/stores - Create or update a store
 app.post("/api/stores", async (req, res) => {
-  const { id, name, shopline_token, shopify_token, domain, visitors } = req.body;
+  const { id, name, shopline_token, shopify_token, domain, visitors, timezone } = req.body;
   try {
     if (id) {
       const updatedStore = await prisma.store.update({
@@ -2031,6 +2190,7 @@ app.post("/api/stores", async (req, res) => {
           shopline_token, 
           shopify_token, 
           domain,
+          timezone: timezone || undefined,
           visitors: visitors !== undefined ? parseInt(visitors, 10) : undefined
         },
       });
@@ -2042,6 +2202,7 @@ app.post("/api/stores", async (req, res) => {
           shopline_token, 
           shopify_token, 
           domain,
+          timezone: timezone || "GMT+8",
           visitors: visitors !== undefined ? parseInt(visitors, 10) : 0
         },
       });
@@ -2059,6 +2220,10 @@ app.post("/api/stores/:id/accounts", async (req, res) => {
   const { id } = req.params;
   const { fb_account_id, fb_account_name, fb_access_token } = req.body;
   try {
+    const store = await prisma.store.findUnique({
+      where: { id: parseInt(id, 10) },
+    });
+
     const account = await prisma.adAccount.upsert({
       where: { fb_account_id },
       update: { fb_account_name, fb_access_token, storeId: parseInt(id, 10) },
@@ -2069,6 +2234,8 @@ app.post("/api/stores/:id/accounts", async (req, res) => {
         storeId: parseInt(id, 10),
       },
     });
+
+    // Removed automatic accountMapping upsert here to ensure mapping table is strictly manual per user instruction
     res.json(account);
   } catch (error: any) {
     res
@@ -2084,6 +2251,7 @@ app.delete("/api/stores/:id/accounts/:accountId", async (req, res) => {
     await prisma.adAccount.delete({
       where: { fb_account_id: accountId },
     });
+
     res.json({ success: true });
   } catch (error: any) {
     res
@@ -2109,27 +2277,21 @@ app.delete("/api/stores/:id", async (req, res) => {
     }
 
     await prisma.$transaction([
-      // 1. Dissociate account mappings matching the store's name
-      prisma.accountMapping.updateMany({
-        where: { store: store.name },
-        data: { store: null },
-      }),
-
-      // 2. Delete associated product and creative daily performance stats
+      // 1. Delete associated product and creative daily performance stats
       prisma.productPerformanceDaily.deleteMany({ where: { storeId } }),
       prisma.creativePerformanceDaily.deleteMany({ where: { storeId } }),
 
-      // 3. Delete associated orders and products
+      // 2. Delete associated orders and products
       prisma.order.deleteMany({ where: { storeId } }),
       prisma.product.deleteMany({ where: { storeId } }),
 
-      // 4. Delete any ad creatives
+      // 3. Delete any ad creatives
       prisma.adCreative.deleteMany({ where: { storeId } }),
 
-      // 5. Delete ad accounts associated with this store
+      // 4. Delete ad accounts associated with this store
       prisma.adAccount.deleteMany({ where: { storeId } }),
 
-      // 6. Delete the store itself
+      // 5. Delete the store itself
       prisma.store.delete({ where: { id: storeId } }),
     ]);
 

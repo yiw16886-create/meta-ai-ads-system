@@ -72,6 +72,7 @@ model Store {
   shopify_token  String?
   domain         String?
   visitors       Int         @default(0)
+  timezone       String?     @default("GMT+8")
   accounts       AdAccount[]
   createdAt      DateTime    @default(now())
   updatedAt      DateTime    @updatedAt
