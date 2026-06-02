@@ -36,7 +36,7 @@ async function main() {
 
   // 6. Delete AccountMapping to clear settings
   const mappingDel = await prisma.accountMapping.deleteMany({
-    where: { accountId: { in: accts } }
+    where: { fbAccountId: { in: accts } }
   });
   console.log(`Deleted ${mappingDel.count} AccountMapping entries.`);
 

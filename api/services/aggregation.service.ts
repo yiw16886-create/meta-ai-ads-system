@@ -100,7 +100,7 @@ export async function aggregateData(startDate: string, endDate: string, options:
           try {
             // Link creatives to Ads
             const adsWithCreative = await prisma.ad.findMany({
-              where: { creativeId: creative.id }
+              where: { creativeId: creative.creativeId }
             });
             
             const insights = await prisma.adInsight.findMany({
@@ -116,9 +116,8 @@ export async function aggregateData(startDate: string, endDate: string, options:
 
             await prisma.creativePerformanceDaily.upsert({
               where: {
-                storeId_creativeId_date: {
-                  storeId: store.id,
-                  creativeId: creative.id,
+                creativeId_date: {
+                  creativeId: creative.creativeId,
                   date: endDate
                 }
               },
@@ -133,7 +132,7 @@ export async function aggregateData(startDate: string, endDate: string, options:
               },
               create: {
                 storeId: store.id,
-                creativeId: creative.id,
+                creativeId: creative.creativeId,
                 date: endDate,
                 creativeName: creative.name,
                 type: creative.type,
@@ -147,7 +146,7 @@ export async function aggregateData(startDate: string, endDate: string, options:
             });
             creativeAggSuccess++;
           } catch (cErr) {
-            console.error(`[Aggregation Service] Prisma error aggregating creative ${creative.id} for store ${store.id}:`, cErr);
+            console.error(`[Aggregation Service] Prisma error aggregating creative ${creative.creativeId} for store ${store.id}:`, cErr);
           }
         }
         console.log(`[Aggregation Service] Successfully aggregated ${creativeAggSuccess} creatives for store ${store.id}`);

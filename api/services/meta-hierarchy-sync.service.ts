@@ -300,13 +300,13 @@ export async function syncMetaHierarchy(token: string, options: { syncCreative?:
           
           try {
             const existingCreative = await prisma.adCreative.findUnique({
-              where: { id: creative.id }
+              where: { creativeId: creative.id }
             });
 
             if (existingCreative) {
               if (existingCreative.name !== creative.name || existingCreative.type !== type || existingCreative.storeId !== acc.storeId) {
                 await prisma.adCreative.update({
-                  where: { id: creative.id },
+                  where: { creativeId: creative.id },
                   data: {
                     name: creative.name,
                     type: type,
@@ -317,7 +317,9 @@ export async function syncMetaHierarchy(token: string, options: { syncCreative?:
             } else {
               await prisma.adCreative.create({
                 data: {
-                  id: creative.id,
+                  creativeId: creative.id,
+                  fbAccountId: acc.fb_account_id,
+                  mediaType: type || "IMAGE",
                   storeId: acc.storeId,
                   name: creative.name || `Creative ${creative.id}`,
                   type: type,
@@ -453,12 +455,12 @@ export async function syncMetaHierarchy(token: string, options: { syncCreative?:
         if (options?.syncCreative) {
           for (const creative of mockCreatives) {
             const existingCreative = await prisma.adCreative.findUnique({
-              where: { id: creative.id }
+              where: { creativeId: creative.id }
             });
             if (existingCreative) {
               if (existingCreative.name !== creative.name || existingCreative.type !== creative.type || existingCreative.storeId !== acc.storeId) {
                 await prisma.adCreative.update({
-                  where: { id: creative.id },
+                  where: { creativeId: creative.id },
                   data: {
                     name: creative.name,
                     type: creative.type,
@@ -469,7 +471,9 @@ export async function syncMetaHierarchy(token: string, options: { syncCreative?:
             } else {
               await prisma.adCreative.create({
                 data: {
-                  id: creative.id,
+                  creativeId: creative.id,
+                  fbAccountId: acc.fb_account_id,
+                  mediaType: creative.type || "IMAGE",
                   storeId: acc.storeId,
                   name: creative.name,
                   type: creative.type,

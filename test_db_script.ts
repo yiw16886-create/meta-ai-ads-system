@@ -5,7 +5,7 @@ async function main() {
   const accountIds = ["1352072466719315", "1633720264379170"];
   for (const accId of accountIds) {
     console.log(`\n=== Account: ${accId} ===`);
-    const mapping = await prisma.accountMapping.findUnique({ where: { accountId: accId } });
+    const mapping = await prisma.accountMapping.findFirst({ where: { fbAccountId: accId } });
     console.log("AccountMapping:", mapping);
 
     const monitoring = await prisma.metaAccountMonitoring.findUnique({ where: { accountId: accId } });

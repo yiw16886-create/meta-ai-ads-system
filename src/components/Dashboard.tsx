@@ -129,7 +129,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
     }
   }, [location.search]);
 
-  const [startDate, setStartDate] = useState<Date>(subDays(new Date(), 1));
+  const [startDate, setStartDate] = useState<Date>(subDays(new Date(), 35));
   const [endDate, setEndDate] = useState<Date>(subDays(new Date(), 1));
   const [search, setSearch] = useState("");
   const [viewDimension, setViewDimension] = useState<"account" | "date" | "date_account">("account");
@@ -570,7 +570,8 @@ export function Dashboard({ onLogout }: DashboardProps) {
       <main className="flex-1 ml-[200px] p-[24px] overflow-x-hidden flex flex-col h-screen box-border">
         {currentTab === "overview" || currentTab === "dashboard" || currentTab === "product_intelligence" || currentTab === "creative_intelligence" || currentTab === "campaign_structure" || currentTab === "audience_analysis" || currentTab === "creative_analysis" ? (
           <>
-            <div className="bg-white p-[16px] rounded-[12px] flex items-center gap-[12px] mb-[20px] shadow-[0_1px_3px_rgba(0,0,0,0.1)]">
+            {currentTab !== "creative_analysis" && currentTab !== "creative_intelligence" && (
+              <div className="bg-white p-[16px] rounded-[12px] flex items-center gap-[12px] mb-[20px] shadow-[0_1px_3px_rgba(0,0,0,0.1)]">
               <div className="flex items-center gap-2">
                 <div className="relative">
                   <CalendarIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3 h-3 text-meta-text-muted z-10" />
@@ -669,19 +670,20 @@ export function Dashboard({ onLogout }: DashboardProps) {
                 </div>
               )}
             </div>
+            )}
 
             {currentTab === "overview" ? (
               <OverviewDashboard data={data} mappings={mappings} storeSummaries={storeSummaries} />
             ) : currentTab === "product_intelligence" ? (
               <ProductIntelligenceDashboard data={data} startDate={startDate} endDate={endDate} />
             ) : currentTab === "creative_intelligence" ? (
-              <CreativeIntelligenceDashboard data={data} startDate={startDate} endDate={endDate} />
+              <CreativeIntelligenceDashboard data={data} startDate={startDate} endDate={endDate} onStartDateChange={setStartDate} onEndDateChange={setEndDate} />
             ) : currentTab === "campaign_structure" ? (
               <CampaignStructureDashboard startDate={startDate} endDate={endDate} />
             ) : currentTab === "audience_analysis" ? (
               <AudienceAnalysisDashboard startDate={startDate} endDate={endDate} />
             ) : currentTab === "creative_analysis" ? (
-              <CreativeIntelligenceDashboard data={data} startDate={startDate} endDate={endDate} />
+              <CreativeIntelligenceDashboard data={data} startDate={startDate} endDate={endDate} onStartDateChange={setStartDate} onEndDateChange={setEndDate} />
             ) : (
               <>
                 <div className="grid grid-cols-4 gap-[16px] mb-[20px]">
@@ -2402,7 +2404,7 @@ function CategoryDashboard({ mappings, onManageAccounts }: { mappings: Record<st
         roas,
         hasMapping: !!mapping
       };
-    }).filter((item: any) => item.spend > 0 && item.hasMapping && item.store !== "未分配");
+    }).filter((item: any) => item.spend > 0);
   }, [rawInsights, mappings]);
 
   const projects = useMemo(() => {

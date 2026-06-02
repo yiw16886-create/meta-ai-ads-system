@@ -39,11 +39,13 @@ model Setting {
 }
 
 model AccountMapping {
-  accountId   String   @id
-  accountName String
+  id          Int      @id @default(autoincrement())
+  storeId     Int?
+  fbAccountId String   @unique
+  fbPageId    String?
   project     String?
-  store       String?
   owner       String?
+  store       Store?   @relation(fields: [storeId], references: [id], onDelete: Cascade)
   updatedAt   DateTime @updatedAt
 }
 
@@ -66,16 +68,17 @@ model Invitation {
 }
 
 model Store {
-  id             Int         @id @default(autoincrement())
-  name           String      @unique
-  shopline_token String?
-  shopify_token  String?
-  domain         String?
-  visitors       Int         @default(0)
-  timezone       String?     @default("GMT+8")
-  accounts       AdAccount[]
-  createdAt      DateTime    @default(now())
-  updatedAt      DateTime    @updatedAt
+  id              Int              @id @default(autoincrement())
+  name            String           @unique
+  shopline_token  String?
+  shopify_token   String?
+  domain          String?
+  visitors        Int              @default(0)
+  timezone        String?          @default("GMT+8")
+  accounts        AdAccount[]
+  accountMappings AccountMapping[]
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 }
 
 model MetaAccountMonitoring {
@@ -148,11 +151,17 @@ model Ad {
 }
 
 model AdCreative {
-  id          String   @id
-  storeId     Int?
-  name        String
-  type        String   // IMAGE, VIDEO, CAROUSEL
-  hookRate    Float    @default(0)
+  creativeId   String                     @id
+  fbAccountId  String
+  mediaType    String                     // IMAGE/VIDEO
+  imageUrl     String?
+  videoId      String?
+  imageHash    String?                    @unique
+  storeId      Int?
+  name         String?
+  type         String?
+  hookRate     Float                      @default(0)
+  performances CreativePerformanceDaily[]
 }
 
 model ProductPerformanceDaily {
@@ -188,26 +197,31 @@ model ProductPerformanceDaily {
 }
 
 model CreativePerformanceDaily {
-  id               Int      @id @default(autoincrement())
-  date             String
-  storeId          Int
+  id               Int        @id @default(autoincrement())
   creativeId       String
-  creativeName     String
-  type             String
-  spend            Float    @default(0)
-  purchases        Int      @default(0)
-  revenue          Float    @default(0)
-  roas             Float    @default(0)
-  ctr              Float    @default(0)
-  cpc              Float    @default(0)
-  cpm              Float    @default(0)
-  frequency        Float    @default(0)
-  hookRate         Float    @default(0)
+  date             String
+  spend            Float      @default(0)
+  impressions      Int        @default(0)
+  clicks           Int        @default(0)
+  revenue          Float      @default(0)
+  storeId          Int?
+  creativeName     String?
+  type             String?
+  purchases        Int        @default(0)
+  roas             Float      @default(0)
+  ctr              Float      @default(0)
+  cpc              Float      @default(0)
+  cpm              Float      @default(0)
+  frequency        Float      @default(0)
+  hookRate         Float      @default(0)
   aiRiskStatus     String?
   trendStatus      String?
   aiSuggestion     String?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
 
-  @@unique([storeId, creativeId, date])
+  creative         AdCreative @relation(fields: [creativeId], references: [creativeId], onDelete: Cascade)
+
+  @@unique([creativeId, date])
+  @@index([creativeId, date])
 }

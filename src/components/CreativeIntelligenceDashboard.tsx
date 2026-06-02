@@ -40,6 +40,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar as CalendarComponent } from "@/components/ui/calendar";
 import * as XLSX from "xlsx";
 import { format } from "date-fns";
 import { toast } from "sonner";
@@ -90,6 +92,8 @@ export function CreativeIntelligenceDashboard({
   data, 
   startDate, 
   endDate,
+  onStartDateChange,
+  onEndDateChange,
   storeFilter = "all",
   projectFilter = "all",
   ownerFilter = "all"
@@ -97,6 +101,8 @@ export function CreativeIntelligenceDashboard({
   data: any[], 
   startDate?: Date, 
   endDate?: Date,
+  onStartDateChange?: (date: Date) => void,
+  onEndDateChange?: (date: Date) => void,
   storeFilter?: string,
   projectFilter?: string,
   ownerFilter?: string
@@ -161,10 +167,10 @@ export function CreativeIntelligenceDashboard({
 
       const [resGrouped, resDaily, resStores] = await Promise.all([
         axios.get("/api/intelligence/creatives", {
-          params: { startDate: startStr, endDate: endStr }
+          params: { startDate: startStr, endDate: endStr, storeFilter: localStoreFilter }
         }),
         axios.get("/api/intelligence/creatives/daily", {
-          params: { startDate: startStr, endDate: endStr }
+          params: { startDate: startStr, endDate: endStr, storeFilter: localStoreFilter }
         }).catch(() => ({ data: [] })), 
         axios.get("/api/stores").catch(() => ({ data: [] }))
       ]);
@@ -196,7 +202,7 @@ export function CreativeIntelligenceDashboard({
 
   useEffect(() => {
     fetchCreatives();
-  }, [startStrKey, endStrKey]);
+  }, [startStrKey, endStrKey, localStoreFilter]);
 
   // Daily records index by creative ID
   const dailyRecordsByCreative = React.useMemo(() => {
@@ -527,22 +533,7 @@ export function CreativeIntelligenceDashboard({
   return (
     <div className="flex flex-col h-full space-y-4">
       {/* Dynamic coupled BI Header */}
-      <div className="bg-white px-6 py-4 rounded-xl border border-gray-100 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-bold text-gray-900 tracking-tight flex items-center gap-2">
-            <span className="p-1.5 rounded-lg bg-meta-blue/10 text-meta-blue">
-              <Sparkles className="w-5 h-5 text-meta-blue" />
-            </span>
-            素材智能决策中心
-          </h1>
-          <p className="text-xs text-gray-500 mt-1">
-            已同步当前选定账户店铺：
-            <span className="font-bold text-meta-blue bg-blue-50 px-2 py-0.5 rounded ml-1 mr-1 font-mono">
-              {localStoreFilter === "all" ? "全部店铺" : localStoreFilter}
-            </span> 
-            | 项目: <span className="font-semibold text-gray-700">{projectFilter === "all" ? "全部" : projectFilter}</span>
-          </p>
-        </div>
+      <div className="bg-white px-6 py-4 rounded-xl border border-gray-100 shadow-sm flex items-center justify-end">
         
         {/* Date Selector Indicator, Store selection dropdown, & Export block */}
         <div className="flex flex-wrap items-center gap-2.5">
@@ -560,12 +551,50 @@ export function CreativeIntelligenceDashboard({
             </select>
           </div>
 
-          <div className="flex items-center h-9 bg-gray-50 border border-gray-200 text-gray-700 px-3 rounded-lg text-xs gap-2">
-            <Calendar className="w-3.5 h-3.5 text-gray-400 mr-0.5" />
-            <span>
-              {startDate ? format(startDate, "yyyy-MM-dd") : "过去30天"} ~ {endDate ? format(endDate, "yyyy-MM-dd") : "当天"}
-            </span>
-          </div>
+          {onStartDateChange && onEndDateChange ? (
+            <div className="flex items-center gap-1.5 shrink-0">
+              <div className="relative">
+                <Calendar className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 z-10" />
+                <Popover>
+                  <PopoverTrigger className="pl-8 pr-2.5 h-9 border border-gray-200 rounded-lg text-xs w-[120px] text-left bg-white flex items-center text-gray-750 font-semibold cursor-pointer">
+                    {startDate ? format(startDate, "yyyy-MM-dd") : "开始"}
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start" sideOffset={8}>
+                    <CalendarComponent
+                      mode="single"
+                      selected={startDate}
+                      onSelect={(day) => day && onStartDateChange(day)}
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
+              <span className="text-gray-400 text-xs font-medium">至</span>
+              <div className="relative">
+                <Calendar className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 z-10" />
+                <Popover>
+                  <PopoverTrigger className="pl-8 pr-2.5 h-9 border border-gray-200 rounded-lg text-xs w-[120px] text-left bg-white flex items-center text-gray-750 font-semibold cursor-pointer">
+                    {endDate ? format(endDate, "yyyy-MM-dd") : "结束"}
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start" sideOffset={8}>
+                    <CalendarComponent
+                      mode="single"
+                      selected={endDate}
+                      onSelect={(day) => day && onEndDateChange(day)}
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center h-9 bg-gray-50 border border-gray-200 text-gray-700 px-3 rounded-lg text-xs gap-2">
+              <Calendar className="w-3.5 h-3.5 text-gray-400 mr-0.5" />
+              <span>
+                {startDate ? format(startDate, "yyyy-MM-dd") : "过去30天"} ~ {endDate ? format(endDate, "yyyy-MM-dd") : "当天"}
+              </span>
+            </div>
+          )}
           <Button
             variant="outline"
             className="h-9 px-3.5 text-xs font-semibold border-gray-200 text-slate-700 hover:bg-gray-50 flex items-center gap-1.5"

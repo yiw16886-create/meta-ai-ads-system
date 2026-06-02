@@ -234,7 +234,7 @@ export function StoreDetailsPage({
           visitors: 0,
           conversion_rate: 0,
         };
-      });
+      }).filter((item: any) => item.spend > 0);
 
       setAccountsInsights(finalInsights);
     } catch (err: any) {
