@@ -1,4 +1,4 @@
-import { loadEnv } from "./loader";
+import { loadEnv } from "./env-loader";
 
 export const config = {
   port: 3000,

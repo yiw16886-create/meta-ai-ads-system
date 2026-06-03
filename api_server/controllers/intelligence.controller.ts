@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import prisma from "../db";
 import { getProductIntelligence } from "../services/product-intelligence.service";
 import { getCreativeIntelligence } from "../services/creative-intelligence.service";
-import { attributePurchases } from "../services/attribution.service";
+import { attributePurchases } from "../services/attribution-calc.service";
 import { aggregateData } from "../services/aggregation.service";
 
 export class IntelligenceController {

@@ -1,5 +1,5 @@
 import { aggregateData } from "./api_server/services/aggregation.service";
-import { attributePurchases } from "./api_server/services/attribution.service";
+import { attributePurchases } from "./api_server/services/attribution-calc.service";
 import prisma from "./api_server/db";
 
 async function main() {

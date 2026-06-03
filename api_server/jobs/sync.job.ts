@@ -4,7 +4,7 @@ import { format, subDays } from "date-fns";
 import prisma from "../db";
 import { getMetaToken, evaluateActivityStatus, syncSingleAccountAdData } from "../utils";
 import { aggregateData } from "../services/aggregation.service";
-import { attributePurchases } from "../services/attribution.service";
+import { attributePurchases } from "../services/attribution-calc.service";
 
 // -- SCHEDULE JOBS --
 export function initCronJobs(): void {
