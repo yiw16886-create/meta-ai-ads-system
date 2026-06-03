@@ -27,7 +27,7 @@ app.get("/api/health", (req, res) => {
 
 // Front-end Assets Delivery & Vite Hot Reload Middleware
 async function configureFrontend() {
-  if (!config.env.isProduction) {
+  if (config.env.nodeEnv !== "production") {
     console.log("🛠️ Initializing Vite development middleware...");
     const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
