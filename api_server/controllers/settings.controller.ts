@@ -1,11 +1,36 @@
 import { Request, Response, NextFunction } from "express";
 import prisma from "../db";
+import fs from "fs";
+import path from "path";
+
+const SETTINGS_FILE = path.resolve(process.cwd(), "settings.json");
+
+const readLocalSettings = (): Record<string, string> => {
+  try {
+    if (fs.existsSync(SETTINGS_FILE)) {
+      const content = fs.readFileSync(SETTINGS_FILE, "utf-8");
+      return JSON.parse(content) || {};
+    }
+  } catch (err) {
+    console.error("Failed to read local settings file:", err);
+  }
+  return {};
+};
+
+const writeLocalSettings = (settings: Record<string, string>) => {
+  try {
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), "utf-8");
+  } catch (err) {
+    console.error("Failed to write local settings file:", err);
+  }
+};
 
 export class SettingsController {
   static async getSettings(req: Request, res: Response, next: NextFunction): Promise<void> {
+    const localSettings = readLocalSettings();
     try {
       const settings = await prisma.setting.findMany();
-      const configObj: Record<string, string> = {};
+      const configObj: Record<string, string> = { ...localSettings };
       settings.forEach((s) => {
         configObj[s.key] = s.value;
       });
@@ -13,6 +38,7 @@ export class SettingsController {
     } catch (err: any) {
       console.warn("⚠️ [getSettings warning] Setting table might not exist or DB connection failed:", err.message);
       res.json({
+        ...localSettings,
         _dbError: err.message || String(err),
         _dbTableMissing: err.message?.includes("does not exist") || err.message?.includes("relation") || err.message?.includes("not found")
       });
@@ -26,12 +52,23 @@ export class SettingsController {
         res.status(400).json({ error: "Key is required" });
         return;
       }
+
+      // Always save to local settings file first
+      const currentLocal = readLocalSettings();
+      currentLocal[key] = value;
+      writeLocalSettings(currentLocal);
       
-      await prisma.setting.upsert({
-        where: { key },
-        update: { value },
-        create: { key, value },
-      });
+      // Attempt to save to database, but don't crash if database is down
+      try {
+        await prisma.setting.upsert({
+          where: { key },
+          update: { value },
+          create: { key, value },
+        });
+      } catch (dbErr: any) {
+        console.warn(`⚠️ [updateSetting warning] Failed to save setting "${key}" to DB, saved to local fallback file instead:`, dbErr.message);
+      }
+
       res.json({ success: true });
     } catch (err: any) {
       console.error("[Save Token Error]:", err);

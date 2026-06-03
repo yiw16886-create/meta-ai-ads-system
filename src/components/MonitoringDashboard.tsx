@@ -3,6 +3,7 @@ import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { RefreshCcw, AlertTriangle, Info, Search, ArrowUpDown, ArrowUp, ArrowDown, Wand2, X } from "lucide-react";
 import { toast } from "sonner";
+import { safeToastError } from "./Dashboard";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -54,7 +55,7 @@ export function MonitoringDashboard() {
         toast.success("同步完成: 已获取 Meta 实时数据并更新数据库");
       }
     } catch (e: any) {
-      toast.error(e.response?.data?.error || "数据拉取失败");
+      safeToastError(e, "数据拉取失败");
     } finally {
       setLoading(false);
     }

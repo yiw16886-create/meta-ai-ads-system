@@ -63,6 +63,42 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Calendar } from "@/components/ui/calendar";
 import { cn } from "@/lib/utils";
 
+export const safeExtractErrorMessage = (err: any, fallback: string): string => {
+  if (!err) return fallback;
+  if (typeof err === "string") return err;
+  
+  const responseData = err.response?.data;
+  let errMsg = "";
+  if (responseData) {
+    if (typeof responseData.error === "string") {
+      errMsg = responseData.error;
+    } else if (responseData.error && typeof responseData.error === "object") {
+      errMsg = responseData.error.message || responseData.error.details || JSON.stringify(responseData.error);
+    } else if (typeof responseData === "string") {
+      errMsg = responseData;
+    }
+  }
+  
+  if (!errMsg && err.message) {
+    errMsg = err.message;
+  }
+  if (!errMsg && typeof err === "object") {
+    errMsg = err.message || err.details || JSON.stringify(err);
+  }
+  
+  const final = errMsg || fallback;
+  return typeof final === "object" ? JSON.stringify(final) : String(final);
+};
+
+export const safeToastError = (err: any, fallback: string, options?: any) => {
+  const msg = safeExtractErrorMessage(err, fallback);
+  if (options) {
+    toast.error(msg, options);
+  } else {
+    toast.error(msg);
+  }
+};
+
 export interface AdInsight {
   id: number;
   accountId: string;
@@ -215,8 +251,8 @@ export function Dashboard({ onLogout }: DashboardProps) {
       setStoreSummaries(summariesRes.data || {});
     } catch (error: any) {
       console.error("fetchData error:", error.response?.data || error);
-      const errMsg = error.response?.data?.error;
-      toast.error(typeof errMsg === 'string' ? errMsg : "数据加载失败，请检查数据库连接");
+      const errMsg = safeExtractErrorMessage(error, "数据加载失败，请检查数据库连接");
+      toast.error(errMsg);
       setData([]);
     } finally {
       setLoading(false);
@@ -1631,7 +1667,7 @@ function UsersManagementPage() {
         }
       }
     } catch (err: any) {
-      toast.error(err.response?.data?.error || "邀请失败");
+      safeToastError(err, "邀请失败");
     } finally {
       setInviting(false);
     }
@@ -1679,11 +1715,11 @@ function UsersManagementPage() {
         setDeleteConfirm({ open: false, id: null, email: "", isPending: false });
         fetchUsers();
       } else {
-        toast.error(res.data.error || "操作被拒绝", { id: toastId });
+        safeToastError(res.data.error, "操作被拒绝", { id: toastId });
       }
     } catch (err: any) {
       console.error("[Dashboard] ❌ Deletion failed:", err);
-      toast.error(err.response?.data?.error || "操作失败", { id: toastId });
+      safeToastError(err, "操作失败", { id: toastId });
     } finally {
       setIsDeleting(false);
     }
@@ -2049,10 +2085,12 @@ function SettingsPage() {
         setShowDbModal(false);
         fetchDbStatus();
       } else {
-        toast.error("修复失败：" + (res.data.error || "未知异常"));
+        const errDetail = safeExtractErrorMessage(res.data.error, "未知异常");
+        toast.error("修复失败：" + errDetail);
       }
     } catch (err: any) {
-      toast.error("初始化执行错误：" + (err.response?.data?.error || err.message));
+      const errDetail = safeExtractErrorMessage(err, err.message);
+      toast.error("初始化执行错误：" + errDetail);
     } finally {
       setLoadingDbPush(false);
     }
@@ -2098,7 +2136,7 @@ function SettingsPage() {
       toast.success("AI 助手配置已保存");
       setShowAIModal(false);
     } catch (err: any) {
-      toast.error(err.response?.data?.error || "保存 AI 配置失败");
+      safeToastError(err, "保存 AI 配置失败");
     } finally {
       setLoadingAI(false);
     }
@@ -2111,7 +2149,7 @@ function SettingsPage() {
       toast.success("Meta API 配置已保存");
       setShowMetaModal(false);
     } catch (err: any) {
-      toast.error(err.response?.data?.error || "保存 Meta API 配置失败");
+      safeToastError(err, "保存 Meta API 配置失败");
     } finally {
       setLoadingMeta(false);
     }

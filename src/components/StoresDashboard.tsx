@@ -5,6 +5,7 @@ import { Plus, Store, Link as LinkIcon, Trash2, RefreshCw } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { safeToastError } from "./Dashboard";
 
 export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endDate?: Date }) {
   const navigate = useNavigate();
@@ -78,7 +79,7 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
       fetchStoresAndMappings();
     } catch (err: any) {
       console.error(err);
-      toast.error(err.response?.data?.error || "删除店铺失败，请重试");
+      safeToastError(err, "删除店铺失败，请重试");
     } finally {
       setDeleteLoading(false);
     }
