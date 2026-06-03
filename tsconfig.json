@@ -26,6 +26,7 @@
   "exclude": [
     "repo",
     "node_modules",
-    "dist"
+    "dist",
+    "app"
   ]
 }

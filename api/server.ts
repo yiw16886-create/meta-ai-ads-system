@@ -1,0 +1,369 @@
+import express, { Request, Response, NextFunction } from "express";
+import cron from "node-cron";
+import path from "path";
+import axios from "axios";
+import prisma from "./db.js";
+import { subDays, format } from "date-fns";
+import bcrypt from "bcryptjs";
+import nodemailer from "nodemailer";
+import crypto from "crypto";
+import { GoogleGenAI } from "@google/genai";
+import { getProductIntelligence } from "./services/product-intelligence.service.js";
+import { getCreativeIntelligence } from "./services/creative-intelligence.service.js";
+import { syncStoreData } from "./services/store-sync.service.js";
+import { syncMetaHierarchy, ensureAdAccounts } from "./services/meta-hierarchy-sync.service.js";
+import { aggregateData } from "./services/aggregation.service.js";
+import { attributePurchases } from "./services/attribution.service.js";
+import { getMetaToken, evaluateActivityStatus, syncSingleAccountAdData } from "./utils.js";
+
+
+
+
+
+// -- SCHEDULE JOBS --
+// Run daily aggregation at 2:00 AM
+cron.schedule("0 2 * * *", async () => {
+  console.log("Triggering daily aggregation job via cron...");
+  try {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const dateStr = yesterday.toISOString().split("T")[0];
+    await attributePurchases();
+    await aggregateData(dateStr, dateStr);
+  } catch (error) {
+    console.error("Daily aggregation job failed:", error);
+  }
+});
+
+// Log available models on startup to debug the "undefined" error
+
+// Log available models on startup to debug the "undefined" error
+async function checkDb() {
+  try {
+    await prisma.$connect();
+    console.log("📡 Connecting to Neon PostgreSQL database...");
+    const models = Object.keys(prisma).filter(
+      (key) => !key.startsWith("$") && !key.startsWith("_"),
+    );
+    console.log("📦 Available models in Prisma:", models);
+    if (!models.includes("adInsight")) {
+      console.error(
+        "⚠️ CRITICAL: 'adInsight' model not found on prisma object!",
+      );
+    }
+
+    // Ensure we have at least one admin user
+    const defaultEmail = process.env.VITE_ADMIN_ID || "admin";
+    const defaultPass = process.env.VITE_ADMIN_SECRET || "123456";
+    const hashedPass = await bcrypt.hash(defaultPass, 10);
+
+    await prisma.user.upsert({
+      where: { email: defaultEmail },
+      update: { role: "admin", password: hashedPass }, 
+      create: {
+        email: defaultEmail,
+        password: hashedPass,
+        role: "admin"
+      }
+    });
+    console.log(`👤 Verified/Restored admin user: ${defaultEmail}`);
+
+    const users = await prisma.user.findMany();
+    
+    // Migration: hash any plain-text passwords
+    for (const user of users) {
+      if (user.password && !user.password.startsWith("$2a$") && !user.password.startsWith("$2b$")) {
+        console.log(`🔐 Hashing plain-text password for user: ${user.email}`);
+        const hashed = await bcrypt.hash(user.password, 10);
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { password: hashed }
+        });
+      }
+    }
+
+  } catch (err) {
+    console.error("❌ Database connection failed:", err);
+  }
+}
+
+// Global error handlers to prevent silent crashes
+process.on("uncaughtException", (err) => {
+  console.error("🔥 UNCAUGHT EXCEPTION:", err);
+});
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("🔥 UNHANDLED REJECTION:", reason);
+});
+
+const app = express();
+app.use(express.json());
+
+import routes from "./routes/index.js";
+app.use("/api", routes);
+export default app;
+const PORT = 3000;
+
+// API route to check if server is running
+app.get("/api/health", (req, res) => {
+  const dbUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+  res.json({
+    status: "ok",
+    env: process.env.NODE_ENV,
+    vercel: !!process.env.VERCEL,
+    dbUrlPrefix: dbUrl ? dbUrl.substring(0, 20) + "..." : null,
+  });
+});
+
+// Helper to get Meta Access Token from DB or Env
+
+
+// Helper to extract Meta Error Message
+
+
+// 1. 获取所有广告账户
+
+
+// 2. 同步数据
+
+
+// 2a. 同步店铺和订单数据 (和 Meta 广告同步分开)
+
+
+// 2b. 同步创意和素材数据 (和 Meta 广告及店铺同步分开)
+
+
+// --- CACHING LOGIC ---
+const cache = new Map<string, { data: any; expiry: number }>();
+const CACHE_TTL = 10 * 60 * 1000; // Increased to 10 minutes
+
+
+
+
+
+// [NEW API] 单个账户层级详情 (Campaigns, AdSets, Ads)
+
+
+// GET /api/accounts/:accountId/audience-insights
+
+
+// [NEW API] 获取账户层级结构 (用于级联过滤)
+
+
+// 3. 获取本地数据
+
+
+// 4. 系统设置
+
+
+
+
+// --- NEW ACCOUNT MAPPING ENDPOINTS ---
+
+// 获取数据库中已保存的账户映射
+
+
+// 批量保存/更新账户映射
+
+
+// 获取本地已有的去重账户列表 (用于设置页面分配 - 只看近期 30 天内有消耗且未禁用的账户)
+
+
+// --- NEW ACCOUNT MONITORING ENDPOINTS ---
+
+// GET /api/monitoring/accounts - Detailed monitoring for all accounts
+
+
+// POST /api/monitoring/accounts/:accountId/reset - Reset spend cap
+
+
+// --- END MONITORING ENDPOINTS ---
+
+
+
+
+// --- User Authentication and Management ---
+
+// ---后台静默同步逻辑 (Background Auto-Sync) ---
+async function runBackgroundSync() {
+  const syncId = format(new Date(), "HH:mm:ss");
+  console.log(`[后台同步 | ${syncId}] 🔄 开始后台静默同步: 过去 30 天数据...`);
+
+  try {
+    const token = await getMetaToken();
+    if (!token) {
+      console.log(`[后台同步 | ${syncId}] ⚠️ 同步中止: Meta Token 未配置`);
+      return;
+    }
+
+    const startDate = format(subDays(new Date(), 30), "yyyy-MM-dd");
+    const endDate = format(new Date(), "yyyy-MM-dd");
+
+    // 1. 获取账户列表
+    let accountsRes;
+    try {
+      accountsRes = await axios.get(
+        `https://graph.facebook.com/v19.0/me/adaccounts`,
+        {
+          params: {
+            fields: "name,account_id,account_status",
+            limit: 1000,
+            access_token: token,
+          },
+        },
+      );
+    } catch (apiErr: any) {
+      const status = apiErr.response?.status;
+      if (status >= 500) {
+        console.warn(
+          `[后台同步 | ${syncId}] ⚠️ Meta API 服务端暂时不可用 (${status})，将在下次同步重试。`,
+        );
+        return;
+      }
+      throw apiErr;
+    }
+
+    // 获取系统的停用账户 ID 且常态过滤 dormant/限制账户
+    const disabledAccounts = await prisma.metaAccountMonitoring.findMany({
+      where: { status: 2 },
+      select: { accountId: true }
+    });
+    const disabledAccountIds = disabledAccounts.map(a => a.accountId);
+    const DORMANT_ACCOUNT_IDS = ["26380439", "341040412"];
+
+    // 只排除 dormant 的广告账户
+    const accounts = (accountsRes.data.data || []).filter(
+      (a: any) => {
+        const rawId = (a.account_id || a.id || "").replace("act_", "");
+        const isDormant = DORMANT_ACCOUNT_IDS.includes(rawId);
+        return !isDormant;
+      }
+    );
+    const totalAccounts = accounts.length;
+    console.log(
+      `[后台同步 | ${syncId}] 📂 发现 ${totalAccounts} 个有效广告账户，开始分批抓取...`,
+    );
+
+    // 2. 分批处理 (5个一组)
+    const chunkSize = 5;
+    let syncedCount = 0;
+
+    for (let i = 0; i < accounts.length; i += chunkSize) {
+      const chunk = accounts.slice(i, i + chunkSize);
+
+      await Promise.all(
+        chunk.map(async (account: any) => {
+          const accountId = account.account_id || account.id;
+          try {
+            const activityStatus = await evaluateActivityStatus(accountId, account.account_status, token);
+            if (activityStatus <= 4) {
+               await syncSingleAccountAdData(accountId, startDate, endDate, token);
+            } else {
+               console.log(`[后台同步 | ${syncId}] ⏭️ 跳过账户 ${accountId} (活跃度: ${activityStatus})`);
+            }
+            syncedCount++;
+            if (syncedCount % 10 === 0 || syncedCount === totalAccounts) {
+              console.log(
+                `[后台同步 | ${syncId}] 📈 进度: ${syncedCount}/${totalAccounts} 账户`,
+              );
+            }
+          } catch (err: any) {
+            const status = err.response?.status;
+            const metaError = err.response?.data?.error?.message || err.message;
+            if (status === 403) {
+              console.warn(
+                `[后台同步 | ${syncId}] ⚠️ 账户 ${accountId} 无权限或被限制访问 (403): ${metaError}`,
+              );
+            } else if (status >= 500) {
+              console.warn(
+                `[后台同步 | ${syncId}] ⚠️ Meta 账户 ${accountId} 服务端不可用 (${status}): ${metaError}`,
+              );
+            } else {
+              console.error(
+                `[后台同步 | ${syncId}] ❌ 账户 ${accountId} 同步失败:`,
+                metaError,
+              );
+            }
+          }
+        }),
+      );
+
+      // 强制延迟 2 秒防止限流
+      if (i + chunkSize < accounts.length) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    }
+
+    console.log(
+      `[后台同步 | ${syncId}] ✅ 同步完成! 共处理 ${totalAccounts} 个账户`,
+    );
+  } catch (error: any) {
+    const status = error.response?.status;
+    const metaError = error.response?.data?.error?.message || error.message;
+    console.error(
+      `[后台同步 | ${syncId}] 🚨 全局同步异常 (${status || "Unknown"}):`,
+      metaError,
+    );
+  }
+}
+
+app.use("/api", (req, res) => {
+  res
+    .status(404)
+    .json({ error: `API Route not found: ${req.method} ${req.url}` });
+});
+
+async function startServer() {
+  try {
+    console.log("🚀 Starting server startup sequence...");
+    // Run database connection check asynchronously so the Express server binds and serves the app instantly
+    checkDb().catch((err) => {
+      console.error("❌ Asynchronous database check failed:", err);
+    });
+    if (process.env.NODE_ENV !== "production") {
+      console.log("🛠️ Initializing Vite development middleware...");
+      const { createServer: createViteServer } = await import("vite");
+      const vite = await createViteServer({
+        server: {
+          middlewareMode: true,
+          host: "0.0.0.0",
+          allowedHosts: true,
+        },
+        appType: "spa",
+      });
+      app.use(vite.middlewares);
+    } else {
+      // Production mode - only serve static files if NOT on Vercel
+      if (!process.env.VERCEL) {
+        const distPath = path.join(process.cwd(), "dist");
+        app.use(express.static(distPath));
+        app.get("*", (req, res) => {
+          res.sendFile(path.join(distPath, "index.html"));
+        });
+      }
+    }
+
+    // Only listen if not running as a Vercel Serverless Function
+    if (!process.env.VERCEL) {
+      app.listen(PORT, "0.0.0.0", () => {
+        console.log(`✅ Server is ready on port ${PORT}`);
+        console.log(`📍 Binding: http://0.0.0.0:${PORT}`);
+
+        // --- 启动后台静默同步 ---
+        // runBackgroundSync(); // Disable immediate run to prevent startup crashes
+        setInterval(runBackgroundSync, 2 * 60 * 60 * 1000); // 之后每 2 小时执行一次
+        console.log("[后台任务] 已开启自动同步，频率: 每 2 小时");
+      });
+    }
+  } catch (error) {
+    console.error("❌ Critical error during server startup:", error);
+    if (!process.env.VERCEL) process.exit(1);
+  }
+}
+
+if (!process.env.VERCEL) {
+  startServer();
+} else {
+  // Always trigger DB connection check on startup in serverless mode too
+  checkDb();
+}

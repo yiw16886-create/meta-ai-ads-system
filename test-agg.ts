@@ -1,6 +1,6 @@
-import { aggregateData } from "./api_server/services/aggregation.service";
-import { attributePurchases } from "./api_server/services/attribution-calc.service";
-import prisma from "./api_server/db";
+import { aggregateData } from "./api/services/aggregation.service.js";
+import { attributePurchases } from "./api/services/attribution.service.js";
+import prisma from "./api/db.js";
 
 async function main() {
   const startDate = '2024-04-01';

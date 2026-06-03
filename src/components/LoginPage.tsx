@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
-import { safeToastError } from "./Dashboard";
 
 interface LoginPageProps {
   onLogin: () => void;
@@ -34,12 +33,12 @@ export function LoginPage({ onLogin }: LoginPageProps) {
             setIsRegistering(true);
             toast.success("邀请验证成功，请设置登录密码");
           } else {
-            safeToastError(res.data.error, "邀请链接无效");
+            toast.error(res.data.error || "邀请链接无效");
             setToken(null);
           }
         } catch (e) {
           console.error("Token verification error:", e);
-          safeToastError(e, "验证邀请码失败，请联系管理员");
+          toast.error("验证邀请码失败，请联系管理员");
           setToken(null);
         }
       };
@@ -59,7 +58,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
         onLogin();
       }
     } catch (error: any) {
-      safeToastError(error, "账号或密码错误");
+      toast.error(error.response?.data?.error || "账号或密码错误");
     } finally {
       setLoading(false);
     }
@@ -97,7 +96,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
         }, 1000);
       }
     } catch (error: any) {
-      safeToastError(error, "账户激活失败");
+      toast.error(error.response?.data?.error || "账户激活失败");
     } finally {
       setLoading(false);
     }
