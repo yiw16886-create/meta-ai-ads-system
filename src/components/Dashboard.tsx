@@ -2013,12 +2013,27 @@ function SettingsPage() {
     setLoadingDbStatus(true);
     try {
       const res = await axios.get("/api/settings/db-diagnose");
-      setDbStatus(res.data);
+      const data = res.data;
+      if (data && typeof data === "object") {
+        const errVal = data.error;
+        const sanitizedErr = typeof errVal === "object" ? (errVal?.message || JSON.stringify(errVal)) : (errVal ? String(errVal) : "");
+        setDbStatus({
+          connected: !!data.connected,
+          provider: data.provider,
+          hasTables: !!data.hasTables,
+          details: data.details,
+          error: sanitizedErr || undefined
+        });
+      } else {
+        setDbStatus(data);
+      }
     } catch (err: any) {
+      const errMsg = err.response?.data?.error || err.message || "无法访问数据库诊断接口";
+      const errorString = typeof errMsg === "object" ? (errMsg.message || JSON.stringify(errMsg)) : String(errMsg);
       setDbStatus({
         connected: false,
         hasTables: false,
-        error: err.response?.data?.error || err.message || "无法访问数据库诊断接口"
+        error: errorString
       });
     } finally {
       setLoadingDbStatus(false);
