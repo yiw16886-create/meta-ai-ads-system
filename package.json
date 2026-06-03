@@ -4,10 +4,10 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx api/server.ts",
+    "dev": "tsx api_server/server.ts",
     "build": "prisma generate && prisma db push --accept-data-loss && vite build && ls -R dist",
     "postinstall": "prisma generate",
-    "start": "tsx api/server.ts",
+    "start": "tsx api_server/server.ts",
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit"

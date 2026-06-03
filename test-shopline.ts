@@ -1,5 +1,5 @@
-import prisma from './api/db.js';
-import { syncStoreData } from './api/services/store-sync.service.js';
+import prisma from './api_server/db.js';
+import { syncStoreData } from './api_server/services/store-sync.service.js';
 
 async function main() {
   console.log("Triggering Store Data Sync...");
