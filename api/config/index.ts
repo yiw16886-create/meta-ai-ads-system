@@ -1,17 +1,29 @@
+const databaseUrl = process.env.DATABASE_URL || "";
+const postgresUrl = process.env.POSTGRES_URL || "";
+const finalDbUrl = databaseUrl ? databaseUrl : postgresUrl;
+
+const adminId = process.env.VITE_ADMIN_ID || "admin";
+const adminSecret = process.env.VITE_ADMIN_SECRET || "123456";
+
+const nodeEnv = process.env.NODE_ENV || "development";
+const isProduction = nodeEnv === "production";
+const isVercel = process.env.VERCEL ? true : false;
+const appUrl = process.env.APP_URL || "";
+
 export const config = {
   port: 3000,
   db: {
-    url: process.env.DATABASE_URL || process.env.POSTGRES_URL || "",
+    url: finalDbUrl,
   },
   admin: {
-    id: process.env.VITE_ADMIN_ID || "admin",
-    secret: process.env.VITE_ADMIN_SECRET || "123456",
+    id: adminId,
+    secret: adminSecret,
   },
   env: {
-    nodeEnv: process.env.NODE_ENV || "development",
-    isProduction: process.env.NODE_ENV === "production",
-    isVercel: !!process.env.VERCEL,
-    appUrl: process.env.APP_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : ""),
+    nodeEnv: nodeEnv,
+    isProduction: isProduction,
+    isVercel: isVercel,
+    appUrl: appUrl,
   },
   meta: {
     apiVersion: "v19.0",
