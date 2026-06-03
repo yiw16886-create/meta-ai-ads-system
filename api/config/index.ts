@@ -1,17 +1,19 @@
+import { loadEnv } from "./loader.js";
+
 export const config = {
   port: 3000,
   db: {
-    url: process.env.DATABASE_URL,
+    url: "",
   },
   admin: {
-    id: process.env.VITE_ADMIN_ID,
-    secret: process.env.VITE_ADMIN_SECRET,
+    id: "admin",
+    secret: "123456",
   },
   env: {
-    nodeEnv: process.env.NODE_ENV,
-    isProduction: process.env.NODE_ENV,
-    isVercel: process.env.VERCEL,
-    appUrl: process.env.APP_URL,
+    nodeEnv: "development",
+    isProduction: false,
+    isVercel: false,
+    appUrl: "",
   },
   meta: {
     apiVersion: "v19.0",
@@ -22,5 +24,6 @@ export const config = {
   }
 };
 
-export default config;
+loadEnv(config);
 
+export default config;
