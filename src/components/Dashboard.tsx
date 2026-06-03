@@ -1998,10 +1998,50 @@ function SettingsPage() {
   const [loadingMeta, setLoadingMeta] = useState(false);
   const [fetching, setFetching] = useState(true);
 
+  // Database states
+  const [dbStatus, setDbStatus] = useState<{ connected: boolean; provider?: string; hasTables: boolean; details?: string; error?: string } | null>(null);
+  const [loadingDbStatus, setLoadingDbStatus] = useState(false);
+  const [loadingDbPush, setLoadingDbPush] = useState(false);
+  const [showDbModal, setShowDbModal] = useState(false);
+
   // Modal states
   const [showAIModal, setShowAIModal] = useState(false);
   const [showMetaModal, setShowMetaModal] = useState(false);
   const [showMetaHelpModal, setShowMetaHelpModal] = useState(false);
+
+  const fetchDbStatus = async () => {
+    setLoadingDbStatus(true);
+    try {
+      const res = await axios.get("/api/settings/db-diagnose");
+      setDbStatus(res.data);
+    } catch (err: any) {
+      setDbStatus({
+        connected: false,
+        hasTables: false,
+        error: err.response?.data?.error || err.message || "无法访问数据库诊断接口"
+      });
+    } finally {
+      setLoadingDbStatus(false);
+    }
+  };
+
+  const handleDbPush = async () => {
+    setLoadingDbPush(true);
+    try {
+      const res = await axios.post("/api/settings/db-push");
+      if (res.data.success) {
+        toast.success("数据库结构初始化/修复成功！已自动加载表关系。");
+        setShowDbModal(false);
+        fetchDbStatus();
+      } else {
+        toast.error("修复失败：" + (res.data.error || "未知异常"));
+      }
+    } catch (err: any) {
+      toast.error("初始化执行错误：" + (err.response?.data?.error || err.message));
+    } finally {
+      setLoadingDbPush(false);
+    }
+  };
 
   useEffect(() => {
     const init = async () => {
@@ -2023,6 +2063,7 @@ function SettingsPage() {
       }
     };
     init();
+    fetchDbStatus();
   }, []);
 
   const handleSaveSetting = async (key: string, value: string) => {
@@ -2228,6 +2269,119 @@ function SettingsPage() {
                   className="w-[88px] h-9 text-[13px] font-normal bg-[#3B82F6] hover:bg-blue-600 text-white shadow-sm"
                 >
                   {loadingMeta ? <RefreshCcw className="w-4 h-4 animate-spin" /> : "确定"}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+        </div>
+
+        {/* Database Config & Health Card */}
+        <div className="bg-white rounded-lg shadow-[0_2px_8px_rgba(0,0,0,0.04)] border border-gray-100 p-8 flex flex-col items-center text-center">
+          <div className="w-16 h-16 rounded-full bg-emerald-50 flex items-center justify-center mb-4 text-emerald-600">
+            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </div>
+          <h3 className="text-[15px] font-medium text-gray-800 mb-2">数据库连接与管理</h3>
+          
+          <div className="text-[12px] text-gray-500 mb-6 flex-1 space-y-2 w-full">
+            <div>
+              检测环境数据库状态与表结构，并在缺失时自助一键重建初始化。
+            </div>
+            {dbStatus ? (
+              <div className="mt-2 inline-flex flex-col items-center gap-1.5 p-2 bg-slate-50 rounded border border-gray-100 w-full">
+                <div className="flex items-center gap-1.5">
+                  <span className={`w-2 h-2 rounded-full ${dbStatus.connected ? "bg-emerald-500" : "bg-red-500"}`} />
+                  <span className="text-[11px] font-medium text-gray-700">
+                    {dbStatus.connected ? "已连接" : "连接失败"}
+                  </span>
+                  {dbStatus.connected && (
+                    <span className={`px-1 rounded text-[10px] ${dbStatus.hasTables ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>
+                      {dbStatus.hasTables ? "表结构正常" : "部分数据表缺失"}
+                    </span>
+                  )}
+                </div>
+                {dbStatus.provider && (
+                  <span className="text-[10px] text-gray-400 font-mono block max-w-full truncate" title={dbStatus.provider}>
+                    {dbStatus.provider}
+                  </span>
+                )}
+                {dbStatus.error && (
+                  <span className="text-[10px] text-red-500 max-w-full truncate block" title={dbStatus.error}>
+                    异常: {dbStatus.error}
+                  </span>
+                )}
+              </div>
+            ) : (
+              <span className="text-[11px] text-gray-400 block my-2">正在诊断连接状态...</span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3">
+            <Button 
+              className={`w-[130px] font-normal rounded-[4px] h-9 ${
+                dbStatus?.hasTables ? "bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200" : "bg-emerald-600 hover:bg-emerald-700 text-white"
+              }`}
+              onClick={() => setShowDbModal(true)}
+            >
+              修复 / 重构表
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              className="w-9 h-9 border-gray-200 text-gray-500 hover:text-emerald-600 hover:border-emerald-200 shadow-sm shrink-0 rounded-[4px] flex items-center justify-center p-0"
+              disabled={loadingDbStatus}
+              onClick={fetchDbStatus}
+              title="重新检测状态"
+            >
+              <RefreshCcw className={`w-4 h-4 ${loadingDbStatus ? "animate-spin" : ""}`} />
+            </Button>
+          </div>
+
+          {/* Database Setup/Fix Modal */}
+          <Dialog open={showDbModal} onOpenChange={setShowDbModal}>
+            <DialogContent className="max-w-[480px] p-0 overflow-hidden bg-white rounded-lg border-0 shadow-2xl">
+              <div className="flex justify-between items-center px-6 py-4 border-b border-gray-100">
+                <h3 className="text-[16px] font-medium text-gray-800">数据库结构强力修复与重组</h3>
+                <button onClick={() => setShowDbModal(false)} className="text-gray-400 hover:text-gray-600 transition-colors">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="px-8 py-6 space-y-4">
+                <div className="p-4 bg-amber-50/50 rounded border border-amber-100 text-amber-800 text-left">
+                  <h4 className="font-semibold text-[13px] mb-1 flex items-center gap-1.5">
+                    ⚠️ 风险与建议说明
+                  </h4>
+                  <p className="text-[12px] leading-relaxed">
+                    本操作将远程连接您配置的 PostgreSQL 数据库，在云端直接调用并执行最新的表关系同步命令（<code className="bg-amber-100 px-1 py-0.5 rounded text-red-700">prisma db push</code>），这通常用于修复<strong>由于数据库迁移、切换、或云端初始化后“表或关系不存在”</strong>导致的 500 服务器错误。
+                  </p>
+                </div>
+                <div className="space-y-2 text-left">
+                  <h4 className="font-medium text-[13px] text-gray-700">确认修复的环境参数：</h4>
+                  <ul className="text-[12px] text-gray-500 space-y-1 list-disc pl-4 font-mono">
+                    <li>连接模式：Cloud Server Programmatic Mode</li>
+                    <li>目标命令：npx prisma db push --accept-data-loss</li>
+                    <li>关联字段：DATABASE_URL / POSTGRES_URL</li>
+                  </ul>
+                </div>
+              </div>
+              <div className="flex justify-center gap-3 px-6 py-5 border-t border-gray-100 bg-gray-50/50">
+                <Button 
+                  variant="outline" 
+                  onClick={() => setShowDbModal(false)}
+                  className="w-[88px] h-9 text-[13px] font-normal border-gray-200 shadow-sm"
+                >
+                  取消
+                </Button>
+                <Button 
+                  onClick={handleDbPush}
+                  disabled={loadingDbPush}
+                  className="w-[140px] h-9 text-[13px] font-normal bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm flex items-center justify-center gap-1.5"
+                >
+                  {loadingDbPush ? (
+                    <>
+                      <RefreshCcw className="w-4 h-4 animate-spin" />
+                      正在执行中...
+                    </>
+                  ) : "立刻修复并推送"}
                 </Button>
               </div>
             </DialogContent>

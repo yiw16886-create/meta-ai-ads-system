@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx api_server/server.ts",
-    "build": "prisma generate && prisma db push --accept-data-loss && vite build && ls -R dist",
+    "build": "prisma generate && (export DATABASE_URL=\"${DATABASE_URL:-$POSTGRES_URL}\"; [ -n \"$DATABASE_URL\" ] && prisma db push --accept-data-loss || echo '⚠️ Skipping database schema push on build') && vite build && ls -R dist",
     "postinstall": "prisma generate",
     "start": "tsx api_server/server.ts",
     "preview": "vite preview",
