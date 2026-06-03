@@ -1,4 +1,4 @@
-import prisma from './server/db.js';
+import prisma from './server/db';
 
 async function main() {
   const accts = ['26380439', '341040412'];
