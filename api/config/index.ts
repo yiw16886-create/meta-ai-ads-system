@@ -1,5 +1,5 @@
 export const config = {
-  port: parseInt(process.env.PORT || "3000", 10),
+  port: 3000,
   db: {
     url: process.env.DATABASE_URL || process.env.POSTGRES_URL || "",
   },
