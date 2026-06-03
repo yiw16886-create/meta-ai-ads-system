@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import axios from "axios";
 import prisma from "../db";
 import { getMetaToken, extractMetaError } from "../utils";
+import config from "../config/index";
 
 export class MonitoringController {
   static async listMonitoringAccounts(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -18,7 +19,8 @@ export class MonitoringController {
       
       if (refresh === "true" || cachedAccounts.length === 0) {
         console.log("🔄 Refreshing Meta Account Monitoring data from API...");
-        const accountsRes = await axios.get(`https://graph.facebook.com/v22.0/me/adaccounts`, {
+        const apiVersion = config.meta.apiVersion || "v19.0";
+        const accountsRes = await axios.get(`https://graph.facebook.com/${apiVersion}/me/adaccounts`, {
           params: {
             fields: "name,account_id,account_status,spend_cap,amount_spent,balance,currency,timezone_name",
             limit: 500,
@@ -181,7 +183,8 @@ export class MonitoringController {
       }
 
       // Meta API: POST act_{id}?spend_cap_action=reset
-      await axios.post(`https://graph.facebook.com/v22.0/act_${accountId}`, null, {
+      const apiVersion = config.meta.apiVersion || "v19.0";
+      await axios.post(`https://graph.facebook.com/${apiVersion}/act_${accountId}`, null, {
         params: {
           spend_cap_action: "reset",
           access_token: token

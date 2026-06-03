@@ -37,6 +37,33 @@ export function MonitoringDashboard() {
     key: 'amountSpent', 
     direction: 'desc' 
   });
+  const [resettingIds, setResettingIds] = useState<string[]>([]);
+
+  const handleResetLimit = async (accountId: string) => {
+    try {
+      const confirmReset = window.confirm(`确认重置账户 act_${accountId} 的每日限额 (解限) 吗？`);
+      if (!confirmReset) return;
+
+      setResettingIds(prev => [...prev, accountId]);
+      toast.info(`正在为账户 ${accountId} 执行解限并重置限额...`);
+
+      const res = await axios.post(`/api/monitoring/accounts/${accountId}/reset`);
+      if (res.data.success) {
+        toast.success(`解限成功: ${res.data.message || "限额重置成功！"}`);
+        await fetchData(true);
+      } else {
+        toast.error(`解限失败: ${res.data.error || "接口返回失败"}`);
+      }
+    } catch (err: any) {
+      if (err.response?.data?.error) {
+        toast.error(`解限失败: ${err.response.data.error}`);
+      } else {
+        toast.error(`解限失败: ${err.message || "请求发送失败"}`);
+      }
+    } finally {
+      setResettingIds(prev => prev.filter(id => id !== accountId));
+    }
+  };
 
   const fetchData = async (forceRefresh = false) => {
     setLoading(true);
@@ -281,6 +308,7 @@ export function MonitoringDashboard() {
                   可用天数 <SortIcon columnKey="estimatedDays" />
                 </div>
               </TableHead>
+              <TableHead className="font-bold text-gray-500 h-14 text-center pr-6">操作</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -368,12 +396,23 @@ export function MonitoringDashboard() {
                         {acc.estimatedDays === Infinity ? "无限制" : (acc.estimatedDays === null ? "--" : `${acc.estimatedDays} 天`)}
                       </div>
                     </TableCell>
+                    <TableCell className="py-4 text-center pr-6" onClick={(e) => e.stopPropagation()}>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={resettingIds.includes(acc.accountId)}
+                        onClick={() => handleResetLimit(acc.accountId)}
+                        className="text-xs bg-white text-blue-600 hover:text-blue-700 hover:bg-blue-50 border-blue-200 font-black active:scale-95 transition-all shadow-sm h-8"
+                      >
+                        {resettingIds.includes(acc.accountId) ? "正在解限..." : "一键解限 (重置)"}
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 );
               })
             ) : (
               <TableRow>
-                <TableCell colSpan={7} className="h-40 text-center">
+                <TableCell colSpan={9} className="h-40 text-center">
                   <div className="flex flex-col items-center justify-center text-gray-400">
                     <AlertTriangle className="w-8 h-8 mb-2 opacity-20" />
                     <p className="text-sm font-bold">没有匹配的广告账户</p>
