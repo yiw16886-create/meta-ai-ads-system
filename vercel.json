@@ -1,15 +1,14 @@
 {
   "version": 2,
-  "builds": [
+  "framework": "vite",
+  "rewrites": [
     {
-      "src": "api_server/server.ts",
-      "use": "@vercel/node"
-    }
-  ],
-  "routes": [
+      "source": "/api/(.*)",
+      "destination": "/api/index.ts"
+    },
     {
-      "src": "/api/(.*)",
-      "dest": "api_server/server.ts"
+      "source": "/(.*)",
+      "destination": "/index.html"
     }
   ]
 }
