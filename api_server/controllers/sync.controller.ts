@@ -5,7 +5,7 @@ import { format, subDays } from "date-fns";
 import { getMetaToken, extractMetaError, evaluateActivityStatus, syncSingleAccountAdData } from "../utils";
 import { ensureAdAccounts, syncMetaHierarchy } from "../services/meta-hierarchy-sync.service";
 import { syncStoreData } from "../services/store-sync.service";
-import { attributePurchases } from "../services/attribution-calc.service";
+import { attributePurchases } from '../services/attribution-calc.service';
 import { aggregateData } from "../services/aggregation.service";
 
 export class SyncController {
