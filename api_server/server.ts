@@ -1,10 +1,10 @@
 import express from "express";
 import path from "path";
-import config from "./config/index.js";
-import routes from "./routes/index.js";
-import { errorMiddleware, loggerMiddleware } from "./middlewares/index.js";
-import { checkDb } from "./config/db-init.js";
-import { initCronJobs } from "./jobs/sync.job.js";
+import config from "./config/index";
+import routes from "./routes/index";
+import { errorMiddleware, loggerMiddleware } from "./middlewares/index";
+import { checkDb } from "./config/db-init";
+import { initCronJobs } from "./jobs/sync.job";
 
 const app = express();
 
