@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "tsx api_server/server.ts",
-    "build": "prisma generate && (export DATABASE_URL=\"${DATABASE_URL:-$POSTGRES_URL}\"; [ -n \"$DATABASE_URL\" ] && prisma db push --accept-data-loss || echo '⚠️ Skipping database schema push on build') && vite build && ls -R dist",
+    "build:backend": "npx esbuild api_server/server.ts --bundle --platform=node --target=node18 --format=esm --external:@prisma/client --external:.prisma/client --outfile=api/index.js",
+    "build:frontend": "vite build",
+    "build": "prisma generate && (export DATABASE_URL=\"${DATABASE_URL:-$POSTGRES_URL}\"; [ -n \"$DATABASE_URL\" ] && prisma db push --accept-data-loss || echo '⚠️ Skipping database schema push on build') && npm run build:backend && npm run build:frontend && ls -R dist",
     "postinstall": "prisma generate",
     "start": "tsx api_server/server.ts",
     "preview": "vite preview",

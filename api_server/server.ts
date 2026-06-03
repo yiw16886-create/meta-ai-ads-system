@@ -50,7 +50,7 @@ if (!config.env.isVercel) {
   configureFrontend().then(() => {
     app.listen(config.port, "0.0.0.0", () => {
       console.log(`✅ Server is ready on port ${config.port}`);
-      // Asynchronous non-blocking handshake
+      // Asynchronous non-blocking database check & sync config
       checkDb().catch((err) => console.error("❌ DB Check failed:", err));
       initCronJobs();
     });
