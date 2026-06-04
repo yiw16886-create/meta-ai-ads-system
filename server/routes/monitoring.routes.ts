@@ -1,7 +1,7 @@
 import { Router } from "express";
-import prisma from "../../db/index.js";
+import prisma from "../../db/index";
 import axios from "axios";
-import { getMetaToken, extractMetaError, evaluateActivityStatus } from "../utils.js";
+import { getMetaToken, extractMetaError, evaluateActivityStatus } from "../utils";
 
 const router = Router();
 

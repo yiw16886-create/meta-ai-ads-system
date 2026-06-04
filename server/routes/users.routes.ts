@@ -1,7 +1,7 @@
 import { Router } from "express";
 import crypto from "crypto";
-import prisma from "../../db/index.js";
-import { sendInvitationEmail } from "../services/email.service.js";
+import prisma from "../../db/index";
+import { sendInvitationEmail } from "../services/email.service";
 
 const router = Router();
 

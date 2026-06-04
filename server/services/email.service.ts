@@ -1,5 +1,5 @@
 import nodemailer from "nodemailer";
-import prisma from "../../db/index.js";
+import prisma from "../../db/index";
 
 async function getSmtpConfig() {
   const settings = await prisma.setting.findMany();

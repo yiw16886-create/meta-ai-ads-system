@@ -2,19 +2,19 @@ import express, { Request, Response, NextFunction } from "express";
 import cron from "node-cron";
 import path from "path";
 import axios from "axios";
-import prisma from "../db/index.js";
+import prisma from "../db/index";
 import { subDays, format } from "date-fns";
 import bcrypt from "bcryptjs";
 import nodemailer from "nodemailer";
 import crypto from "crypto";
 import { GoogleGenAI } from "@google/genai";
-import { getProductIntelligence } from "./services/product-intelligence.service.js";
-import { getCreativeIntelligence } from "./services/creative-intelligence.service.js";
-import { syncStoreData } from "./services/store-sync.service.js";
-import { syncMetaHierarchy, ensureAdAccounts } from "./services/meta-hierarchy-sync.service.js";
-import { aggregateData } from "./services/aggregation.service.js";
-import { attributePurchases } from "./services/attribution.service.js";
-import { getMetaToken, evaluateActivityStatus, syncSingleAccountAdData } from "./utils.js";
+import { getProductIntelligence } from "./services/product-intelligence.service";
+import { getCreativeIntelligence } from "./services/creative-intelligence.service";
+import { syncStoreData } from "./services/store-sync.service";
+import { syncMetaHierarchy, ensureAdAccounts } from "./services/meta-hierarchy-sync.service";
+import { aggregateData } from "./services/aggregation.service";
+import { attributePurchases } from "./services/attribution.service";
+import { getMetaToken, evaluateActivityStatus, syncSingleAccountAdData } from "./utils";
 
 
 
@@ -99,7 +99,7 @@ process.on("unhandledRejection", (reason, promise) => {
 const app = express();
 app.use(express.json());
 
-import routes from "./routes/index.js";
+import routes from "./routes/index";
 app.use("/api", routes);
 export default app;
 const PORT = 3000;

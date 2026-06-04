@@ -1,4 +1,4 @@
-import prisma from '../../db/index.js';
+import prisma from '../../db/index';
 
 export async function getProductIntelligence(startDate: string, endDate: string) {
   // Logic to fetch from ProductPerformanceDaily (aggregating across dates)

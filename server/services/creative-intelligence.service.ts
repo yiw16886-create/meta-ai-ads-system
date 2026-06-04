@@ -1,4 +1,4 @@
-import prisma from '../../db/index.js';
+import prisma from '../../db/index';
 
 export async function getCreativeIntelligence(startDate: string, endDate: string, storeIdOrName?: string) {
   let targetStoreIds: number[] = [];

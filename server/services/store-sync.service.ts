@@ -1,5 +1,5 @@
 import axios from "axios";
-import prisma from "../../db/index.js";
+import prisma from "../../db/index";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 

@@ -1,14 +1,14 @@
 import { Router } from "express";
-import authRoutes from "./auth.routes.js";
-import usersRoutes from "./users.routes.js";
-import storesRoutes from "./stores.routes.js";
-import intelligenceRoutes from "./intelligence.routes.js";
-import accountsRoutes from "./accounts.routes.js";
-import syncRoutes from "./sync.routes.js";
-import insightsRoutes from "./insights.routes.js";
-import settingsRoutes from "./settings.routes.js";
-import mappingsRoutes from "./mappings.routes.js";
-import monitoringRoutes from "./monitoring.routes.js";
+import authRoutes from "./auth.routes";
+import usersRoutes from "./users.routes";
+import storesRoutes from "./stores.routes";
+import intelligenceRoutes from "./intelligence.routes";
+import accountsRoutes from "./accounts.routes";
+import syncRoutes from "./sync.routes";
+import insightsRoutes from "./insights.routes";
+import settingsRoutes from "./settings.routes";
+import mappingsRoutes from "./mappings.routes";
+import monitoringRoutes from "./monitoring.routes";
 
 const routes = Router();
 
