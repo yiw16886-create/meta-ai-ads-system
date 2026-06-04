@@ -124,8 +124,8 @@ router.post("/sync", async (req, res) => {
     try {
       console.log("Triggering Ensure AdAccounts...");
       await ensureAdAccounts(token);
-      console.log("Triggering Meta Hierarchy Sync (excluding creatives)...");
-      await syncMetaHierarchy(token, { syncCreative: false });
+      console.log("Triggering Meta Hierarchy Sync (including creatives)...");
+      await syncMetaHierarchy(token, { syncCreative: true });
       console.log("Triggering Attribution and Aggregation (excluding products & creatives)...");
       await attributePurchases();
       await aggregateData(startDate, endDate, {

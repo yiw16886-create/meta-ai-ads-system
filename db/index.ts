@@ -1,7 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 
 const prismaClientSingleton = () => {
-  const url = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+  const url = process.env.DATABASE_URL || process.env.POSTGRES_PRISMA_URL || process.env.POSTGRES_URL;
   if (!url) {
     console.warn("⚠️ DATABASE_URL is not set. Prisma might fail.");
     return new PrismaClient();

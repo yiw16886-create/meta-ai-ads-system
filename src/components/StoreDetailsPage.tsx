@@ -13,6 +13,10 @@ import {
   Settings,
   Store,
   Key,
+  Loader2,
+  CheckCircle2,
+  AlertTriangle,
+  ShoppingBag,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -44,8 +48,10 @@ export function StoreDetailsPage({
   const { storeId } = useParams();
   const [storeData, setStoreData] = useState<any>({
     name: "",
+    platform: "shopline",
     shopline_token: "",
     shopify_token: "",
+    shoplazza_token: "",
     domain: "",
     timezone: "GMT+8",
     visitors: 0,
@@ -54,6 +60,7 @@ export function StoreDetailsPage({
   const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
   const [accountsInsights, setAccountsInsights] = useState<any[]>([]);
+  const [allMappings, setAllMappings] = useState<any[]>([]);
   const [loadingInsights, setLoadingInsights] = useState(false);
   const [dashboardSummary, setDashboardSummary] = useState<any>({
     totalSpend: 0,
@@ -100,6 +107,44 @@ export function StoreDetailsPage({
     }
     return sortableItems;
   }, [accountsInsights, sortConfig]);
+
+  const [shoplazzaProducts, setShoplazzaProducts] = useState<any[]>([]);
+  const [testingShoplazza, setTestingShoplazza] = useState(false);
+  const [shoplazzaTestError, setShoplazzaTestError] = useState<string | null>(null);
+  const [showShoplazzaModal, setShowShoplazzaModal] = useState(false);
+
+  const handleTestShoplazza = async (domainToTest: string, tokenToTest: string) => {
+    if (!domainToTest || !tokenToTest) {
+      toast.error("错误：请先输入店铺域名及授权秘钥 (Access-Token)！");
+      return;
+    }
+    setTestingShoplazza(true);
+    setShoplazzaTestError(null);
+    setShoplazzaProducts([]);
+    setShowShoplazzaModal(true);
+
+    try {
+      const response = await axios.post("/api/stores/test-shoplazza-connection", {
+        domain: domainToTest,
+        token: tokenToTest
+      });
+      if (response.data.success) {
+        setShoplazzaProducts(response.data.products || []);
+        toast.success(response.data.message || "店匠 API 实时数据验证成功！");
+      } else {
+        setShoplazzaTestError(response.data.error || "后端接口返回响应失败");
+        toast.error("店匠 API 测试失败");
+      }
+    } catch (err: any) {
+      console.error(err);
+      const errMsg = err.response?.data?.error || err.message || "网络请求失败";
+      const errDetails = err.response?.data?.details || "请确保填写的二级域名正确（例如: store-name.shoplazza.com）且授权秘钥具有查询 Products 权限。";
+      setShoplazzaTestError(`${errMsg} - ${errDetails}`);
+      toast.error("店匠 API 连接/身份校验失败");
+    } finally {
+      setTestingShoplazza(false);
+    }
+  };
 
   useEffect(() => {
     if (!isNew && storeId) {
@@ -169,6 +214,7 @@ export function StoreDetailsPage({
 
       const data = insightsRes.data || [];
       const mappingList = mappingsRes.data || [];
+      setAllMappings(mappingList);
       const mappingMap: Record<string, any> = {};
       mappingList.forEach((m: any) => {
         const key = m.accountId.replace("act_", "").trim().toLowerCase();
@@ -234,7 +280,7 @@ export function StoreDetailsPage({
           visitors: 0,
           conversion_rate: 0,
         };
-      });
+      }).filter((item: any) => item.spend > 0 || item.impressions > 0 || item.clicks > 0 || item.purchases > 0 || item.purchaseValue > 0);
 
       setAccountsInsights(finalInsights);
     } catch (err: any) {
@@ -272,19 +318,25 @@ export function StoreDetailsPage({
   const handleAddAccount = async (
     fb_account_id: string,
     fb_account_name: string,
-    fb_access_token: string,
+    mapped_store_name: string,
   ) => {
     if (!fb_account_id) return toast.error("请输入广告账户 ID");
     try {
-      await axios.post(`/api/stores/${storeId}/accounts`, {
-        fb_account_id,
-        fb_account_name,
-        fb_access_token,
+      await axios.post("/api/mappings/batch", {
+        mappings: [
+          {
+            accountId: fb_account_id,
+            accountName: fb_account_name || fb_account_id,
+            store: mapped_store_name,
+            project: "",
+            owner: ""
+          }
+        ]
       });
-      toast.success("广告账户已添加");
+      toast.success("广告账户已添加并且成功分配至对应店铺");
       fetchStore().then(name => name && fetchInsights(name));
     } catch (err) {
-      toast.error("保存账户失败");
+      toast.error("保存账户分配与映射失败");
     }
   };
 
@@ -358,13 +410,57 @@ export function StoreDetailsPage({
                     </DialogTitle>
                   </DialogHeader>
                   <div className="space-y-6">
+                    {/* Platform Selection */}
+                    <div className="space-y-2 pb-4 border-b">
+                      <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                        <span>店铺所属平台 (Store Platform)</span>
+                        <span className="text-xs text-slate-400 font-normal">切换店铺所处的独立站平台</span>
+                      </label>
+                      <div className="grid grid-cols-3 gap-3">
+                        {[
+                          { id: "shopline", name: "SHOPLINE", color: "bg-[#0051ff]", desc: "应用 SHOPLINE 订单拉取", icon: "💎" },
+                          { id: "shoplazza", name: "Shoplazza (店匠)", color: "bg-[#10b981]", desc: "应用 Shoplazza 订单拉取", icon: "🌐" },
+                          { id: "shopify", name: "Shopify", color: "bg-[#95bf47]", desc: "应用 Shopify 订单拉取", icon: "🛍️" },
+                        ].map((p) => {
+                          const isSelected = (storeData.platform || "shopline") === p.id;
+                          return (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => setStoreData({ ...storeData, platform: p.id })}
+                              className={cn(
+                                "flex items-start gap-2.5 p-2.5 rounded-xl border text-left transition-all cursor-pointer relative overflow-hidden",
+                                isSelected
+                                  ? "border-meta-blue bg-blue-50/40 ring-2 ring-meta-blue/20"
+                                  : "border-slate-200 hover:border-slate-300 hover:bg-slate-50/50 bg-white"
+                              )}
+                            >
+                              <span className="text-xl mt-0.5">{p.icon}</span>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5 mb-0.5">
+                                  <span className={cn("w-1.5 h-1.5 rounded-full", p.color)} />
+                                  <span className="text-xs font-bold text-slate-800">{p.name}</span>
+                                </div>
+                                <span className="text-[10px] text-slate-400 leading-tight block truncate">{p.desc}</span>
+                              </div>
+                              {isSelected && (
+                                <div className="absolute top-1 right-1 w-2.5 h-2.5 bg-meta-blue rounded-full flex items-center justify-center">
+                                  <span className="text-[7px] text-white">✓</span>
+                                </div>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       {/* Left Column */}
                       <div className="space-y-4">
                         <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider border-b pb-1">基本属性</h4>
                         
                         <div className="space-y-1.5">
-                          <label className="text-xs font-bold text-slate-700">店铺名称</label>
+                           <label className="text-xs font-bold text-slate-700">店铺名称</label>
                           <Input
                             value={storeData.name || ""}
                             onChange={(e) => setStoreData({ ...storeData, name: e.target.value })}
@@ -382,7 +478,7 @@ export function StoreDetailsPage({
                             className="h-9 text-sm border-slate-200 focus:border-meta-blue focus:ring-meta-blue rounded-lg"
                           />
                           <p className="text-[10px] text-slate-400 leading-normal mt-1">
-                            提示: 请使用 SHOPLINE 授予的内部域名以绕过自定义域名的 Cloudflare 防火墙。
+                            提示: 请使用 {storeData.platform === "shoplazza" ? "Shoplazza" : storeData.platform === "shopify" ? "Shopify" : "SHOPLINE"} 内部域名。
                           </p>
                         </div>
 
@@ -409,21 +505,71 @@ export function StoreDetailsPage({
                       <div className="space-y-4">
                         <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider border-b pb-1">API & 其它参数</h4>
 
-                        <div className="space-y-1.5">
-                          <label className="text-xs font-bold text-slate-700">STORE_Token</label>
-                          <Input
-                            type="password"
-                            value={storeData.shopline_token || ""}
-                            onChange={(e) =>
-                              setStoreData({
-                                ...storeData,
-                                shopline_token: e.target.value,
-                              })
-                            }
-                            placeholder="填入秘钥可拉取订单"
-                            className="h-9 text-sm border-slate-200 focus:border-meta-blue focus:ring-meta-blue rounded-lg"
-                          />
-                        </div>
+                        {(!storeData.platform || storeData.platform === "shopline") && (
+                          <div className="space-y-1.5">
+                            <label className="text-xs font-bold text-slate-700">SHOPLINE Access Token</label>
+                            <Input
+                              type="password"
+                              value={storeData.shopline_token || ""}
+                              onChange={(e) =>
+                                setStoreData({
+                                  ...storeData,
+                                  shopline_token: e.target.value,
+                                })
+                              }
+                              placeholder="填入 SHOPLINE Access Token"
+                              className="h-9 text-sm border-slate-200 focus:border-meta-blue focus:ring-meta-blue rounded-lg"
+                            />
+                          </div>
+                        )}
+
+                        {storeData.platform === "shoplazza" && (
+                          <div className="space-y-1.5">
+                            <label className="text-xs font-bold text-slate-700">Shoplazza Access Token</label>
+                            <Input
+                              type="password"
+                              value={storeData.shoplazza_token || ""}
+                              onChange={(e) =>
+                                setStoreData({
+                                  ...storeData,
+                                  shoplazza_token: e.target.value,
+                                })
+                              }
+                              placeholder="填入 Shoplazza Access Token"
+                              className="h-9 text-sm border-slate-200 focus:border-meta-blue focus:ring-meta-blue rounded-lg"
+                            />
+                            {storeData.shoplazza_token && storeData.domain && (
+                              <div className="pt-2">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  onClick={() => handleTestShoplazza(storeData.domain, storeData.shoplazza_token)}
+                                  className="h-8 text-[11px] font-bold border-emerald-200 bg-emerald-50/40 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800 rounded-lg flex items-center gap-1 cursor-pointer w-full"
+                                >
+                                  🔍 验证店匠连接并实时查询商品 (不导入)
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {storeData.platform === "shopify" && (
+                          <div className="space-y-1.5">
+                            <label className="text-xs font-bold text-slate-700">Shopify Access Token</label>
+                            <Input
+                              type="password"
+                              value={storeData.shopify_token || ""}
+                              onChange={(e) =>
+                                setStoreData({
+                                  ...storeData,
+                                  shopify_token: e.target.value,
+                                })
+                              }
+                              placeholder="填入 Shopify Access Token"
+                              className="h-9 text-sm border-slate-200 focus:border-meta-blue focus:ring-meta-blue rounded-lg"
+                            />
+                          </div>
+                        )}
 
                         <div className="space-y-1.5">
                           <label className="text-xs font-bold text-slate-700">预设访客数</label>
@@ -552,6 +698,44 @@ export function StoreDetailsPage({
             </div>
           )}
 
+          {!isNew && storeData.platform === "shoplazza" && (
+            <Card className="bg-white border-[#e5e7eb] shadow-sm mb-6 overflow-hidden">
+              <CardHeader className="bg-emerald-50/20 border-b border-[#e5e7eb] py-4 px-6 flex flex-row items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <span className="p-2 rounded-lg bg-emerald-100/60 text-emerald-600 font-bold text-base">🌐</span>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-800">店匠 (Shoplazza) OpenAPI 集成状态</h3>
+                    <p className="text-[10px] text-slate-500 mt-0.5">当前店铺已配置店匠集成。本工具支持直接通过 Open API 验证与即时查询最新商品（只读，不入库）。</p>
+                  </div>
+                </div>
+                <Button 
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                  onClick={() => handleTestShoplazza(storeData.domain, storeData.shoplazza_token)}
+                  className="text-xs text-emerald-700 hover:text-emerald-800 border-emerald-200 hover:border-emerald-300 bg-emerald-50 hover:bg-emerald-100/70 flex items-center gap-1.5 h-9 rounded-lg cursor-pointer font-semibold shadow-sm transition-all"
+                >
+                  🔍 一键实时查询店匠商品数据
+                </Button>
+              </CardHeader>
+              <CardContent className="p-5 text-xs text-slate-600 space-y-4">
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                  <div className="flex items-center gap-1.5 bg-emerald-50 text-emerald-700 px-2 py-1 rounded-md font-semibold text-[11px] border border-emerald-100">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    已集成 (API Configured)
+                  </div>
+                  <div className="text-slate-400">|</div>
+                  <div className="text-slate-600">
+                    <span className="font-semibold text-slate-700">目标接口:</span> {storeData.domain}/openapi/2022-01
+                  </div>
+                </div>
+                <p className="text-slate-500 leading-relaxed text-[11px] bg-slate-50 p-3 rounded-lg border border-slate-100/80">
+                  💡 <b className="text-slate-700">说明:</b> 已经配置完整的 OpenAPI 2022-01 兼容支持。根据您的指示，此查询工具是<b className="text-emerald-700">完全只读且纯前端展示</b>的。点击上方按钮可直接向店匠拉取前 10 个在售商品数据，用于确认您的 API 权限并直接展示商品的标题、SKU、条码、库存、价格等，<b className="text-red-600">在此不做任何数据导入、覆盖与落库，非常安全。</b>
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
           {isNew && (
             <Card className="shadow-lg border border-slate-100 rounded-xl overflow-hidden bg-white">
               <CardHeader className="bg-slate-50/50 border-b border-slate-100 py-4 px-6">
@@ -566,6 +750,50 @@ export function StoreDetailsPage({
                 </div>
               </CardHeader>
               <CardContent className="p-6 space-y-6">
+                {/* Platform Selection */}
+                <div className="space-y-2 pb-4 border-b">
+                  <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                    <span>店铺平台 (Store Platform)</span>
+                    <span className="text-xs text-slate-400 font-normal">选择你店铺所在的独立站平台以对接对应的订单API接口</span>
+                  </label>
+                  <div className="grid grid-cols-3 gap-4">
+                    {[
+                      { id: "shopline", name: "SHOPLINE", color: "bg-[#0051ff]", desc: "应用 SHOPLINE 订单拉取", icon: "💎" },
+                      { id: "shoplazza", name: "Shoplazza (店匠)", color: "bg-[#10b981]", desc: "应用 Shoplazza 订单拉取", icon: "🌐" },
+                      { id: "shopify", name: "Shopify", color: "bg-[#95bf47]", desc: "应用 Shopify 订单拉取", icon: "🛍️" },
+                    ].map((p) => {
+                      const isSelected = (storeData.platform || "shopline") === p.id;
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => setStoreData({ ...storeData, platform: p.id })}
+                          className={cn(
+                            "flex items-start gap-3 p-3.5 rounded-xl border text-left transition-all cursor-pointer relative overflow-hidden",
+                            isSelected
+                              ? "border-meta-blue bg-blue-50/40 ring-2 ring-meta-blue/20"
+                              : "border-slate-200 hover:border-slate-300 hover:bg-slate-50/50 bg-white"
+                          )}
+                        >
+                          <span className="text-2xl mt-0.5">{p.icon}</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-0.5">
+                              <span className={cn("w-2 h-2 rounded-full", p.color)} />
+                              <span className="text-sm font-bold text-slate-850">{p.name}</span>
+                            </div>
+                            <span className="text-[11px] text-slate-400 leading-tight block">{p.desc}</span>
+                          </div>
+                          {isSelected && (
+                            <div className="absolute top-1 right-1 w-3 h-3 bg-meta-blue rounded-full flex items-center justify-center">
+                              <span className="text-[8px] text-white">✓</span>
+                            </div>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {/* Left Column: Store Details */}
                   <div className="space-y-4">
@@ -628,23 +856,77 @@ export function StoreDetailsPage({
                       <Key className="w-3.5 h-3.5 text-slate-400" /> API授权配置
                     </h3>
 
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
-                        STORE_Token <span className="text-xs text-slate-400 font-normal">(用于增量拉单)</span>
-                      </label>
-                      <Input
-                        type="password"
-                        value={storeData.shopline_token || ""}
-                        onChange={(e) =>
-                          setStoreData({
-                            ...storeData,
-                            shopline_token: e.target.value,
-                          })
-                        }
-                        placeholder="填入 SHOPLINE 秘钥 Access Token"
-                        className="h-10 text-sm border-slate-200 focus:border-meta-blue focus:ring-meta-blue rounded-lg"
-                      />
-                    </div>
+                    {(!storeData.platform || storeData.platform === "shopline") && (
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
+                          SHOPLINE Access Token <span className="text-xs text-slate-400 font-normal">(用于增量拉单)</span>
+                        </label>
+                        <Input
+                          type="password"
+                          value={storeData.shopline_token || ""}
+                          onChange={(e) =>
+                            setStoreData({
+                              ...storeData,
+                              shopline_token: e.target.value,
+                            })
+                          }
+                          placeholder="填入 SHOPLINE 秘钥 Access Token"
+                          className="h-10 text-sm border-slate-200 focus:border-meta-blue focus:ring-meta-blue rounded-lg"
+                        />
+                      </div>
+                    )}
+
+                    {storeData.platform === "shoplazza" && (
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
+                          Shoplazza Access Token <span className="text-xs text-slate-400 font-normal">(用于店匠拉单)</span>
+                        </label>
+                        <Input
+                          type="password"
+                          value={storeData.shoplazza_token || ""}
+                          onChange={(e) =>
+                            setStoreData({
+                              ...storeData,
+                              shoplazza_token: e.target.value,
+                            })
+                          }
+                          placeholder="填入 Shoplazza 秘钥 Access Token"
+                          className="h-10 text-sm border-slate-200 focus:border-meta-blue focus:ring-meta-blue rounded-lg"
+                        />
+                        {storeData.shoplazza_token && storeData.domain && (
+                          <div className="pt-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => handleTestShoplazza(storeData.domain, storeData.shoplazza_token)}
+                              className="h-9 text-xs font-semibold border-emerald-200 bg-emerald-50/40 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800 rounded-lg flex items-center gap-1 cursor-pointer w-full"
+                            >
+                              🔍 立即验证店匠连接并实时查询商品 (不导入数据)
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {storeData.platform === "shopify" && (
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
+                          Shopify Access Token <span className="text-xs text-slate-400 font-normal">(用于 Shopify 拉单)</span>
+                        </label>
+                        <Input
+                          type="password"
+                          value={storeData.shopify_token || ""}
+                          onChange={(e) =>
+                            setStoreData({
+                              ...storeData,
+                              shopify_token: e.target.value,
+                            })
+                          }
+                          placeholder="填入 Shopify Access Token"
+                          className="h-10 text-sm border-slate-200 focus:border-meta-blue focus:ring-meta-blue rounded-lg"
+                        />
+                      </div>
+                    )}
 
                     <div className="space-y-1.5">
                       <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
@@ -690,7 +972,11 @@ export function StoreDetailsPage({
             <Card>
               <CardHeader className="flex flex-row items-center justify-between border-b pb-4">
                 <CardTitle>已关联的广告账户级数据</CardTitle>
-                <AddAccountDialog onAdd={handleAddAccount} />
+                <AddAccountDialog 
+                  onAdd={handleAddAccount} 
+                  storeName={storeData.name || ""} 
+                  mappings={allMappings} 
+                />
               </CardHeader>
               <CardContent className="p-0">
                 {loadingInsights ? (
@@ -905,50 +1191,243 @@ export function StoreDetailsPage({
           )}
         </main>
       </div>
+
+      {/* Shoplazza API Test Real-time Query Modal */}
+      <Dialog open={showShoplazzaModal} onOpenChange={setShowShoplazzaModal}>
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto rounded-xl bg-white p-6 shadow-2xl border border-slate-100">
+          <DialogHeader className="border-b pb-4">
+            <DialogTitle className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-slate-800 font-bold text-base">
+                <span className="p-1.5 rounded-lg bg-emerald-50 text-emerald-600">
+                  <ShoppingBag className="w-5 h-5" />
+                </span>
+                <div>
+                  <span>店匠 (Shoplazza) 商品数据查询结果</span>
+                  <p className="text-[10px] text-slate-400 font-normal mt-0.5">一键实时校验 OpenAPI 连通状态 & 读取商品列表</p>
+                </div>
+              </div>
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="py-4 space-y-4">
+            {testingShoplazza ? (
+              <div className="flex flex-col items-center justify-center py-16 space-y-3">
+                <Loader2 className="w-10 h-10 text-emerald-600 animate-spin" />
+                <div className="text-sm font-medium text-slate-600">正在与店匠 {storeData.domain || "配置的主机"} API 发起握手与查询...</div>
+                <div className="text-xs text-slate-400">正在调用 endpoints: /openapi/2022-01/products.json?limit=10</div>
+              </div>
+            ) : shoplazzaTestError ? (
+              <div className="bg-red-50 border border-red-200 rounded-xl p-5 space-y-3">
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+                  <div>
+                    <h4 className="text-sm font-bold text-red-800">API 连接建立失败</h4>
+                    <p className="text-xs text-red-600 mt-1 leading-relaxed">
+                      系统正在通过后台代理与您的店匠进行安全 HTTP 信令通信，但服务器返回了错误。
+                    </p>
+                    <p className="text-xs text-slate-700 bg-white/70 p-2.5 rounded border border-red-100 mt-3 font-mono break-all leading-relaxed max-h-40 overflow-y-auto">
+                      {shoplazzaTestError}
+                    </p>
+                  </div>
+                </div>
+                <div className="pt-2 border-t border-red-100/50 flex items-center justify-between text-[11px] text-slate-400">
+                  <span>建议排查: 1. 密钥权限是否缺少 Read Products 2. 域名是否因写错格式而返回 404 3. Access Token 拼写是否有误</span>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={() => handleTestShoplazza(storeData.domain, storeData.shoplazza_token)}
+                    className="h-7 text-[10px] border-red-200 text-red-700 hover:bg-red-100/50"
+                  >
+                    重新测试
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4 flex items-start gap-3">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                  <div>
+                    <h4 className="text-sm font-bold text-emerald-800">✅ 接口联通成功 & 权限校验通过</h4>
+                    <p className="text-xs text-emerald-600/90 leading-normal mt-0.5">
+                      店匠 OpenAPI 通道正常开启！已成功抓取最新的在售商品信息预览。
+                    </p>
+                    <p className="text-[10px] text-slate-500 mt-1 leading-normal italic">
+                      ⚠ 请放心：根据您的指令，以下展示的所有商品信息均为临时只读加载展示，此过程零写库、零导入，不会对您当前的系统数据造成任何重载修改。
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 max-h-[50vh] overflow-y-auto p-0.5">
+                  {shoplazzaProducts.length === 0 ? (
+                    <div className="col-span-2 text-center py-10 bg-slate-50 border rounded-xl text-slate-400 text-xs">
+                      连接成功，但是该店匠后台中暂未查询到任何在售商品。
+                    </div>
+                  ) : (
+                    shoplazzaProducts.map((product) => (
+                      <div key={product.id} className="flex gap-3 bg-white p-3 border border-slate-100 rounded-xl hover:shadow-md hover:border-slate-200 transition-all group overflow-hidden">
+                        <div className="w-16 h-16 bg-slate-50 rounded-lg overflow-hidden shrink-0 border border-slate-100 flex items-center justify-center">
+                          {product.image ? (
+                            <img 
+                              src={product.image} 
+                              alt={product.title} 
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform" 
+                              referrerPolicy="no-referrer"
+                            />
+                          ) : (
+                            <span className="text-xs font-semibold text-slate-400">N/A</span>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0 flex flex-col justify-between">
+                          <div>
+                            <div className="flex items-center justify-between gap-1 mb-1">
+                              <span className="text-[10px] font-bold text-slate-400 tracking-wider uppercase bg-slate-100 px-1.5 py-0.5 rounded">
+                                {product.product_type}
+                              </span>
+                              <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">
+                                ${product.price}
+                              </span>
+                            </div>
+                            <h5 className="text-xs font-bold text-slate-800 leading-snug truncate group-hover:text-blue-600 transition-colors" title={product.title}>
+                              {product.title}
+                            </h5>
+                          </div>
+                          
+                          <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1.5 border-t border-slate-50 mt-1 font-sans">
+                            <span className="truncate" title={product.sku}>
+                              SKU: <span className="font-mono text-slate-600 font-medium">{product.sku || "未设置"}</span>
+                            </span>
+                            <span className="shrink-0 font-medium ml-1">
+                              库存: <span className={product.inventory > 0 ? "text-emerald-600 font-bold" : "text-amber-500 font-bold"}>{product.inventory}</span>
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="pt-4 border-t flex justify-end gap-2 bg-slate-50/50 -mx-6 -mb-6 p-4">
+            <Button
+              onClick={() => setShowShoplazzaModal(false)}
+              className="bg-slate-800 hover:bg-slate-700 font-medium text-white px-5 rounded-lg text-xs"
+            >
+              关闭并退出查询
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
 function AddAccountDialog({
   onAdd,
+  storeName,
+  mappings,
 }: {
-  onAdd: (id: string, name: string, token: string) => void;
+  onAdd: (id: string, name: string, store: string) => void;
+  storeName: string;
+  mappings: any[];
 }) {
   const [open, setOpen] = useState(false);
   const [accountId, setAccountId] = useState("");
   const [accountName, setAccountName] = useState("");
-  const [token, setToken] = useState("");
+  const [storeInputName, setStoreInputName] = useState("");
+
+  // Initialize storeInputName when modal opens or storeName changes
+  useEffect(() => {
+    if (open) {
+      setStoreInputName(storeName);
+    }
+  }, [open, storeName]);
+
+  // Dynamically look up current mapping for accountId when user types it
+  const cleanEnteredId = accountId.replace("act_", "").trim().toLowerCase();
+  const existingMapping = useMemo(() => {
+    if (!cleanEnteredId) return null;
+    return mappings.find(m => 
+      m.accountId.replace("act_", "").trim().toLowerCase() === cleanEnteredId
+    );
+  }, [cleanEnteredId, mappings]);
+
+  // When an existing mapping is found, we can optionally prefill or show to user
+  useEffect(() => {
+    if (existingMapping) {
+      if (existingMapping.store) {
+        setStoreInputName(existingMapping.store);
+      }
+      if (existingMapping.accountName && !accountName) {
+        setAccountName(existingMapping.accountName);
+      }
+    }
+  }, [existingMapping]);
 
   const handleSubmit = () => {
-    onAdd(accountId, accountName, token);
+    onAdd(accountId, accountName, storeInputName);
     setOpen(false);
+    setAccountId("");
+    setAccountName("");
   };
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger className={buttonVariants({ size: "sm" })}>
+      <PopoverTrigger className={cn(buttonVariants({ size: "sm" }), "h-9 font-semibold text-xs")}>
         <Plus className="w-4 h-4 mr-1" /> 添加账户
       </PopoverTrigger>
       <PopoverContent className="w-80">
         <div className="space-y-4 pt-2">
-          <h4 className="font-medium text-sm">关联 Meta 广告账户</h4>
-          <Input
-            placeholder="账户 ID (如: act_12345)"
-            value={accountId}
-            onChange={(e) => setAccountId(e.target.value)}
-          />
-          <Input
-            placeholder="账户名称 (可选)"
-            value={accountName}
-            onChange={(e) => setAccountName(e.target.value)}
-          />
-          <Input
-            placeholder="Meta Access Token (可选，留空使用全局配置)"
-            type="password"
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-          />
-          <Button onClick={handleSubmit} className="w-full">
+          <h4 className="font-semibold text-sm text-slate-800">关联 Meta 广告账户</h4>
+          
+          <div className="space-y-1">
+            <label className="text-xs text-slate-500 font-medium">账户 ID (如: act_12345)</label>
+            <Input
+              placeholder="账户 ID"
+              value={accountId}
+              onChange={(e) => setAccountId(e.target.value)}
+            />
+          </div>
+
+          {existingMapping && (
+            <div className="bg-blue-50 border border-blue-100 p-2.5 rounded-lg text-xs space-y-1">
+              <div className="text-blue-700 font-semibold flex items-center gap-1">
+                <span>ℹ 账户已有关联映射</span>
+              </div>
+              <div className="text-slate-600">
+                账户名称: <span className="font-medium">{existingMapping.accountName || "未知"}</span>
+              </div>
+              <div className="text-slate-600">
+                关联店铺: <span className="text-blue-600 font-bold">{existingMapping.store || "未分配"}</span>
+              </div>
+              {existingMapping.owner && (
+                <div className="text-slate-600">
+                  负责人: <span className="font-medium">{existingMapping.owner}</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="space-y-1">
+            <label className="text-xs text-slate-500 font-medium">账户名称 (可选)</label>
+            <Input
+              placeholder="账户名称"
+              value={accountName}
+              onChange={(e) => setAccountName(e.target.value)}
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs text-slate-500 font-medium">关联店铺名称 (手动填入)</label>
+            <Input
+              placeholder="请输入关联店铺名称"
+              value={storeInputName}
+              onChange={(e) => setStoreInputName(e.target.value)}
+            />
+          </div>
+
+          <Button onClick={handleSubmit} className="w-full bg-meta-blue hover:bg-meta-blue/90 text-white font-semibold">
             确认添加
           </Button>
         </div>

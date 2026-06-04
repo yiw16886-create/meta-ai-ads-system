@@ -5,6 +5,7 @@ import { Plus, Store, Link as LinkIcon, Trash2, RefreshCw } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
 export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endDate?: Date }) {
   const navigate = useNavigate();
@@ -140,7 +141,19 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
                       <Store className="h-5 w-5" />
                     </div>
                     <div>
-                      <h3 className="font-bold text-gray-900">{store.name}</h3>
+                      <h3 className="font-bold text-gray-900 flex items-center gap-1.5 flex-wrap">
+                        {store.name}
+                        {store.platform && (
+                          <span className={cn(
+                            "text-[9px] px-1.5 py-0.5 rounded-full font-semibold tracking-wide uppercase inline-block",
+                            store.platform === "shopline" && "bg-blue-50 text-blue-600 border border-blue-200",
+                            store.platform === "shoplazza" && "bg-emerald-50 text-emerald-600 border border-emerald-200",
+                            store.platform === "shopify" && "bg-green-50 text-green-600 border border-green-200",
+                          )}>
+                            {store.platform === "shoplazza" ? "店匠" : store.platform}
+                          </span>
+                        )}
+                      </h3>
                       <p className="text-xs text-gray-500">
                         {store.domain || "未配置域名"}
                       </p>

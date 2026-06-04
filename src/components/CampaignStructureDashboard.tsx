@@ -124,7 +124,8 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
           frequency: parseFloat(insights.frequency || "0"),
           checkoutRate: clicks > 0 ? (initiateCheckouts / clicks) * 100 : 0,
           campaign_id: item.campaign_id,
-          adset_id: item.adset_id
+          adset_id: item.adset_id,
+          creative_id: item.creative_id || item.creative?.id || null
         }
       });
 
@@ -405,6 +406,9 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
                         />
                       </TableHead>
                       <TableHead className="font-semibold h-11 sticky left-[50px] z-30 bg-[#f9fafb] shadow-[1px_0_0_#e5e7eb] whitespace-nowrap cursor-pointer hover:bg-gray-100 text-[#374151]" onClick={() => requestSort('name')}>名称</TableHead>
+                      {activeTab === "ads" && (
+                        <TableHead className="font-semibold whitespace-nowrap text-[#374151] hover:bg-gray-100 cursor-pointer" onClick={() => requestSort('creative_id')}>广告创意 ID</TableHead>
+                      )}
                       <TableHead className="font-semibold whitespace-nowrap cursor-pointer hover:bg-gray-100 text-[#374151]" onClick={() => requestSort('status')}>投放状态</TableHead>
                       <TableHead className="font-semibold text-right whitespace-nowrap cursor-pointer hover:bg-gray-100 text-[#374151]" onClick={() => requestSort('spend')}>花费金额</TableHead>
                       <TableHead className="font-semibold text-right whitespace-nowrap cursor-pointer hover:bg-gray-100 text-[#374151]" onClick={() => requestSort('purchaseValue')}>转化价值</TableHead>
@@ -431,7 +435,7 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
                   <TableBody>
                     {sortedData.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={23} className="text-center py-10 text-gray-400">
+                        <TableCell colSpan={activeTab === "ads" ? 24 : 23} className="text-center py-10 text-gray-400">
                           暂无数据或无花费记录
                         </TableCell>
                       </TableRow>
@@ -464,6 +468,17 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
                               {row.name}
                             </span>
                           </TableCell>
+                          {activeTab === "ads" && (
+                            <TableCell className="text-left font-mono text-xs whitespace-nowrap text-gray-500">
+                              {row.creative_id ? (
+                                <span className="bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded-md font-semibold select-all text-slate-700" title="鼠标双击复制">
+                                  {row.creative_id}
+                                </span>
+                              ) : (
+                                <span className="text-gray-300 italic">未绑定创意</span>
+                              )}
+                            </TableCell>
+                          )}
                           <TableCell>
                             {row.status === "ACTIVE" ? (
                               <span className="px-2 py-0.5 rounded-sm bg-green-100 text-green-700 text-[11px] font-bold">

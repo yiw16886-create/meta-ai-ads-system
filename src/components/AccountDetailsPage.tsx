@@ -784,6 +784,13 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                         />
                       </div>
                     </th>
+                    {level === "ads" && (
+                      <th
+                        className="h-10 px-2 align-middle whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0 border-r border-b border-[#e5e7eb] text-[#4b5563] font-bold px-4 text-[12px] text-left"
+                      >
+                        广告创意 ID
+                      </th>
+                    )}
                     <th
                       className="h-10 px-2 align-middle whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:bg-gray-100 border-r border-b border-[#e5e7eb] text-[#4b5563] font-bold px-4 text-[12px]"
                       onClick={() => requestSort("effective_status")}
@@ -937,7 +944,7 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                   {loading ? (
                     <tr className="border-b transition-colors">
                       <td
-                        colSpan={20}
+                        colSpan={level === "ads" ? 21 : 20}
                         className="p-2 align-middle h-32 text-center text-gray-500"
                       >
                         <RefreshCcw className="w-6 h-6 animate-spin mx-auto text-meta-blue mb-2" />
@@ -947,7 +954,7 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                   ) : sortedData.length === 0 ? (
                     <tr className="border-b transition-colors">
                       <td
-                        colSpan={20}
+                        colSpan={level === "ads" ? 21 : 20}
                         className="p-2 align-middle h-32 text-center text-gray-500"
                       >
                         暂无数据
@@ -999,6 +1006,17 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
                             {item.name}
                           </div>
                         </td>
+                        {level === "ads" && (
+                          <td className="p-2 align-middle whitespace-nowrap text-left font-mono text-xs border-r border-[#e5e7eb] px-4 text-gray-500">
+                            {item.creative?.id || item.creative_id || (item.creative ? item.creative.id : null) ? (
+                              <span className="bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded-md font-semibold text-slate-700 select-all" title="双击全选复制">
+                                {item.creative?.id || item.creative_id || item.creative?.id}
+                              </span>
+                            ) : (
+                              <span className="text-gray-300 italic">未绑定创意</span>
+                            )}
+                          </td>
+                        )}
                         <td className="p-2 align-middle whitespace-nowrap text-gray-600 border-r border-[#e5e7eb] px-4">
                           <span
                             className={cn(

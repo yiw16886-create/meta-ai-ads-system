@@ -67,7 +67,7 @@ router.get("/:accountId/details", async (req, res) => {
 
     let extraFields = "";
     if (targetLevel === "adsets") extraFields = ",campaign_id";
-    if (targetLevel === "ads") extraFields = ",campaign_id,adset_id";
+    if (targetLevel === "ads") extraFields = ",campaign_id,adset_id,creative";
 
     // 我们在此请求该层级下的所有项目，包含 insights。
     const fields = `name,status,effective_status,daily_budget,lifetime_budget${extraFields},insights.time_range(${timeRange}){${insightsFields}}`;
@@ -144,7 +144,7 @@ router.get("/:accountId/hierarchy", async (req, res) => {
     const token = await getMetaToken();
     if (!token) return res.status(400).json({ error: "Meta Token 未配置" });
 
-    // 一次性获取三种资源，去掉 insights 以提升速度
+        // 一次性获取三种资源，去掉 insights 以提升速度
     const [campaignsRes, adsetsRes, adsRes] = await Promise.all([
       axios.get(`https://graph.facebook.com/v19.0/act_${cleanAccId}/campaigns`, {
         params: { fields: "id,name", limit: 500, access_token: token },
@@ -158,7 +158,7 @@ router.get("/:accountId/hierarchy", async (req, res) => {
       }),
       axios.get(`https://graph.facebook.com/v19.0/act_${cleanAccId}/ads`, {
         params: {
-          fields: "id,name,adset_id,campaign_id",
+          fields: "id,name,adset_id,campaign_id,creative",
           limit: 500,
           access_token: token,
         },
@@ -169,7 +169,13 @@ router.get("/:accountId/hierarchy", async (req, res) => {
       success: true,
       campaigns: campaignsRes.data.data || [],
       adSets: adsetsRes.data.data || [],
-      ads: adsRes.data.data || [],
+      ads: (adsRes.data.data || []).map((ad: any) => ({
+        id: ad.id,
+        name: ad.name,
+        adset_id: ad.adset_id,
+        campaign_id: ad.campaign_id,
+        creative_id: ad.creative?.id || null,
+      })),
     };
     setCachedData(cacheKey, result);
 
@@ -202,10 +208,11 @@ router.get("/:accountId/hierarchy", async (req, res) => {
       // Upsert ads
       for (const a of adsList) {
         if (!a.id) continue;
+        const cId = a.creative?.id || null;
         await prisma.ad.upsert({
           where: { id: a.id },
-          update: { name: a.name, adsetId: a.adset_id || "", campaignId: a.campaign_id || "", accountId: cleanAccId },
-          create: { id: a.id, name: a.name, adsetId: a.adset_id || "", campaignId: a.campaign_id || "", accountId: cleanAccId }
+          update: { name: a.name, adsetId: a.adset_id || "", campaignId: a.campaign_id || "", accountId: cleanAccId, creativeId: cId },
+          create: { id: a.id, name: a.name, adsetId: a.adset_id || "", campaignId: a.campaign_id || "", accountId: cleanAccId, creativeId: cId }
         });
       }
     } catch (saveErr: any) {

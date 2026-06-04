@@ -6,6 +6,7 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  relationMode = "prisma"
 }
 
 model AdInsight {
@@ -70,8 +71,10 @@ model Invitation {
 model Store {
   id              Int              @id @default(autoincrement())
   name            String           @unique
+  platform        String?          @default("shopline")
   shopline_token  String?
   shopify_token   String?
+  shoplazza_token String?
   domain          String?
   visitors        Int              @default(0)
   timezone        String?          @default("GMT+8")
@@ -103,6 +106,7 @@ model AdAccount {
   store           Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+  campaigns       Campaign[]
 }
 
 model Product {
@@ -132,6 +136,8 @@ model Campaign {
   name        String
   region      String?
   status      String?
+  adAccount   AdAccount? @relation(fields: [accountId], references: [fb_account_id], onDelete: Cascade)
+  adSets      AdSet[]
 }
 
 model AdSet {
@@ -139,6 +145,8 @@ model AdSet {
   campaignId  String
   accountId   String
   name        String
+  campaign    Campaign? @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  ads         Ad[]
 }
 
 model Ad {
@@ -148,6 +156,8 @@ model Ad {
   accountId   String
   name        String
   creativeId  String?
+  adSet       AdSet?    @relation(fields: [adsetId], references: [id], onDelete: Cascade)
+  creative    AdCreative? @relation(fields: [creativeId], references: [creativeId], onDelete: SetNull)
 }
 
 model AdCreative {
@@ -162,6 +172,7 @@ model AdCreative {
   type         String?
   hookRate     Float                      @default(0)
   performances CreativePerformanceDaily[]
+  ads          Ad[]
 }
 
 model ProductPerformanceDaily {
