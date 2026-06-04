@@ -1,4 +1,6 @@
 console.log("⚡ Vercel Function: api/index.ts initialized");
-import app from '../server/server.ts'; 
+
+// @ts-ignore - The dist folder is generated at build time
+import app from '../dist/server.cjs';
 
 export default app;

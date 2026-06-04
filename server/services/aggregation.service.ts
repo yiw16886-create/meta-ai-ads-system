@@ -1,4 +1,4 @@
-import prisma from '../../db/index';
+import prisma from '../../db/index.js';
 
 export async function aggregateData(startDate: string, endDate: string, options: { syncProduct?: boolean; syncCreative?: boolean } = { syncProduct: false, syncCreative: false }) {
   try {

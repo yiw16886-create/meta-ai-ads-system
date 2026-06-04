@@ -1,9 +1,9 @@
 import { Router } from "express";
-import prisma from "../../db/index";
-import { getProductIntelligence } from "../services/product-intelligence.service";
-import { getCreativeIntelligence } from "../services/creative-intelligence.service";
-import { attributePurchases } from "../services/attribution.service";
-import { aggregateData } from "../services/aggregation.service";
+import prisma from "../../db/index.js";
+import { getProductIntelligence } from "../services/product-intelligence.service.js";
+import { getCreativeIntelligence } from "../services/creative-intelligence.service.js";
+import { attributePurchases } from "../services/attribution.service.js";
+import { aggregateData } from "../services/aggregation.service.js";
 
 const router = Router();
 
