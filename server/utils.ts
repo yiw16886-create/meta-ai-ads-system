@@ -1,4 +1,4 @@
-import prisma from "./db";
+import prisma from "../db/index.js";
 import axios from "axios";
 import { format, subDays } from "date-fns";
 

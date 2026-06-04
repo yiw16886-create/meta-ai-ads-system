@@ -1,12 +1,12 @@
 import { Router } from "express";
-import prisma from "../db";
+import prisma from "../../db/index.js";
 import axios from "axios";
 import { format, subDays } from "date-fns";
-import { getMetaToken, extractMetaError, evaluateActivityStatus, syncSingleAccountAdData } from "../utils";
-import { ensureAdAccounts, syncMetaHierarchy } from "../services/meta-hierarchy-sync.service";
-import { syncStoreData } from "../services/store-sync.service";
-import { attributePurchases } from "../services/attribution.service";
-import { aggregateData } from "../services/aggregation.service";
+import { getMetaToken, extractMetaError, evaluateActivityStatus, syncSingleAccountAdData } from "../utils.js";
+import { ensureAdAccounts, syncMetaHierarchy } from "../services/meta-hierarchy-sync.service.js";
+import { syncStoreData } from "../services/store-sync.service.js";
+import { attributePurchases } from "../services/attribution.service.js";
+import { aggregateData } from "../services/aggregation.service.js";
 
 const router = Router();
 

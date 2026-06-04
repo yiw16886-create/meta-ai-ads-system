@@ -1,8 +1,8 @@
-import { syncStoreData } from "./server/services/store-sync.service";
-import { syncMetaHierarchy, ensureAdAccounts } from "./server/services/meta-hierarchy-sync.service";
-import { aggregateData } from "./server/services/aggregation.service";
-import { attributePurchases } from "./server/services/attribution.service";
-import prisma from "./server/db";
+import { syncStoreData } from "./server/services/store-sync.service.js";
+import { syncMetaHierarchy, ensureAdAccounts } from "./server/services/meta-hierarchy-sync.service.js";
+import { aggregateData } from "./server/services/aggregation.service.js";
+import { attributePurchases } from "./server/services/attribution.service.js";
+import prisma from "./db/index.js";
 
 async function main() {
   const startDate = '2024-04-01';

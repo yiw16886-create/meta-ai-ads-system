@@ -1,5 +1,5 @@
 import { Router } from "express";
-import prisma from "../db";
+import prisma from "../../db/index.js";
 import axios from "axios";
 
 const router = Router();
