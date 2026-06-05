@@ -1,6 +1,7 @@
 import { Router } from "express";
 import prisma from "../../db/index.js";
 import axios from "axios";
+import { getTimezoneOffsetStr } from "../utils.js";
 
 const router = Router();
 const shoplineCache = new Map<string, { data: any; expiry: number }>();
@@ -64,37 +65,109 @@ router.get("/all-dashboard-summary", async (req, res) => {
     const stores = await prisma.store.findMany();
     const result: Record<string, any> = {};
 
-    let start = new Date();
-    start.setDate(start.getDate() - 30);
-    if (startDate && typeof startDate === "string") {
-      start = new Date(startDate);
-    }
-
-    let end = new Date();
-    if (endDate && typeof endDate === "string") {
-      end = new Date(endDate + 'T23:59:59.999Z');
-    }
-
     for (const store of stores) {
       const isConfigured = !!(store.shopify_token || store.shopline_token || store.shoplazza_token);
       
+      const tzOffset = getTimezoneOffsetStr(store.timezone);
+
+      let storeStart = new Date();
+      storeStart.setDate(storeStart.getDate() - 30);
+      if (startDate && typeof startDate === "string") {
+        storeStart = new Date(`${startDate}T00:00:00${tzOffset}`);
+      }
+
+      let storeEnd = new Date();
+      if (endDate && typeof endDate === "string") {
+        storeEnd = new Date(`${endDate}T23:59:59.999${tzOffset}`);
+      }
+
       const orders = await prisma.order.findMany({
         where: {
           storeId: store.id,
-          createdAt: {
-            gte: start,
-            lte: end,
-          },
+          OR: [
+            {
+              createdAt: {
+                gte: storeStart,
+                lte: storeEnd,
+              },
+            },
+            {
+              refunded: true,
+              OR: [
+                {
+                  refundedAt: {
+                    gte: storeStart,
+                    lte: storeEnd,
+                  },
+                },
+                {
+                  refundedAt: null,
+                  createdAt: {
+                    gte: storeStart,
+                    lte: storeEnd,
+                  },
+                },
+              ],
+            },
+          ],
         },
       });
 
-      const totalSales = orders.reduce((sum, o) => sum + (o.revenue || 0), 0);
-      const ordersCount = orders.length;
+      const ordersForSales = orders.filter(
+        (o) => o.createdAt >= start && o.createdAt <= end
+      );
+
+      const ordersForRefunds = orders.filter(
+        (o) =>
+          o.refunded &&
+          ((o.refundedAt && o.refundedAt >= start && o.refundedAt <= end) ||
+            (!o.refundedAt && o.createdAt >= start && o.createdAt <= end))
+      );
+
+      let totalSales = 0;
+      let ordersCount = 0;
+      const seenOrderIds = new Set();
+      
+      for (const o of ordersForSales) {
+        const uniqueKey = o.orderId || o.createdAt.toISOString();
+        if (!seenOrderIds.has(uniqueKey)) {
+          seenOrderIds.add(uniqueKey);
+          ordersCount++;
+          if (o.orderTotal != null && o.orderTotal > 0) {
+            totalSales += o.orderTotal;
+          } else {
+            totalSales += (o.revenue || 0);
+          }
+        } else {
+          if (o.orderTotal == null || o.orderTotal === 0) {
+            totalSales += (o.revenue || 0);
+          }
+        }
+      }
+
+      let totalRefunded = 0;
+      const seenRefundOrderIds = new Set();
+      for (const o of ordersForRefunds) {
+        const uniqueKey = o.orderId || o.createdAt.toISOString();
+        if (!seenRefundOrderIds.has(uniqueKey)) {
+          seenRefundOrderIds.add(uniqueKey);
+          if (o.orderTotal != null && o.orderTotal > 0) {
+            totalRefunded += o.orderTotal;
+          } else {
+            totalRefunded += (o.revenue || 0);
+          }
+        } else {
+          if (o.orderTotal == null || o.orderTotal === 0) {
+            totalRefunded += (o.revenue || 0);
+          }
+        }
+      }
 
       result[store.name] = {
         isConfigured,
         totalSales,
         ordersCount,
+        totalRefunded,
         error: null,
       };
     }
@@ -130,15 +203,17 @@ router.get("/:id/dashboard-summary", async (req, res) => {
       return res.status(404).json({ error: "Store not found" });
     }
 
+    const tzOffset = getTimezoneOffsetStr(store.timezone);
+
     let start = new Date();
     start.setDate(start.getDate() - 30);
     if (startDate && typeof startDate === "string") {
-      start = new Date(startDate);
+      start = new Date(`${startDate}T00:00:00${tzOffset}`);
     }
 
     let end = new Date();
     if (endDate && typeof endDate === "string") {
-      end = new Date(endDate + 'T23:59:59.999Z');
+      end = new Date(`${endDate}T23:59:59.999${tzOffset}`);
     }
     const startStr = start.toISOString().split("T")[0];
     const endStr = end.toISOString().split("T")[0];
@@ -164,8 +239,27 @@ router.get("/:id/dashboard-summary", async (req, res) => {
       }
     });
 
-    const totalSales = orders.reduce((sum, o) => sum + (o.revenue || 0), 0);
-    const totalOrders = orders.length;
+    let totalSales = 0;
+    let totalOrders = 0;
+    const seenOrderIds = new Set();
+    
+    for (const o of orders) {
+      const uniqueKey = o.orderId || o.createdAt.toISOString();
+      if (!seenOrderIds.has(uniqueKey)) {
+        seenOrderIds.add(uniqueKey);
+        totalOrders++;
+        if (o.orderTotal != null && o.orderTotal > 0) {
+          totalSales += o.orderTotal;
+        } else {
+          totalSales += (o.revenue || 0);
+        }
+      } else {
+        if (o.orderTotal == null || o.orderTotal === 0) {
+          totalSales += (o.revenue || 0);
+        }
+      }
+    }
+
     const totalSpend = adInsights.reduce((sum, ad) => sum + (ad.spend || 0), 0);
     
     // totalROAS
@@ -269,6 +363,228 @@ router.post("/test-shoplazza-connection", async (req, res) => {
       details: `最近一次错误: ${errorDetails}`,
     });
   }
+});
+
+router.post("/test-shopify-connection", async (req, res) => {
+  const { domain, token } = req.body;
+  if (!domain || !token) {
+    return res.status(400).json({ error: "域名 (domain) 和授权秘钥 (Access-Token) 不能为空" });
+  }
+
+  const cleanDomain = domain.replace(/^https?:\/\//, "").replace(/\/$/, "").replace(/\/admin\/.*$/, "");
+  const headers = {
+    'X-Shopify-Access-Token': token,
+    'Content-Type': 'application/json'
+  };
+
+  const url = `https://${cleanDomain}/admin/api/2024-01/products.json?limit=10`;
+  console.log(`[Shopify Test HTTP] Trying URL: ${url}`);
+  try {
+    const response = await axios.get(url, { headers, timeout: 8000 });
+    if (response.status === 200 && response.data) {
+      const products = response.data.products || [];
+      const fetchedList = products.map((p: any) => ({
+        id: p.id,
+        title: p.title,
+        vendor: p.vendor || "",
+        product_type: p.product_type || "Uncategorized",
+        sku: p.variants?.[0]?.sku || "",
+        price: p.variants?.[0]?.price || "0.00",
+        inventory: p.variants?.[0]?.inventory_quantity ?? 0,
+        image: p.images?.[0]?.src || null,
+        created_at: p.created_at,
+      }));
+
+      return res.json({
+        success: true,
+        message: `成功秒速连通 Shopify API 并获取到 ${fetchedList.length} 个最新在售商品！`,
+        products: fetchedList,
+        api_path_used: url,
+      });
+    } else {
+      return res.status(500).json({
+        success: false,
+        error: `请求返回非200状态码: ${response.status}`,
+      });
+    }
+  } catch (error: any) {
+    console.error(`[Shopify Test HTTP Error] Failed:`, error.response?.data || error.message);
+    const errorDetails = error.response?.data 
+      ? typeof error.response.data === "object" ? JSON.stringify(error.response.data) : String(error.response.data)
+      : error.message || "网络请求失败";
+    return res.status(500).json({
+      success: false,
+      error: `无法与 Shopify API 通信，请检查域名和 Access Token。`,
+      details: errorDetails,
+    });
+  }
+});
+
+router.post("/test-shopline-connection", async (req, res) => {
+  const { domain, token } = req.body;
+  if (!domain || !token) {
+    return res.status(400).json({ error: "域名 (domain) 和授权秘钥 (Access-Token) 不能为空" });
+  }
+
+  const cleanDomain = domain.replace(/^https?:\/\//, "").replace(/\/$/, "").replace(/\/admin\/.*$/, "");
+  const headers = {
+    'Authorization': `Bearer ${token}`,
+    'Content-Type': 'application/json'
+  };
+
+  const productCandidates = [
+    `https://${cleanDomain}/admin/openapi/v20240401/products/list.json?limit=10`,
+    `https://${cleanDomain}/admin/openapi/v20240301/products/list.json?limit=10`,
+    `https://${cleanDomain}/admin/openapi/v20230901/products/list.json?limit=10`,
+    `https://${cleanDomain}/admin/openapi/v20230301/products/list.json?limit=10`,
+    `https://${cleanDomain}/admin/openapi/v20240301/products.json?limit=10`,
+    `https://${cleanDomain}/admin/openapi/v20240301/products?limit=10`,
+    `https://${cleanDomain}/admin/openapi/v20230901/products.json?limit=10`,
+    `https://${cleanDomain}/admin/openapi/v20230901/products?limit=10`,
+    `https://${cleanDomain}/admin/openapi/v20230301/products.json?limit=10`,
+    `https://${cleanDomain}/admin/openapi/v20230301/products?limit=10`,
+    `https://${cleanDomain}/admin/openapi/v20220301/products.json?limit=10`,
+    `https://${cleanDomain}/admin/openapi/v20220301/products?limit=10`,
+    `https://${cleanDomain}/admin/openapi/v20201201/products.json?limit=10`,
+    `https://${cleanDomain}/admin/openapi/v20201201/products?limit=10`,
+    `https://${cleanDomain}/admin/openapi/products.json?limit=10`,
+    `https://${cleanDomain}/admin/openapi/products?limit=10`,
+    `https://${cleanDomain}/admin/api/v20200901/products.json?limit=10`,
+    `https://${cleanDomain}/admin/api/products.json?limit=10`
+  ];
+
+  const orderCandidates = [
+    `https://${cleanDomain}/admin/openapi/v20240401/orders/list.json?limit=10`,
+    `https://${cleanDomain}/admin/openapi/v20240301/orders/list.json?limit=10`,
+    `https://${cleanDomain}/admin/openapi/v20230901/orders/list.json?limit=10`,
+    `https://${cleanDomain}/admin/openapi/v20240301/orders.json?limit=10`,
+    `https://${cleanDomain}/admin/openapi/v20240301/orders?limit=10`,
+    `https://${cleanDomain}/admin/openapi/v20230901/orders.json?limit=10`,
+    `https://${cleanDomain}/admin/openapi/v20230901/orders?limit=10`,
+    `https://${cleanDomain}/admin/openapi/v20230301/orders.json?limit=10`,
+    `https://${cleanDomain}/admin/openapi/v20230301/orders?limit=10`,
+    `https://${cleanDomain}/admin/openapi/v20220301/orders.json?limit=10`,
+    `https://${cleanDomain}/admin/openapi/v20220301/orders?limit=10`,
+    `https://${cleanDomain}/admin/openapi/v20201201/orders.json?limit=10`,
+    `https://${cleanDomain}/admin/openapi/v20201201/orders?limit=10`,
+    `https://${cleanDomain}/admin/openapi/orders.json?limit=10`,
+    `https://${cleanDomain}/admin/openapi/orders?limit=10`,
+    `https://${cleanDomain}/admin/api/v20200901/orders.json?limit=10`,
+    `https://${cleanDomain}/admin/api/orders.json?limit=10`
+  ];
+
+  let successfulProductResponse: any = null;
+  let productsUrlUsed = "";
+  let productsError: any = null;
+
+  for (const url of productCandidates) {
+    console.log(`[Shopline Test HTTP] Trying Product Candidate URL: ${url}`);
+    try {
+      const response = await axios.get(url, { headers, timeout: 6000 });
+      if (response.status === 200 && response.data) {
+        successfulProductResponse = response;
+        productsUrlUsed = url;
+        break;
+      }
+    } catch (prodErr: any) {
+      console.warn(`[Shopline Test HTTP] Product candidate failed: ${url}. Status/Error: ${prodErr.response?.status || prodErr.message}`);
+      productsError = prodErr;
+    }
+  }
+
+  if (successfulProductResponse) {
+    const productsData = successfulProductResponse.data;
+    const products = productsData.products || productsData.data?.products || (Array.isArray(productsData.data) ? productsData.data : []) || [];
+    const fetchedList = products.map((p: any) => ({
+      id: p.id,
+      title: p.title || p.name,
+      vendor: p.vendor || "",
+      product_type: p.product_type || "Uncategorized",
+      sku: p.variants?.[0]?.sku || "",
+      price: p.variants?.[0]?.price || "0.00",
+      inventory: p.variants?.[0]?.inventory_quantity ?? 0,
+      image: p.images?.[0]?.src || null,
+      created_at: p.created_at,
+    }));
+
+    const pathOnly = productsUrlUsed.replace(`https://${cleanDomain}`, "");
+    return res.json({
+      success: true,
+      message: `成功连通 SHOPLINE API (通过 Products 接口: "${pathOnly}") 并获取到 ${fetchedList.length} 个最新商品！`,
+      products: fetchedList,
+      api_path_used: productsUrlUsed,
+    });
+  }
+
+  console.log(`[Shopline Test HTTP] All product endpoints failed or returned error. Trying Fallback Orders URLs...`);
+  
+  let successfulOrderResponse: any = null;
+  let ordersUrlUsed = "";
+  let ordersError: any = null;
+
+  for (const url of orderCandidates) {
+    console.log(`[Shopline Test HTTP] Trying Order Fallback Candidate URL: ${url}`);
+    try {
+      const response = await axios.get(url, { headers, timeout: 6000 });
+      if (response.status === 200 && response.data) {
+        successfulOrderResponse = response;
+        ordersUrlUsed = url;
+        break;
+      }
+    } catch (ordErr: any) {
+      console.warn(`[Shopline Test HTTP] Order candidate failed: ${url}. Status/Error: ${ordErr.response?.status || ordErr.message}`);
+      ordersError = ordErr;
+    }
+  }
+
+  if (successfulOrderResponse) {
+    const ordersData = successfulOrderResponse.data;
+    const orders = ordersData.orders || ordersData.data?.orders || (Array.isArray(ordersData.data) ? ordersData.data : []) || [];
+    const fetchedList: any[] = [];
+    const seenProductIds = new Set();
+
+    for (const order of orders) {
+      if (!order.line_items) continue;
+      for (const item of order.line_items) {
+        const productId = item.product_id ? item.product_id.toString() : null;
+        if (productId && !seenProductIds.has(productId)) {
+          seenProductIds.add(productId);
+          fetchedList.push({
+            id: productId,
+            title: item.title || item.name || "Unknown Product",
+            vendor: "",
+            product_type: "订单销售商品",
+            sku: item.sku || "",
+            price: item.price || "0.00",
+            inventory: item.quantity ?? 1,
+            image: null,
+            created_at: order.created_at,
+          });
+        }
+      }
+    }
+
+    const pathOnly = ordersUrlUsed.replace(`https://${cleanDomain}`, "");
+    return res.json({
+      success: true,
+      message: `成功连通 SHOPLINE API (通过 Orders 订单流接口: "${pathOnly}" 反查) 并成功同步到 ${fetchedList.length} 个订单关联商品！`,
+      products: fetchedList,
+      api_path_used: ordersUrlUsed,
+    });
+  }
+
+  // If we reach here, both products and orders endpoints have failed.
+  const lastErr = productsError || ordersError;
+  console.error(`[Shopline Test HTTP Error] All candidates failed. Last error:`, lastErr?.response?.data || lastErr?.message);
+  const errorDetails = lastErr?.response?.data 
+    ? typeof lastErr.response.data === "object" ? JSON.stringify(lastErr.response.data) : String(lastErr.response.data)
+    : lastErr?.message || "网络请求失败";
+
+  return res.status(500).json({
+    success: false,
+    error: `无法与 SHOPLINE API 通信，已重试多个 API 路由（已试 Products 与 Orders 多个版本及后缀）。`,
+    details: `最近一次网络报错: ${errorDetails}`,
+  });
 });
 
 router.get("/:id", async (req, res) => {

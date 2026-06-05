@@ -40,23 +40,39 @@ export async function ensureAdAccounts(token: string) {
           where: { fb_account_id: acc.account_id }
         });
 
+        // Query AccountMapping first to see if there is an existing, user-defined mapping for this FB account ID
+        const mapping = await prisma.accountMapping.findFirst({
+          where: { fbAccountId: acc.account_id }
+        });
+
+        // Determine the correct storeId alignment:
+        // Priority 1: Mapped store ID from AccountMapping
+        // Priority 2: Existing store ID on the AdAccount
+        // Priority 3: Fallback default store ID
+        let targetStoreId = defaultStore.id;
+        if (mapping && mapping.storeId) {
+          targetStoreId = mapping.storeId;
+        } else if (existingAdAccount) {
+          targetStoreId = existingAdAccount.storeId;
+        }
+
         if (existingAdAccount) {
-          if (existingAdAccount.fb_account_name !== acc.name || existingAdAccount.fb_access_token !== token) {
-            await prisma.adAccount.update({
-              where: { fb_account_id: acc.account_id },
-              data: {
-                fb_account_name: acc.name,
-                fb_access_token: token,
-              }
-            });
-          }
+          // Keep name, token, and storeId up to date by adhering to the mapping table source of truth
+          await prisma.adAccount.update({
+            where: { fb_account_id: acc.account_id },
+            data: {
+              fb_account_name: acc.name,
+              fb_access_token: token,
+              storeId: targetStoreId, // Keep storeId aligned
+            }
+          });
         } else {
           await prisma.adAccount.create({
             data: {
               fb_account_id: acc.account_id,
               fb_account_name: acc.name,
               fb_access_token: token,
-              storeId: defaultStore.id,
+              storeId: targetStoreId,
             }
           });
         }

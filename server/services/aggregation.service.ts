@@ -1,9 +1,19 @@
 import prisma from '../../db/index.js';
 
-export async function aggregateData(startDate: string, endDate: string, options: { syncProduct?: boolean; syncCreative?: boolean } = { syncProduct: false, syncCreative: false }) {
+export async function aggregateData(startDate: string, endDate: string, options: { syncProduct?: boolean; syncCreative?: boolean } = { syncProduct: false, syncCreative: false }, storeIdentifier?: string) {
   try {
     console.log(`[Aggregation Service] Starting aggregation for date range ${startDate} to ${endDate}. Options:`, options);
-    const stores = await prisma.store.findMany();
+    let stores;
+    if (storeIdentifier) {
+      const isNumeric = !isNaN(parseInt(storeIdentifier, 10)) && /^\d+$/.test(storeIdentifier);
+      if (isNumeric) {
+        stores = await prisma.store.findMany({ where: { id: parseInt(storeIdentifier, 10) } });
+      } else {
+        stores = await prisma.store.findMany({ where: { name: { equals: storeIdentifier, mode: 'insensitive' } } });
+      }
+    } else {
+      stores = await prisma.store.findMany();
+    }
     console.log(`[Aggregation Service] Found ${stores.length} stores to process`);
 
     for (const store of stores) {

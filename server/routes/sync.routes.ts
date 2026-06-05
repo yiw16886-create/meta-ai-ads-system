@@ -150,14 +150,14 @@ router.post("/sync", async (req, res) => {
 });
 
 router.post("/sync-store", async (req, res) => {
-  const { startDate, endDate } = req.body;
+  const { startDate, endDate, storeId } = req.body;
   if (!startDate || !endDate) {
     return res.status(400).json({ error: "startDate and endDate are required" });
   }
   try {
-    console.log(`[Manual Store Sync] Starting store sync: ${startDate} to ${endDate}`);
-    await syncStoreData(startDate, endDate);
-    await aggregateData(startDate, endDate, { syncProduct: true, syncCreative: false });
+    console.log(`[Manual Store Sync] Starting store sync: ${startDate} to ${endDate} for store ${storeId || 'all'}`);
+    await syncStoreData(startDate, endDate, storeId);
+    await aggregateData(startDate, endDate, { syncProduct: true, syncCreative: false }, storeId);
     return res.json({ success: true, message: "店铺和订单数据同步成功" });
   } catch (error: any) {
     console.error("Store sync error:", error);

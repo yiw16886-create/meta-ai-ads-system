@@ -12,6 +12,18 @@ export async function getMetaToken(): Promise<string | null> {
   return setting ? setting.value : null;
 }
 
+export function getTimezoneOffsetStr(timezone: string | null | undefined): string {
+  if (!timezone) return "-08:00";
+  const match = timezone.match(/GMT([+-]?\d+)/i); // Handle GMT-8, GMT+8, GMT8 etc
+  if (match) {
+    const val = parseInt(match[1], 10);
+    const sign = val < 0 ? "-" : "+";
+    const hrs = Math.abs(val);
+    return `${sign}${String(hrs).padStart(2, '0')}:00`;
+  }
+  return "-08:00";
+}
+
 export function extractMetaError(error: any): string {
   if (axios.isAxiosError(error)) {
     return error.response?.data?.error?.message || error.message;
@@ -206,10 +218,10 @@ export async function syncSingleAccountAdData(accountId: string, startDate: stri
           fbAccountId: rawAccountId
         },
         update: {
-          storeId: dbAdAccount.storeId
+          // Keep storeId unchanged as the mapping table is the single source of truth.
         },
         create: {
-          storeId: dbAdAccount.storeId,
+          storeId: mapping ? mapping.storeId : null,
           fbAccountId: rawAccountId
         }
       });

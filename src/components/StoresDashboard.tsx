@@ -13,6 +13,37 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
   const [mappings, setMappings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [filterType, setFilterType] = useState<"connected" | "unconnected" | "all">("connected");
+
+  const getAdAccountsCount = (storeName: string) => {
+    return mappings.filter(
+      (m) => (m.store || "").toLowerCase() === (storeName || "").toLowerCase()
+    ).length;
+  };
+
+  const isApiBound = (store: any) => {
+    return !!(store.shopline_token?.trim() || store.shopify_token?.trim() || store.shoplazza_token?.trim());
+  };
+
+  const allCount = stores.length;
+  
+  const connectedStores = stores.filter(store => {
+    const adCount = getAdAccountsCount(store.name);
+    const apiBound = isApiBound(store);
+    return adCount > 0 && apiBound;
+  });
+
+  const unconnectedStores = stores.filter(store => {
+    const adCount = getAdAccountsCount(store.name);
+    const apiBound = isApiBound(store);
+    return adCount === 0 || !apiBound;
+  });
+
+  const displayedStores = filterType === "connected"
+    ? connectedStores
+    : filterType === "unconnected"
+    ? unconnectedStores
+    : stores;
 
   // States for store deletion
   const [deletingStoreId, setDeletingStoreId] = useState<number | null>(null);
@@ -108,6 +139,58 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
         </div>
       </div>
 
+      {/* Tab filter control for stores - Single Choice (单选功能) */}
+      {!loading && stores.length > 0 && (
+        <div className="bg-white p-4 rounded-[12px] shadow-sm border border-[#e5e7eb] flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">店铺筛选:</span>
+            <div className="inline-flex rounded-lg bg-slate-100 p-0.5 border border-slate-200">
+              <button
+                type="button"
+                onClick={() => setFilterType("connected")}
+                className={cn(
+                  "px-4 py-1.5 rounded-md text-xs font-semibold transition-all cursor-pointer",
+                  filterType === "connected"
+                    ? "bg-white text-slate-900 shadow-sm border border-slate-100 font-bold"
+                    : "text-slate-500 hover:text-slate-800"
+                )}
+              >
+                已连接店铺 ({connectedStores.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilterType("unconnected")}
+                className={cn(
+                  "px-4 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center gap-1 cursor-pointer",
+                  filterType === "unconnected"
+                    ? "bg-white text-slate-900 shadow-sm border border-slate-100 font-bold"
+                    : "text-slate-500 hover:text-slate-800"
+                )}
+              >
+                未连接店铺 ({unconnectedStores.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilterType("all")}
+                className={cn(
+                  "px-4 py-1.5 rounded-md text-xs font-semibold transition-all cursor-pointer",
+                  filterType === "all"
+                    ? "bg-white text-slate-900 shadow-sm border border-slate-100 font-bold"
+                    : "text-slate-500 hover:text-slate-800"
+                )}
+              >
+                全部店铺 ({stores.length})
+              </button>
+            </div>
+          </div>
+          <div className="text-xs text-slate-400">
+            {filterType === "connected" && "💡 已绑定 API 或已分配广告账户的店铺（未连接的店铺已自动折叠隐藏）"}
+            {filterType === "unconnected" && "💡 发现没有关联广告账户且未绑定 API 的潜在闲置店铺"}
+            {filterType === "all" && "💡 显示系统内录入的所有店铺"}
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <div className="flex justify-center p-12">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
@@ -126,70 +209,100 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
             </Button>
           </CardContent>
         </Card>
+      ) : displayedStores.length === 0 ? (
+        <Card className="border-dashed border-2 bg-slate-50 border-slate-200">
+          <CardContent className="flex flex-col items-center justify-center py-16 text-center">
+            <Store className="h-10 w-10 text-slate-400 mb-3" />
+            <h3 className="text-base font-semibold text-slate-700 mb-1">
+              {filterType === "connected" ? "没有已连接的店铺" : "没有未连接的店铺"}
+            </h3>
+            <p className="text-xs text-slate-500">
+              {filterType === "connected" 
+                ? "所有店铺都处于未连接状态，您可以点击上方【未连接店铺】按钮查看与管理"
+                : "恭喜！目前系统内所有的店铺均已正常配置/关联！"}
+            </p>
+          </CardContent>
+        </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {stores.map((store) => (
-            <Card
-              key={store.id}
-              className="cursor-pointer hover:shadow-md transition-shadow border-gray-200"
-              onClick={() => navigate(`/store/${store.id}`)}
-            >
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-3">
-                    <div className="h-10 w-10 bg-blue-50 text-meta-blue flex items-center justify-center rounded-lg">
-                      <Store className="h-5 w-5" />
+          {displayedStores.map((store) => {
+            const adAccCount = getAdAccountsCount(store.name);
+            const apiBound = isApiBound(store);
+            return (
+              <Card
+                key={store.id}
+                className="cursor-pointer hover:shadow-md transition-shadow border-gray-200"
+                onClick={() => navigate(`/store/${store.id}`)}
+              >
+                <CardContent className="p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 bg-blue-50 text-meta-blue flex items-center justify-center rounded-lg">
+                        <Store className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <h3 className="font-bold text-gray-900 flex items-center gap-1.5 flex-wrap">
+                          {store.name}
+                          {store.platform && (
+                            <span className={cn(
+                              "text-[9px] px-1.5 py-0.5 rounded-full font-semibold tracking-wide uppercase inline-block",
+                              store.platform === "shopline" && "bg-blue-50 text-blue-600 border border-blue-200",
+                              store.platform === "shoplazza" && "bg-emerald-50 text-emerald-600 border border-emerald-200",
+                              store.platform === "shopify" && "bg-green-50 text-green-600 border border-green-200",
+                            )}>
+                              {store.platform === "shoplazza" ? "店匠" : store.platform}
+                            </span>
+                          )}
+                          {(!adAccCount || !apiBound) && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold bg-amber-50 text-amber-600 border border-amber-200 uppercase inline-block">
+                              未连接
+                            </span>
+                          )}
+                          {apiBound && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold bg-emerald-50 text-emerald-600 border border-emerald-200 uppercase inline-block">
+                              API 已装配
+                            </span>
+                          )}
+                        </h3>
+                        <p className="text-xs text-gray-500">
+                          {store.domain || "未配置域名"}
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <h3 className="font-bold text-gray-900 flex items-center gap-1.5 flex-wrap">
-                        {store.name}
-                        {store.platform && (
-                          <span className={cn(
-                            "text-[9px] px-1.5 py-0.5 rounded-full font-semibold tracking-wide uppercase inline-block",
-                            store.platform === "shopline" && "bg-blue-50 text-blue-600 border border-blue-200",
-                            store.platform === "shoplazza" && "bg-emerald-50 text-emerald-600 border border-emerald-200",
-                            store.platform === "shopify" && "bg-green-50 text-green-600 border border-green-200",
-                          )}>
-                            {store.platform === "shoplazza" ? "店匠" : store.platform}
-                          </span>
-                        )}
-                      </h3>
-                      <p className="text-xs text-gray-500">
-                        {store.domain || "未配置域名"}
-                      </p>
-                    </div>
+                    
+                    {/* Delete Button */}
+                    <button
+                      type="button"
+                      title="删除店铺"
+                      className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDeletingStoreId(store.id);
+                        setDeleteStoreName(store.name);
+                      }}
+                    >
+                      <Trash2 className="h-5 w-5" />
+                    </button>
                   </div>
-                  
-                  {/* Delete Button */}
-                  <button
-                    type="button"
-                    title="删除店铺"
-                    className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setDeletingStoreId(store.id);
-                      setDeleteStoreName(store.name);
-                    }}
-                  >
-                    <Trash2 className="h-5 w-5" />
-                  </button>
-                </div>
 
-                <div className="flex items-center gap-2 text-sm text-gray-600 mt-4 border-t pt-4">
-                  <LinkIcon className="h-4 w-4" />
-                  <span>
-                    已关联{" "}
-                    {
-                      mappings.filter(
-                        (m) => (m.store || "").toLowerCase() === (store.name || "").toLowerCase()
-                      ).length
-                    }{" "}
-                    个广告账户
-                  </span>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                  <div className="flex items-center justify-between text-sm text-gray-600 mt-4 border-t pt-4">
+                    <div className="flex items-center gap-2">
+                      <LinkIcon className="h-4 w-4" />
+                      <span>
+                        已关联 {adAccCount} 个广告账户
+                      </span>
+                    </div>
+                    <span className={cn(
+                      "text-xs px-1.5 py-0.5 rounded font-mono",
+                      apiBound ? "text-emerald-700 bg-emerald-50" : "text-slate-400 bg-slate-50"
+                    )}>
+                      {apiBound ? "API ACTIVE" : "NO API"}
+                    </span>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       )}
 

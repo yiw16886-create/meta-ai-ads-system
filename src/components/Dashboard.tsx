@@ -36,6 +36,7 @@ import { ProductIntelligenceDashboard } from "./ProductIntelligenceDashboard";
 import { CreativeIntelligenceDashboard } from "./CreativeIntelligenceDashboard";
 import { AudienceAnalysisDashboard } from "./AudienceAnalysisDashboard";
 import { CampaignStructureDashboard } from "./CampaignStructureDashboard";
+import { StoreDataDashboard } from "./StoreDataDashboard";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -97,6 +98,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
     | "campaign_structure"
     | "audience_analysis"
     | "creative_analysis"
+    | "store_data"
     | "settings"
     | "category"
     | "accounts"
@@ -109,7 +111,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
     || "overview";
 
   const [currentTab, setCurrentTab] = useState<
-    "dashboard" | "campaign_structure" | "audience_analysis" | "creative_analysis" | "settings" | "category" | "accounts" | "stores" | "users" | "monitoring" | "overview" | "product_intelligence" | "creative_intelligence"
+    "dashboard" | "campaign_structure" | "audience_analysis" | "creative_analysis" | "store_data" | "settings" | "category" | "accounts" | "stores" | "users" | "monitoring" | "overview" | "product_intelligence" | "creative_intelligence"
   >(initialTab);
 
   const currentUser = JSON.parse(localStorage.getItem("user") || "{}");
@@ -119,7 +121,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
     initialTab === "settings" || initialTab === "users"
   );
   const [dashboardExpanded, setDashboardExpanded] = useState<boolean>(
-    initialTab === "dashboard" || initialTab === "campaign_structure" || initialTab === "audience_analysis" || initialTab === "creative_analysis"
+    initialTab === "dashboard" || initialTab === "campaign_structure" || initialTab === "audience_analysis" || initialTab === "creative_analysis" || initialTab === "store_data"
   );
 
   useEffect(() => {
@@ -413,7 +415,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
               onClick={() => setDashboardExpanded(!dashboardExpanded)}
               className={cn(
                 "w-full flex items-center justify-between px-4 py-3 rounded-[8px] text-[14px] transition-colors cursor-pointer",
-                (currentTab === "dashboard" || currentTab === "campaign_structure" || currentTab === "audience_analysis" || currentTab === "creative_analysis")
+                (currentTab === "dashboard" || currentTab === "campaign_structure" || currentTab === "audience_analysis" || currentTab === "creative_analysis" || currentTab === "store_data")
                   ? "text-white"
                   : "text-meta-text-muted hover:text-white hover:bg-meta-nav"
               )}
@@ -458,7 +460,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                       : "text-meta-text-muted hover:text-white hover:bg-meta-nav",
                   )}
                 >
-                  受众分析
+                  受众
                 </button>
                 <button
                   onClick={() => navigate("/?tab=creative_analysis")}
@@ -469,15 +471,24 @@ export function Dashboard({ onLogout }: DashboardProps) {
                       : "text-meta-text-muted hover:text-white hover:bg-meta-nav",
                   )}
                 >
-                  素材分析
+                  素材
+                </button>
+                <button
+                  onClick={() => navigate("/?tab=store_data")}
+                  className={cn(
+                    "w-full flex items-center gap-3 px-3 py-2 rounded-[6px] text-[13px] transition-colors cursor-pointer text-left",
+                    currentTab === "store_data"
+                      ? "bg-meta-nav text-white"
+                      : "text-meta-text-muted hover:text-white hover:bg-meta-nav",
+                  )}
+                >
+                  店铺数据
                 </button>
               </div>
             )}
           </div>
 
           {[
-            { id: "product_intelligence", icon: ShoppingCart, label: "商品智能分析" },
-            { id: "creative_intelligence", icon: ImageIcon, label: "素材智能分析" },
             { id: "category", icon: LayoutGrid, label: "项目类别看板" },
             { id: "monitoring", icon: TrendingUp, label: "账户健康监控" },
             { id: "stores", icon: Store, label: "店铺管理" },
@@ -568,7 +579,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
         </div>
       </aside>
       <main className="flex-1 ml-[200px] p-[24px] overflow-x-hidden flex flex-col h-screen box-border">
-        {currentTab === "overview" || currentTab === "dashboard" || currentTab === "product_intelligence" || currentTab === "creative_intelligence" || currentTab === "campaign_structure" || currentTab === "audience_analysis" || currentTab === "creative_analysis" ? (
+        {currentTab === "overview" || currentTab === "dashboard" || currentTab === "product_intelligence" || currentTab === "creative_intelligence" || currentTab === "campaign_structure" || currentTab === "audience_analysis" || currentTab === "creative_analysis" || currentTab === "store_data" ? (
           <>
             {currentTab !== "creative_analysis" && currentTab !== "creative_intelligence" && (
               <div className="bg-white p-[16px] rounded-[12px] flex items-center gap-[12px] mb-[20px] shadow-[0_1px_3px_rgba(0,0,0,0.1)]">
@@ -638,42 +649,24 @@ export function Dashboard({ onLogout }: DashboardProps) {
                 )}
               </div>
               {isAdmin && (
-                <div className="flex items-center gap-4 bg-gray-50 border border-gray-100 px-3 py-1 rounded-[6px] h-9">
-                  <label className="flex items-center gap-1.5 text-xs text-meta-text-muted hover:text-meta-dark cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      className="rounded border-gray-300 text-meta-blue focus:ring-meta-blue w-3.5 h-3.5 cursor-pointer"
-                      checked={syncProduct}
-                      onChange={(e) => setSyncProduct(e.target.checked)}
-                    />
-                    <span>商品智能分析</span>
-                  </label>
-                  <label className="flex items-center gap-1.5 text-xs text-meta-text-muted hover:text-meta-dark cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      className="rounded border-gray-300 text-meta-blue focus:ring-meta-blue w-3.5 h-3.5 cursor-pointer"
-                      checked={syncCreative}
-                      onChange={(e) => setSyncCreative(e.target.checked)}
-                    />
-                    <span>素材智能分析</span>
-                  </label>
-                  <Button
-                    className="bg-meta-blue hover:bg-blue-600 text-white h-7 px-3 rounded-[4px] font-semibold text-[12px] flex items-center gap-[4px]"
-                    onClick={handleSync}
-                    disabled={syncing}
-                  >
-                    <RefreshCcw
-                      className={cn("w-3.5 h-3.5", syncing && "animate-spin")}
-                    />
-                    同步 Meta 数据
-                  </Button>
-                </div>
+                <Button
+                  className="bg-meta-blue hover:bg-blue-600 text-white h-9 px-4 rounded-[6px] font-semibold text-[13px] flex items-center gap-[6px]"
+                  onClick={handleSync}
+                  disabled={syncing}
+                >
+                  <RefreshCcw
+                    className={cn("w-4 h-4", syncing && "animate-spin")}
+                  />
+                  同步 Meta 数据
+                </Button>
               )}
             </div>
             )}
 
             {currentTab === "overview" ? (
               <OverviewDashboard data={data} mappings={mappings} storeSummaries={storeSummaries} />
+            ) : currentTab === "store_data" ? (
+              <StoreDataDashboard data={data} mappings={mappings} storeSummaries={storeSummaries} />
             ) : currentTab === "product_intelligence" ? (
               <ProductIntelligenceDashboard data={data} startDate={startDate} endDate={endDate} />
             ) : currentTab === "creative_intelligence" ? (
@@ -1088,14 +1081,26 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
         let count = 0;
 
         data.forEach((row) => {
-          const accountId = row["账户ID"]?.toString();
+          const keys = Object.keys(row);
+          
+          // Dynamically map column headers (supporting English or Chinese, case-insensitive, ignores spaces etc.)
+          const accountIdKey = keys.find(k => /账户\s*ID|帐户\s*ID|账户|帐户|Account\s*ID|id/i.test(k)) || keys[0];
+          const accountId = accountIdKey ? row[accountIdKey]?.toString()?.trim() : null;
+
           if (accountId) {
+            const existing = mappings[accountId] || {};
+            
+            const accountNameKey = keys.find(k => /账户名称|帐户名称|账户\s*Name|Account\s*Name|名称|Name/i.test(k));
+            const projectKey = keys.find(k => /项目|Project|Proj/i.test(k));
+            const storeKey = keys.find(k => /店铺|Store/i.test(k));
+            const ownerKey = keys.find(k => /负责人|Owner/i.test(k));
+
             newMappings[accountId] = {
               accountId,
-              accountName: row["账户名称"] || "",
-              project: row["项目"] || "",
-              store: row["店铺"] || "",
-              owner: row["负责人"] || "",
+              accountName: accountNameKey !== undefined && row[accountNameKey] !== undefined ? String(row[accountNameKey]).trim() : (existing.accountName || ""),
+              project: projectKey !== undefined && row[projectKey] !== undefined ? String(row[projectKey]).trim() : (existing.project || ""),
+              store: storeKey !== undefined && row[storeKey] !== undefined ? String(row[storeKey]).trim() : (existing.store || ""),
+              owner: ownerKey !== undefined && row[ownerKey] !== undefined ? String(row[ownerKey]).trim() : (existing.owner || ""),
             };
             count++;
           }
@@ -1106,7 +1111,7 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
           toast.success(`成功导入 ${count} 条账户映射记录！已同步到服务器。`);
         } else {
           toast.error(
-            "未在文件中找到有效的映射数据（请检查列名：账户ID, 项目, 店铺, 负责人）",
+            "未在文件中找到有效的映射数据（请确保文件包含账户和对应数据）",
           );
         }
       } catch (err) {

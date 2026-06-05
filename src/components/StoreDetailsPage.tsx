@@ -62,6 +62,8 @@ export function StoreDetailsPage({
   const [accountsInsights, setAccountsInsights] = useState<any[]>([]);
   const [allMappings, setAllMappings] = useState<any[]>([]);
   const [loadingInsights, setLoadingInsights] = useState(false);
+  const [isSyncingData, setIsSyncingData] = useState(false);
+
   const [dashboardSummary, setDashboardSummary] = useState<any>({
     totalSpend: 0,
     totalROAS: 0,
@@ -108,43 +110,56 @@ export function StoreDetailsPage({
     return sortableItems;
   }, [accountsInsights, sortConfig]);
 
+  const [testPlatform, setTestPlatform] = useState<string>("shoplazza");
   const [shoplazzaProducts, setShoplazzaProducts] = useState<any[]>([]);
   const [testingShoplazza, setTestingShoplazza] = useState(false);
   const [shoplazzaTestError, setShoplazzaTestError] = useState<string | null>(null);
   const [showShoplazzaModal, setShowShoplazzaModal] = useState(false);
 
-  const handleTestShoplazza = async (domainToTest: string, tokenToTest: string) => {
+  const handleTestConnection = async (platformToTest: string, domainToTest: string, tokenToTest: string) => {
     if (!domainToTest || !tokenToTest) {
-      toast.error("错误：请先输入店铺域名及授权秘钥 (Access-Token)！");
+      toast.error("错误：请先输入店铺域名及授权秘钥！");
       return;
     }
+    setTestPlatform(platformToTest);
     setTestingShoplazza(true);
     setShoplazzaTestError(null);
     setShoplazzaProducts([]);
     setShowShoplazzaModal(true);
 
+    const platformNames: Record<string, string> = {
+      shoplazza: "店匠 (Shoplazza)",
+      shopify: "Shopify",
+      shopline: "SHOPLINE"
+    };
+    const platformLabel = platformNames[platformToTest] || platformToTest;
+
     try {
-      const response = await axios.post("/api/stores/test-shoplazza-connection", {
+      const response = await axios.post(`/api/stores/test-${platformToTest}-connection`, {
         domain: domainToTest,
         token: tokenToTest
       });
       if (response.data.success) {
         setShoplazzaProducts(response.data.products || []);
-        toast.success(response.data.message || "店匠 API 实时数据验证成功！");
+        toast.success(response.data.message || `${platformLabel} API 实时数据验证成功！`);
       } else {
         setShoplazzaTestError(response.data.error || "后端接口返回响应失败");
-        toast.error("店匠 API 测试失败");
+        toast.error(`${platformLabel} API 测试失败`);
       }
     } catch (err: any) {
       console.error(err);
       const errMsg = err.response?.data?.error || err.message || "网络请求失败";
-      const errDetails = err.response?.data?.details || "请确保填写的二级域名正确（例如: store-name.shoplazza.com）且授权秘钥具有查询 Products 权限。";
+      const errDetails = err.response?.data?.details || `请确保填写的域名格式正确（例如: store-name.myshopify.com）且授权密钥具有 Products 商品查询权限。`;
       setShoplazzaTestError(`${errMsg} - ${errDetails}`);
-      toast.error("店匠 API 连接/身份校验失败");
+      toast.error(`${platformLabel} API 连接/身份校验失败`);
     } finally {
       setTestingShoplazza(false);
     }
   };
+
+  const handleTestShoplazza = (domainToTest: string, tokenToTest: string) => handleTestConnection("shoplazza", domainToTest, tokenToTest);
+  const handleTestShopify = (domainToTest: string, tokenToTest: string) => handleTestConnection("shopify", domainToTest, tokenToTest);
+  const handleTestShopline = (domainToTest: string, tokenToTest: string) => handleTestConnection("shopline", domainToTest, tokenToTest);
 
   useEffect(() => {
     if (!isNew && storeId) {
@@ -312,6 +327,34 @@ export function StoreDetailsPage({
       toast.error("保存失败");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSyncStoreData = async () => {
+    if (!storeId) return;
+    setIsSyncingData(true);
+    try {
+      const startStr = format(startDate, "yyyy-MM-dd");
+      const endStr = format(endDate, "yyyy-MM-dd");
+      toast.info(`正在同步店铺数据: ${startStr} 至 ${endStr}`);
+      const res = await axios.post("/api/sync-store", {
+        startDate: startStr,
+        endDate: endStr,
+        storeId: storeId
+      });
+      if (res.data.success) {
+        toast.success("店铺及订单数据同步成功");
+        if (storeData.name) {
+          fetchInsights(storeData.name);
+        }
+        fetchDashboardSummary(storeId);
+      } else {
+        toast.error("数据同步未能完全成功");
+      }
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || "店铺数据同步失败");
+    } finally {
+      setIsSyncingData(false);
     }
   };
 
@@ -505,7 +548,7 @@ export function StoreDetailsPage({
                       <div className="space-y-4">
                         <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider border-b pb-1">API & 其它参数</h4>
 
-                        {(!storeData.platform || storeData.platform === "shopline") && (
+                         {(!storeData.platform || storeData.platform === "shopline") && (
                           <div className="space-y-1.5">
                             <label className="text-xs font-bold text-slate-700">SHOPLINE Access Token</label>
                             <Input
@@ -520,6 +563,18 @@ export function StoreDetailsPage({
                               placeholder="填入 SHOPLINE Access Token"
                               className="h-9 text-sm border-slate-200 focus:border-meta-blue focus:ring-meta-blue rounded-lg"
                             />
+                            {storeData.shopline_token && storeData.domain && (
+                              <div className="pt-2">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  onClick={() => handleTestShopline(storeData.domain, storeData.shopline_token)}
+                                  className="h-8 text-[11px] font-bold border-emerald-200 bg-emerald-50/40 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800 rounded-lg flex items-center gap-1 cursor-pointer w-full"
+                                >
+                                  🔍 验证 SHOPLINE 连接并实时查询商品 (不导入)
+                                </Button>
+                              </div>
+                            )}
                           </div>
                         )}
 
@@ -568,6 +623,18 @@ export function StoreDetailsPage({
                               placeholder="填入 Shopify Access Token"
                               className="h-9 text-sm border-slate-200 focus:border-meta-blue focus:ring-meta-blue rounded-lg"
                             />
+                            {storeData.shopify_token && storeData.domain && (
+                              <div className="pt-2">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  onClick={() => handleTestShopify(storeData.domain, storeData.shopify_token)}
+                                  className="h-8 text-[11px] font-bold border-emerald-200 bg-emerald-50/40 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800 rounded-lg flex items-center gap-1 cursor-pointer w-full"
+                                >
+                                  🔍 验证 Shopify 连接并实时查询商品 (不导入)
+                                </Button>
+                              </div>
+                            )}
                           </div>
                         )}
 
@@ -592,6 +659,18 @@ export function StoreDetailsPage({
                   </div>
                 </DialogContent>
               </Dialog>
+            )}
+
+            {!isNew && storeId && (
+              <Button 
+                variant="outline" 
+                onClick={handleSyncStoreData} 
+                disabled={isSyncingData}
+                className="text-blue-600 border-blue-600 hover:bg-blue-50"
+              >
+                {isSyncingData ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ArrowUpDown className="w-4 h-4 mr-2" />}
+                {isSyncingData ? "正在同步店铺数据..." : "同步数据"}
+              </Button>
             )}
 
             <Popover>
@@ -731,6 +810,82 @@ export function StoreDetailsPage({
                 </div>
                 <p className="text-slate-500 leading-relaxed text-[11px] bg-slate-50 p-3 rounded-lg border border-slate-100/80">
                   💡 <b className="text-slate-700">说明:</b> 已经配置完整的 OpenAPI 2022-01 兼容支持。根据您的指示，此查询工具是<b className="text-emerald-700">完全只读且纯前端展示</b>的。点击上方按钮可直接向店匠拉取前 10 个在售商品数据，用于确认您的 API 权限并直接展示商品的标题、SKU、条码、库存、价格等，<b className="text-red-600">在此不做任何数据导入、覆盖与落库，非常安全。</b>
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
+          {!isNew && storeData.platform === "shopify" && (
+            <Card className="bg-white border-[#e5e7eb] shadow-sm mb-6 overflow-hidden">
+              <CardHeader className="bg-emerald-50/20 border-b border-[#e5e7eb] py-4 px-6 flex flex-row items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <span className="p-2 rounded-lg bg-emerald-100/60 text-emerald-600 font-bold text-base">🌐</span>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-800">Shopify OpenAPI 集成状态</h3>
+                    <p className="text-[10px] text-slate-500 mt-0.5">当前店铺已配置 Shopify 集成。支持直接通过 API 端口验证并即时查询最新商品（只读，不入库）。</p>
+                  </div>
+                </div>
+                <Button 
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                  onClick={() => handleTestShopify(storeData.domain, storeData.shopify_token)}
+                  className="text-xs text-emerald-700 hover:text-emerald-800 border-emerald-200 hover:border-emerald-300 bg-emerald-50 hover:bg-emerald-100/70 flex items-center gap-1.5 h-9 rounded-lg cursor-pointer font-semibold shadow-sm transition-all"
+                >
+                  🔍 一键实时查询 Shopify 商品数据
+                </Button>
+              </CardHeader>
+              <CardContent className="p-5 text-xs text-slate-600 space-y-4">
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                  <div className="flex items-center gap-1.5 bg-emerald-50 text-emerald-700 px-2 py-1 rounded-md font-semibold text-[11px] border border-emerald-100">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    已集成 (API Configured)
+                  </div>
+                  <div className="text-slate-400">|</div>
+                  <div className="text-slate-600">
+                    <span className="font-semibold text-slate-700">目标接口:</span> {storeData.domain}/admin/api/2024-01
+                  </div>
+                </div>
+                <p className="text-slate-500 leading-relaxed text-[11px] bg-slate-50 p-3 rounded-lg border border-slate-100/80">
+                  💡 <b className="text-slate-700">说明:</b> 已经配置完整的 Shopify Admin API (2024-01) 兼容支持。此查询工具是<b className="text-emerald-700">完全只读且纯前端展示</b>的。点击上方按钮可直接向 Shopify 端拉取最新的商品列表，用于确认您的 API 权限与域名连通性，<b className="text-red-600">在此不做任何数据保存、覆盖与落库，非常安全。</b>
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
+          {!isNew && (!storeData.platform || storeData.platform === "shopline") && (
+            <Card className="bg-white border-[#e5e7eb] shadow-sm mb-6 overflow-hidden">
+              <CardHeader className="bg-emerald-50/20 border-b border-[#e5e7eb] py-4 px-6 flex flex-row items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <span className="p-2 rounded-lg bg-emerald-100/60 text-emerald-600 font-bold text-base">🌐</span>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-800">SHOPLINE OpenAPI 集成状态</h3>
+                    <p className="text-[10px] text-slate-500 mt-0.5">当前店铺已配置 SHOPLINE 集成。支持直接通过 OpenAPI 验证并即时查询最新商品/订单流数据（只读，不入库）。</p>
+                  </div>
+                </div>
+                <Button 
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                  onClick={() => handleTestShopline(storeData.domain, storeData.shopline_token)}
+                  className="text-xs text-emerald-700 hover:text-emerald-800 border-emerald-200 hover:border-emerald-300 bg-emerald-50 hover:bg-emerald-100/70 flex items-center gap-1.5 h-9 rounded-lg cursor-pointer font-semibold shadow-sm transition-all"
+                >
+                  🔍 一键实时查询 SHOPLINE 商品数据
+                </Button>
+              </CardHeader>
+              <CardContent className="p-5 text-xs text-slate-600 space-y-4">
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                  <div className="flex items-center gap-1.5 bg-emerald-50 text-emerald-700 px-2 py-1 rounded-md font-semibold text-[11px] border border-emerald-100">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    已集成 (API Configured)
+                  </div>
+                  <div className="text-slate-400">|</div>
+                  <div className="text-slate-600">
+                    <span className="font-semibold text-slate-700">目标接口:</span> {storeData.domain}/admin/openapi/v20240301
+                  </div>
+                </div>
+                <p className="text-slate-500 leading-relaxed text-[11px] bg-slate-50 p-3 rounded-lg border border-slate-100/80">
+                  💡 <b className="text-slate-700">说明:</b> 已经配置完整的 SHOPLINE OpenAPI (v20240301) 兼容支持。此查询工具是<b className="text-emerald-700">完全只读且纯前端展示</b>的。点击上方按钮可直接向 SHOPLINE 拉取最新数据，若 Products 商品接口未暴露或受限，系统会自动尝试通过 Orders 订单列表反查关联商品列表，非常智能。<b className="text-red-600">此过程不做任何数据保存、覆盖与落库，非常安全。</b>
                 </p>
               </CardContent>
             </Card>
@@ -1192,7 +1347,7 @@ export function StoreDetailsPage({
         </main>
       </div>
 
-      {/* Shoplazza API Test Real-time Query Modal */}
+      {/* Shoplazza / Shopify / Shopline API Test Real-time Query Modal */}
       <Dialog open={showShoplazzaModal} onOpenChange={setShowShoplazzaModal}>
         <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto rounded-xl bg-white p-6 shadow-2xl border border-slate-100">
           <DialogHeader className="border-b pb-4">
@@ -1202,7 +1357,7 @@ export function StoreDetailsPage({
                   <ShoppingBag className="w-5 h-5" />
                 </span>
                 <div>
-                  <span>店匠 (Shoplazza) 商品数据查询结果</span>
+                  <span>{testPlatform === "shoplazza" ? "店匠 (Shoplazza)" : testPlatform === "shopify" ? "Shopify" : "SHOPLINE"} 商品数据查询结果</span>
                   <p className="text-[10px] text-slate-400 font-normal mt-0.5">一键实时校验 OpenAPI 连通状态 & 读取商品列表</p>
                 </div>
               </div>
@@ -1213,8 +1368,8 @@ export function StoreDetailsPage({
             {testingShoplazza ? (
               <div className="flex flex-col items-center justify-center py-16 space-y-3">
                 <Loader2 className="w-10 h-10 text-emerald-600 animate-spin" />
-                <div className="text-sm font-medium text-slate-600">正在与店匠 {storeData.domain || "配置的主机"} API 发起握手与查询...</div>
-                <div className="text-xs text-slate-400">正在调用 endpoints: /openapi/2022-01/products.json?limit=10</div>
+                <div className="text-sm font-medium text-slate-600">正在与 {testPlatform === "shoplazza" ? "店匠 (Shoplazza)" : testPlatform === "shopify" ? "Shopify" : "SHOPLINE"} {storeData.domain || "配置的主机"} API 发起握手与查询...</div>
+                <div className="text-xs text-slate-400">正在调用 endpoints: {testPlatform === "shoplazza" ? "/openapi/2022-01/products" : testPlatform === "shopify" ? "/admin/api/2024-01/products.json" : "/admin/openapi/v20240301/products.json"}</div>
               </div>
             ) : shoplazzaTestError ? (
               <div className="bg-red-50 border border-red-200 rounded-xl p-5 space-y-3">
@@ -1223,20 +1378,24 @@ export function StoreDetailsPage({
                   <div>
                     <h4 className="text-sm font-bold text-red-800">API 连接建立失败</h4>
                     <p className="text-xs text-red-600 mt-1 leading-relaxed">
-                      系统正在通过后台代理与您的店匠进行安全 HTTP 信令通信，但服务器返回了错误。
+                      系统正在通过后台代理与您的 {testPlatform === "shoplazza" ? "店匠 (Shoplazza)" : testPlatform === "shopify" ? "Shopify" : "SHOPLINE"} 进行安全 HTTP 信令通信，但服务器返回了错误。
                     </p>
                     <p className="text-xs text-slate-700 bg-white/70 p-2.5 rounded border border-red-100 mt-3 font-mono break-all leading-relaxed max-h-40 overflow-y-auto">
                       {shoplazzaTestError}
                     </p>
                   </div>
                 </div>
-                <div className="pt-2 border-t border-red-100/50 flex items-center justify-between text-[11px] text-slate-400">
-                  <span>建议排查: 1. 密钥权限是否缺少 Read Products 2. 域名是否因写错格式而返回 404 3. Access Token 拼写是否有误</span>
+                <div className="pt-2 border-t border-red-100/50 flex flex-col md:flex-row md:items-center justify-between text-[11px] text-slate-400 gap-2">
+                  <span>建议排查: 1. 密钥权限是否缺少商品 / 订单读取权限 2. 域名格式如 `{testPlatform === "shopify" ? "example.myshopify.com" : "example.com"}` 填写是否准确</span>
                   <Button 
                     variant="outline" 
                     size="sm" 
-                    onClick={() => handleTestShoplazza(storeData.domain, storeData.shoplazza_token)}
-                    className="h-7 text-[10px] border-red-200 text-red-700 hover:bg-red-100/50"
+                    onClick={() => handleTestConnection(
+                      testPlatform, 
+                      storeData.domain, 
+                      testPlatform === "shoplazza" ? storeData.shoplazza_token : testPlatform === "shopify" ? storeData.shopify_token : storeData.shopline_token
+                    )}
+                    className="h-7 text-[10px] border-red-200 text-red-700 hover:bg-red-100/50 shrink-0 self-end"
                   >
                     重新测试
                   </Button>
@@ -1249,7 +1408,7 @@ export function StoreDetailsPage({
                   <div>
                     <h4 className="text-sm font-bold text-emerald-800">✅ 接口联通成功 & 权限校验通过</h4>
                     <p className="text-xs text-emerald-600/90 leading-normal mt-0.5">
-                      店匠 OpenAPI 通道正常开启！已成功抓取最新的在售商品信息预览。
+                      {testPlatform === "shoplazza" ? "店匠 (Shoplazza)" : testPlatform === "shopify" ? "Shopify" : "SHOPLINE"} OpenAPI 通道正常开启！已成功抓取最新的商品或测试用列表快照预览。
                     </p>
                     <p className="text-[10px] text-slate-500 mt-1 leading-normal italic">
                       ⚠ 请放心：根据您的指令，以下展示的所有商品信息均为临时只读加载展示，此过程零写库、零导入，不会对您当前的系统数据造成任何重载修改。
@@ -1260,7 +1419,7 @@ export function StoreDetailsPage({
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 max-h-[50vh] overflow-y-auto p-0.5">
                   {shoplazzaProducts.length === 0 ? (
                     <div className="col-span-2 text-center py-10 bg-slate-50 border rounded-xl text-slate-400 text-xs">
-                      连接成功，但是该店匠后台中暂未查询到任何在售商品。
+                      连接成功，但是该店铺后台中暂未查询到任何商品。
                     </div>
                   ) : (
                     shoplazzaProducts.map((product) => (

@@ -1,10 +1,21 @@
 import axios from "axios";
 import prisma from "../../db/index.js";
+import { getTimezoneOffsetStr } from "../utils.js";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export async function syncStoreData(startDate: string, endDate: string) {
-  const stores = await prisma.store.findMany();
+export async function syncStoreData(startDate: string, endDate: string, storeIdentifier?: string) {
+  let stores;
+  if (storeIdentifier) {
+    const isNumeric = !isNaN(parseInt(storeIdentifier, 10)) && /^\d+$/.test(storeIdentifier);
+    if (isNumeric) {
+      stores = await prisma.store.findMany({ where: { id: parseInt(storeIdentifier, 10) } });
+    } else {
+      stores = await prisma.store.findMany({ where: { name: { equals: storeIdentifier, mode: 'insensitive' } } });
+    }
+  } else {
+    stores = await prisma.store.findMany();
+  }
 
   for (const store of stores) {
     if (!store.shopify_token && !store.shopline_token && !store.shoplazza_token) {
@@ -42,8 +53,9 @@ async function syncShoplineStoreData(store: any, startDate: string, endDate: str
   // We skip fetching products directly for Shopline as the /products.json endpoint is often not exposed or returns 404.
   // Instead, products are lazily created during the Order sync phase from order line items.
 
-  // 2. Fetch Orders (GMT-8 timezone forced)
-  let ordersUrl = `https://${domain}/admin/openapi/v20240301/orders.json?status=any&created_at_min=${startDate}T00:00:00-08:00&created_at_max=${endDate}T23:59:59-08:00&limit=100`;
+  // 2. Fetch Orders (Store Timezone aware)
+  const tzOffset = getTimezoneOffsetStr(store.timezone);
+  let ordersUrl = `https://${domain}/admin/openapi/v20240301/orders.json?status=any&created_at_min=${startDate}T00:00:00${tzOffset}&created_at_max=${endDate}T23:59:59${tzOffset}&limit=100`;
   let hasNextOrders = true;
   let ordersCount = 0;
 
@@ -62,6 +74,9 @@ async function syncShoplineStoreData(store: any, startDate: string, endDate: str
 
     let successCount = 0;
     for (const o of orders) {
+      if (o.financial_status !== 'paid' && o.financial_status !== 'partially_refunded' && o.financial_status !== 'refunded') {
+        continue;
+      }
       if (!o.line_items) continue;
       for (const lineItem of o.line_items) {
         const productId = lineItem.product_id ? lineItem.product_id.toString() : null;
@@ -87,18 +102,24 @@ async function syncShoplineStoreData(store: any, startDate: string, endDate: str
 
           const revenue = parseFloat(lineItem.price || 0) * (lineItem.quantity || 1);
           const refunded = o.financial_status === 'refunded' || o.financial_status === 'partially_refunded';
+          const refundedAt = refunded ? new Date(o.updated_at || o.created_at) : null;
+          const orderId = o.id.toString();
+          const orderTotal = parseFloat(o.total_price || o.current_total_price || o.total_amount || 0);
           
           const existingOrder = await prisma.order.findUnique({
             where: { id: lineItem.id.toString() }
           });
 
           if (existingOrder) {
-            if (existingOrder.revenue !== revenue || existingOrder.refunded !== refunded) {
+            if (existingOrder.revenue !== revenue || existingOrder.refunded !== refunded || existingOrder.orderId !== orderId || existingOrder.orderTotal !== orderTotal) {
               await prisma.order.update({
                 where: { id: lineItem.id.toString() },
                 data: {
                   revenue,
                   refunded,
+                  refundedAt,
+                  orderId,
+                  orderTotal,
                 }
               });
             }
@@ -111,6 +132,9 @@ async function syncShoplineStoreData(store: any, startDate: string, endDate: str
                 revenue,
                 profit: revenue * 0.4,
                 refunded,
+                refundedAt,
+                orderId,
+                orderTotal,
                 createdAt: new Date(o.created_at)
               }
             });
@@ -211,7 +235,8 @@ async function syncShopifyStoreData(store: any, startDate: string, endDate: stri
 
         // 2. Fetch Orders
         // Shopify date fields: created_at_min requires ISO8601 format
-        let ordersUrl = `https://${domain}/admin/api/2024-01/orders.json?status=any&created_at_min=${startDate}T00:00:00Z&created_at_max=${endDate}T23:59:59Z&limit=250`;
+        const tzOffset = getTimezoneOffsetStr(store.timezone);
+        let ordersUrl = `https://${domain}/admin/api/2024-01/orders.json?status=any&created_at_min=${startDate}T00:00:00${tzOffset}&created_at_max=${endDate}T23:59:59${tzOffset}&limit=250`;
         let hasNextOrders = true;
         let ordersCount = 0;
 
@@ -223,6 +248,10 @@ async function syncShopifyStoreData(store: any, startDate: string, endDate: stri
 
           let successCount = 0;
           for (const o of orders) {
+            if (o.financial_status !== 'paid' && o.financial_status !== 'partially_refunded' && o.financial_status !== 'refunded') {
+              continue;
+            }
+            if (!o.line_items) continue;
             for (const lineItem of o.line_items) {
               const productId = lineItem.product_id ? lineItem.product_id.toString() : null;
               if (!productId) continue;
@@ -247,18 +276,24 @@ async function syncShopifyStoreData(store: any, startDate: string, endDate: stri
 
                 const revenue = parseFloat(lineItem.price) * lineItem.quantity;
                 const refunded = o.financial_status === 'refunded' || o.financial_status === 'partially_refunded';
+                const refundedAt = refunded ? new Date(o.updated_at || o.created_at) : null;
+                const orderId = o.id.toString();
+                const orderTotal = parseFloat(o.total_price || o.current_total_price || o.total_amount || 0);
 
                 const existingOrder = await prisma.order.findUnique({
                   where: { id: lineItem.id.toString() }
                 });
 
                 if (existingOrder) {
-                  if (existingOrder.revenue !== revenue || existingOrder.refunded !== refunded) {
+                  if (existingOrder.revenue !== revenue || existingOrder.refunded !== refunded || existingOrder.orderId !== orderId || existingOrder.orderTotal !== orderTotal) {
                      await prisma.order.update({
                        where: { id: lineItem.id.toString() },
                        data: {
                          revenue,
                          refunded,
+                         refundedAt,
+                         orderId,
+                         orderTotal,
                        }
                      });
                   }
@@ -271,6 +306,9 @@ async function syncShopifyStoreData(store: any, startDate: string, endDate: stri
                       revenue,
                       profit: revenue * 0.4,
                       refunded,
+                      refundedAt,
+                      orderId,
+                      orderTotal,
                       createdAt: new Date(o.created_at)
                     }
                   });
@@ -406,7 +444,8 @@ async function syncShoplazzaStoreData(store: any, startDate: string, endDate: st
     console.log(`[Shoplazza Sync] Total products synced for store ${store.id}: ${productsCount}`);
 
     // 2. Fetch Orders
-    let ordersUrl = `https://${domain}/openapi/${apiVersion}/orders${suffix}?status=any&created_at_min=${startDate}T00:00:00-08:00&created_at_max=${endDate}T23:59:59-08:00&limit=250`;
+    const tzOffset = getTimezoneOffsetStr(store.timezone);
+    let ordersUrl = `https://${domain}/openapi/${apiVersion}/orders${suffix}?status=any&created_at_min=${startDate}T00:00:00${tzOffset}&created_at_max=${endDate}T23:59:59${tzOffset}&limit=250`;
     let hasNextOrders = true;
     let ordersCount = 0;
 
@@ -424,6 +463,9 @@ async function syncShoplazzaStoreData(store: any, startDate: string, endDate: st
 
       let successCount = 0;
       for (const o of orders) {
+        if (o.financial_status !== 'paid' && o.financial_status !== 'partially_refunded' && o.financial_status !== 'refunded') {
+          continue;
+        }
         if (!o.line_items) continue;
         for (const lineItem of o.line_items) {
           const productId = lineItem.product_id ? lineItem.product_id.toString() : null;
@@ -448,18 +490,24 @@ async function syncShoplazzaStoreData(store: any, startDate: string, endDate: st
 
             const revenue = parseFloat(lineItem.price || 0) * (lineItem.quantity || 1);
             const refunded = o.financial_status === 'refunded' || o.financial_status === 'partially_refunded';
+            const refundedAt = refunded ? new Date(o.updated_at || o.created_at) : null;
+            const orderId = o.id.toString();
+            const orderTotal = parseFloat(o.total_price || o.current_total_price || o.total_amount || 0);
 
             const existingOrder = await prisma.order.findUnique({
               where: { id: lineItem.id.toString() }
             });
 
             if (existingOrder) {
-              if (existingOrder.revenue !== revenue || existingOrder.refunded !== refunded) {
+              if (existingOrder.revenue !== revenue || existingOrder.refunded !== refunded || existingOrder.orderId !== orderId || existingOrder.orderTotal !== orderTotal) {
                 await prisma.order.update({
                   where: { id: lineItem.id.toString() },
                   data: {
                     revenue,
                     refunded,
+                    refundedAt,
+                    orderId,
+                    orderTotal,
                   }
                 });
               }
@@ -472,6 +520,9 @@ async function syncShoplazzaStoreData(store: any, startDate: string, endDate: st
                   revenue,
                   profit: revenue * 0.4,
                   refunded,
+                  refundedAt,
+                  orderId,
+                  orderTotal,
                   createdAt: new Date(o.created_at)
                 }
               });

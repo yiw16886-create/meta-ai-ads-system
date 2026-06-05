@@ -63,14 +63,11 @@ router.post("/batch", async (req, res) => {
     const results = await Promise.all(
       validMappings.map(async (mapping: any) => {
         const cleanAccId = String(mapping.accountId).replace("act_", "").trim();
-        const mappingName = mapping.accountName
-          ? String(mapping.accountName)
-          : "Unknown";
 
         const storeName = mapping.store ? String(mapping.store).trim() : null;
         let targetStoreId: number | null = null;
         if (storeName && storeName !== "未分配" && storeName !== "Unknown") {
-          const store = await prisma.store.findFirst({
+          let store = await prisma.store.findFirst({
             where: {
               name: {
                 equals: storeName,
@@ -78,6 +75,29 @@ router.post("/batch", async (req, res) => {
               },
             },
           });
+          if (!store) {
+            try {
+              // Cancel the restriction and automatically create the store safely
+              store = await prisma.store.upsert({
+                where: { name: storeName },
+                update: {},
+                create: {
+                  name: storeName,
+                  platform: "shopline",
+                },
+              });
+            } catch (e) {
+              // Fallback selection in case of race condition
+              store = await prisma.store.findFirst({
+                where: {
+                  name: {
+                    equals: storeName,
+                    mode: "insensitive",
+                  },
+                },
+              });
+            }
+          }
           if (store) {
             targetStoreId = store.id;
           }
@@ -128,11 +148,11 @@ router.post("/batch", async (req, res) => {
             where: { fb_account_id: cleanAccId },
             update: {
               storeId: targetStoreId,
-              fb_account_name: mappingName,
+              fb_account_name: mapping.accountName ? String(mapping.accountName).trim() : "Unknown",
             },
             create: {
               fb_account_id: cleanAccId,
-              fb_account_name: mappingName,
+              fb_account_name: mapping.accountName ? String(mapping.accountName).trim() : "Unknown",
               storeId: targetStoreId,
             },
           });

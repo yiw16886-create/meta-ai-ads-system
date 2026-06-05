@@ -46,6 +46,7 @@ model AccountMapping {
   fbPageId    String?
   project     String?
   owner       String?
+  name        String?
   store       Store?   @relation(fields: [storeId], references: [id], onDelete: Cascade)
   updatedAt   DateTime @updatedAt
 }
@@ -127,6 +128,9 @@ model Order {
   revenue     Float    @default(0)
   profit      Float    @default(0)
   refunded    Boolean  @default(false)
+  refundedAt  DateTime?
+  orderId     String?
+  orderTotal  Float?
   createdAt   DateTime @default(now())
 }
 
