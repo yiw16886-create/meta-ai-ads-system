@@ -23,6 +23,7 @@ import {
   Mail,
   X,
   HelpCircle,
+  AlertTriangle,
   ShoppingCart,
   Image as ImageIcon,
   ChevronDown
@@ -2023,6 +2024,8 @@ function UsersManagementPage() {
 
 function SettingsPage() {
   const [metaToken, setMetaToken] = useState("");
+  const [hasMetaToken, setHasMetaToken] = useState(false);
+  const [metaTokenUpdatedAt, setMetaTokenUpdatedAt] = useState<string | null>(null);
   const [geminiApiKey, setGeminiApiKey] = useState("");
   const [geminiModel, setGeminiModel] = useState("gemini-3.5-flash");
   
@@ -2040,7 +2043,10 @@ function SettingsPage() {
       try {
         const settingsRes = await axios.get("/api/settings");
         if (settingsRes.data.META_ACCESS_TOKEN) {
-          setMetaToken(settingsRes.data.META_ACCESS_TOKEN);
+          setHasMetaToken(true);
+        }
+        if (settingsRes.data.META_TOKEN_UPDATED_AT) {
+          setMetaTokenUpdatedAt(settingsRes.data.META_TOKEN_UPDATED_AT);
         }
         if (settingsRes.data.GEMINI_API_KEY) {
           setGeminiApiKey(settingsRes.data.GEMINI_API_KEY);
@@ -2081,9 +2087,18 @@ function SettingsPage() {
   };
 
   const handleSaveMetaConfig = async () => {
+    if (!metaToken) {
+      toast.error("请输入访问令牌");
+      return;
+    }
     setLoadingMeta(true);
     try {
       await handleSaveSetting("META_ACCESS_TOKEN", metaToken);
+      const now = new Date().toISOString();
+      await handleSaveSetting("META_TOKEN_UPDATED_AT", now);
+      setMetaTokenUpdatedAt(now);
+      setHasMetaToken(true);
+      setMetaToken(""); // clear it so it doesn't show
       toast.success("Meta API 配置已保存");
       setShowMetaModal(false);
     } catch (err: any) {
@@ -2195,10 +2210,34 @@ function SettingsPage() {
             <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"/></svg>
           </div>
           <h3 className="text-[15px] font-medium text-gray-800 mb-2">Meta API 配置</h3>
-          <p className="text-[12px] text-gray-500 mb-6 flex-1">
+          <p className="text-[12px] text-gray-500 mb-4 flex-1">
             配置 Meta Graph API，授权应用安全获取广告数据
           </p>
-          <div className="flex items-center gap-3">
+
+          {hasMetaToken && metaTokenUpdatedAt && (
+             <div className="mb-6 w-full text-left text-[12px] bg-slate-50 p-3 rounded-md border border-slate-100">
+                <div className="flex justify-between items-center mb-1.5">
+                  <span className="text-gray-500 font-medium">状态</span>
+                  <span className="text-emerald-600 font-bold bg-emerald-50 px-2 py-0.5 rounded-sm">已绑定</span>
+                </div>
+                <div className="flex justify-between items-center mb-1.5">
+                  <span className="text-gray-500">更新时间</span>
+                  <span className="text-gray-700 font-mono">{format(new Date(metaTokenUpdatedAt), 'yyyy-MM-dd HH:mm')}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-500">预计失效</span>
+                  <span className="text-gray-700 font-mono">{format(new Date(new Date(metaTokenUpdatedAt).getTime() + 60 * 24 * 3600 * 1000), 'yyyy-MM-dd HH:mm')}</span>
+                </div>
+                {new Date(metaTokenUpdatedAt).getTime() + 60 * 24 * 3600 * 1000 - Date.now() < 3 * 24 * 3600 * 1000 && (
+                  <div className="mt-3 text-red-600 font-medium flex items-center gap-1.5 bg-red-50 p-2 rounded border border-red-100">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    <span>Meta API 即将失效请更新</span>
+                  </div>
+                )}
+             </div>
+          )}
+
+          <div className="flex items-center gap-3 mt-auto">
             <Button 
               className="w-[180px] bg-[#3B82F6] hover:bg-blue-600 font-normal rounded-[4px] h-9"
               onClick={() => setShowMetaModal(true)}

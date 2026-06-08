@@ -73,19 +73,8 @@ router.get("/creatives/daily", async (req, res) => {
       }
     }
 
-    const data = await prisma.creativePerformanceDaily.findMany({
-      where: {
-        date: {
-          gte: startDate as string,
-          lte: endDate as string
-        },
-        ...(creativeIds ? { creativeId: { in: creativeIds } } : {})
-      },
-      orderBy: {
-        date: "asc"
-      }
-    });
-    res.json(data);
+    // Return empty array since CreativePerformanceDaily is removed for re-development
+    res.json([]);
   } catch (error: any) {
     res.status(500).json({ error: "Failed to fetch daily creative performance", details: error.message });
   }

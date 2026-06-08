@@ -47,47 +47,22 @@ router.get("/creatives", async (req, res) => {
 });
 
 router.get("/creatives/daily", async (req, res) => {
-  const { startDate, endDate, storeFilter } = req.query;
+  const { startDate, endDate } = req.query;
   if (!startDate || !endDate) return res.status(400).json({ error: "Missing dates" });
   try {
-    let creativeIds: string[] | undefined = undefined;
-
-    if (storeFilter && storeFilter !== 'all') {
-      const isNum = !isNaN(Number(storeFilter));
-      const store = await prisma.store.findFirst({
-        where: isNum 
-          ? { id: Number(storeFilter) } 
-          : { name: { equals: storeFilter as string, mode: 'insensitive' } }
-      });
-      if (store) {
-        const mappings = await prisma.accountMapping.findMany({
-          where: { storeId: store.id },
-          select: { fbAccountId: true }
-        });
-        const fbAccountIds = mappings.map(m => m.fbAccountId);
-        const creatives = await prisma.adCreative.findMany({
-          where: { fbAccountId: { in: fbAccountIds } },
-          select: { creativeId: true }
-        });
-        creativeIds = creatives.map(c => c.creativeId);
-      }
-    }
-
-    const data = await prisma.creativePerformanceDaily.findMany({
-      where: {
-        date: {
-          gte: startDate as string,
-          lte: endDate as string
-        },
-        ...(creativeIds ? { creativeId: { in: creativeIds } } : {})
-      },
-      orderBy: {
-        date: "asc"
-      }
-    });
-    res.json(data);
+    // Return empty array since CreativePerformanceDaily is removed for re-development
+    res.json([]);
   } catch (error: any) {
     res.status(500).json({ error: "Failed to fetch daily creative performance", details: error.message });
+  }
+});
+
+router.post("/creatives/clear-metrics", async (req, res) => {
+  try {
+    // Return success immediately as table is now removed
+    res.json({ success: true, message: "素材表现指标的所有数据已成功清除（底层数据表已彻底移除）" });
+  } catch (error: any) {
+    res.status(500).json({ error: "清除素材表现指标数据失败", details: error.message });
   }
 });
 
