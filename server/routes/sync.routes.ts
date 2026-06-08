@@ -157,7 +157,6 @@ router.post("/sync-store", async (req, res) => {
   try {
     console.log(`[Manual Store Sync] Starting store sync: ${startDate} to ${endDate} for store ${storeId || 'all'}`);
     await syncStoreData(startDate, endDate, storeId);
-    await aggregateData(startDate, endDate, { syncProduct: true, syncCreative: false }, storeId);
     return res.json({ success: true, message: "店铺和订单数据同步成功" });
   } catch (error: any) {
     console.error("Store sync error:", error);

@@ -104,25 +104,55 @@ export async function aggregateData(startDate: string, endDate: string, options:
       if (options.syncCreative) {
         const creatives = await prisma.adCreative.findMany({ where: { storeId: store.id } });
         console.log(`[Aggregation Service] Found ${creatives.length} creatives for store ${store.id}`);
+
+        // Get this store's associated Facebook accounts to match insights precisely
+        const mappings = await prisma.accountMapping.findMany({
+          where: { storeId: store.id },
+          select: { fbAccountId: true }
+        });
+        const fbAccountIdsOnStore = mappings.map(m => m.fbAccountId.replace("act_", ""));
+
+        const storeInsights = await prisma.adInsight.findMany({
+          where: {
+            date: { gte: startDate, lte: endDate },
+            OR: [
+              { accountId: { in: fbAccountIdsOnStore } },
+              { accountName: { contains: store.name, mode: 'insensitive' } }
+            ]
+          }
+        });
+
+        const totalStoreSpend = storeInsights.reduce((sum, i) => sum + (i.spend || 0), 0);
+        const totalStorePurchases = Math.round(storeInsights.reduce((sum, i) => sum + (i.purchases || 0), 0));
+        const totalStoreRevenue = storeInsights.reduce((sum, i) => sum + (i.purchaseValue || 0), 0);
+
+        let allocatedSpend = 0;
+        let allocatedPurchases = 0;
+        let allocatedRevenue = 0;
         
         let creativeAggSuccess = 0;
-        for (const creative of creatives) {
-          try {
-            // Link creatives to Ads
-            const adsWithCreative = await prisma.ad.findMany({
-              where: { creativeId: creative.creativeId }
-            });
-            
-            const insights = await prisma.adInsight.findMany({
-              where: {
-                date: { gte: startDate, lte: endDate },
-              }
-            });
+        for (let idx = 0; idx < creatives.length; idx++) {
+          const creative = creatives[idx];
+          const isLast = idx === creatives.length - 1;
 
-            // Simulating the mapping pipeline per the user's focus check "ad_id 与 creative_id 是否映射成功"
-            const spend = insights.reduce((sum, i) => sum + (i.spend || 0), 0) / (creatives.length || 1);
-            const purchases = insights.reduce((sum, i) => sum + (i.purchases || 0), 0) / (creatives.length || 1);
-            const crevenue = insights.reduce((sum, i) => sum + (i.purchaseValue || 0), 0) / (creatives.length || 1);
+          try {
+            let spend = 0;
+            let purchases = 0;
+            let crevenue = 0;
+
+            if (isLast) {
+              spend = Math.max(0, totalStoreSpend - allocatedSpend);
+              purchases = Math.max(0, totalStorePurchases - allocatedPurchases);
+              crevenue = Math.max(0, totalStoreRevenue - allocatedRevenue);
+            } else {
+              spend = Math.round((totalStoreSpend / (creatives.length || 1)) * 100) / 100;
+              purchases = Math.round(totalStorePurchases / (creatives.length || 1));
+              crevenue = Math.round((totalStoreRevenue / (creatives.length || 1)) * 100) / 100;
+
+              allocatedSpend += spend;
+              allocatedPurchases += purchases;
+              allocatedRevenue += crevenue;
+            }
 
             await prisma.creativePerformanceDaily.upsert({
               where: {

@@ -32,7 +32,6 @@ import { toast } from "sonner";
 import { StoresDashboard } from "./StoresDashboard";
 import { MonitoringDashboard } from "./MonitoringDashboard";
 import { OverviewDashboard } from "./OverviewDashboard";
-import { ProductIntelligenceDashboard } from "./ProductIntelligenceDashboard";
 import { CreativeIntelligenceDashboard } from "./CreativeIntelligenceDashboard";
 import { AudienceAnalysisDashboard } from "./AudienceAnalysisDashboard";
 import { CampaignStructureDashboard } from "./CampaignStructureDashboard";
@@ -131,8 +130,38 @@ export function Dashboard({ onLogout }: DashboardProps) {
     }
   }, [location.search]);
 
-  const [startDate, setStartDate] = useState<Date>(subDays(new Date(), 35));
-  const [endDate, setEndDate] = useState<Date>(subDays(new Date(), 1));
+  const [startDate, setStartDate] = useState<Date>(() => {
+    try {
+      const saved = localStorage.getItem("META_DASHBOARD_START_DATE");
+      if (saved) {
+        const parsed = new Date(saved);
+        if (!isNaN(parsed.getTime())) return parsed;
+      }
+    } catch (e) {}
+    return subDays(new Date(), 1);
+  });
+  const [endDate, setEndDate] = useState<Date>(() => {
+    try {
+      const saved = localStorage.getItem("META_DASHBOARD_END_DATE");
+      if (saved) {
+        const parsed = new Date(saved);
+        if (!isNaN(parsed.getTime())) return parsed;
+      }
+    } catch (e) {}
+    return subDays(new Date(), 1);
+  });
+
+  useEffect(() => {
+    if (startDate) {
+      localStorage.setItem("META_DASHBOARD_START_DATE", startDate.toISOString());
+    }
+  }, [startDate]);
+
+  useEffect(() => {
+    if (endDate) {
+      localStorage.setItem("META_DASHBOARD_END_DATE", endDate.toISOString());
+    }
+  }, [endDate]);
   const [search, setSearch] = useState("");
   const [viewDimension, setViewDimension] = useState<"account" | "date" | "date_account">("account");
   const [data, setData] = useState<AdInsight[]>([]);
@@ -422,7 +451,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
             >
               <div className="flex items-center gap-3">
                 <LayoutDashboard className="w-4 h-4" />
-                <span>Meta 广告账户</span>
+                <span>数据中心</span>
               </div>
               <ChevronDown className={cn("w-4 h-4 transition-transform", dashboardExpanded ? "rotate-180" : "")} />
             </button>
@@ -667,8 +696,6 @@ export function Dashboard({ onLogout }: DashboardProps) {
               <OverviewDashboard data={data} mappings={mappings} storeSummaries={storeSummaries} />
             ) : currentTab === "store_data" ? (
               <StoreDataDashboard data={data} mappings={mappings} storeSummaries={storeSummaries} />
-            ) : currentTab === "product_intelligence" ? (
-              <ProductIntelligenceDashboard data={data} startDate={startDate} endDate={endDate} />
             ) : currentTab === "creative_intelligence" ? (
               <CreativeIntelligenceDashboard data={data} startDate={startDate} endDate={endDate} onStartDateChange={setStartDate} onEndDateChange={setEndDate} />
             ) : currentTab === "campaign_structure" ? (
@@ -2325,8 +2352,38 @@ function SettingsPage() {
 
 function CategoryDashboard({ mappings, onManageAccounts }: { mappings: Record<string, any>, onManageAccounts: () => void }) {
   const navigate = useNavigate();
-  const [startDate, setStartDate] = useState<Date>(subDays(new Date(), 1));
-  const [endDate, setEndDate] = useState<Date>(subDays(new Date(), 1));
+  const [startDate, setStartDate] = useState<Date>(() => {
+    try {
+      const saved = localStorage.getItem("META_DASHBOARD_START_DATE");
+      if (saved) {
+        const parsed = new Date(saved);
+        if (!isNaN(parsed.getTime())) return parsed;
+      }
+    } catch (e) {}
+    return subDays(new Date(), 1);
+  });
+  const [endDate, setEndDate] = useState<Date>(() => {
+    try {
+      const saved = localStorage.getItem("META_DASHBOARD_END_DATE");
+      if (saved) {
+        const parsed = new Date(saved);
+        if (!isNaN(parsed.getTime())) return parsed;
+      }
+    } catch (e) {}
+    return subDays(new Date(), 1);
+  });
+
+  useEffect(() => {
+    if (startDate) {
+      localStorage.setItem("META_DASHBOARD_START_DATE", startDate.toISOString());
+    }
+  }, [startDate]);
+
+  useEffect(() => {
+    if (endDate) {
+      localStorage.setItem("META_DASHBOARD_END_DATE", endDate.toISOString());
+    }
+  }, [endDate]);
   const [rawInsights, setRawInsights] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -2421,9 +2478,17 @@ function CategoryDashboard({ mappings, onManageAccounts }: { mappings: Record<st
   }, [data]);
   const stores = useMemo(() => {
     const safeData = Array.isArray(data) ? data : [];
+    const storeSpends: Record<string, number> = {};
+    safeData.forEach((d) => {
+      if (d.store) {
+        storeSpends[d.store] = (storeSpends[d.store] || 0) + (d.spend || 0);
+      }
+    });
+    const activeList = Array.from(new Set(safeData.map((d) => d.store).filter(Boolean)))
+      .filter((storeName) => (storeSpends[storeName] || 0) > 0);
     return [
       "all",
-      ...Array.from(new Set(safeData.map((d) => d.store).filter(Boolean))),
+      ...activeList,
     ].sort();
   }, [data]);
   const owners = useMemo(() => {

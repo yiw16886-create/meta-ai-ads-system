@@ -10,16 +10,9 @@ import { cn } from "@/lib/utils";
 export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endDate?: Date }) {
   const navigate = useNavigate();
   const [stores, setStores] = useState<any[]>([]);
-  const [mappings, setMappings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [filterType, setFilterType] = useState<"connected" | "unconnected" | "all">("connected");
-
-  const getAdAccountsCount = (storeName: string) => {
-    return mappings.filter(
-      (m) => (m.store || "").toLowerCase() === (storeName || "").toLowerCase()
-    ).length;
-  };
 
   const isApiBound = (store: any) => {
     return !!(store.shopline_token?.trim() || store.shopify_token?.trim() || store.shoplazza_token?.trim());
@@ -28,15 +21,13 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
   const allCount = stores.length;
   
   const connectedStores = stores.filter(store => {
-    const adCount = getAdAccountsCount(store.name);
     const apiBound = isApiBound(store);
-    return adCount > 0 && apiBound;
+    return apiBound;
   });
 
   const unconnectedStores = stores.filter(store => {
-    const adCount = getAdAccountsCount(store.name);
     const apiBound = isApiBound(store);
-    return adCount === 0 || !apiBound;
+    return !apiBound;
   });
 
   const displayedStores = filterType === "connected"
@@ -79,15 +70,11 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
     }
   };
 
-  const fetchStoresAndMappings = async () => {
+  const fetchStores = async () => {
     setLoading(true);
     try {
-      const [storesRes, mappingsRes] = await Promise.all([
-        axios.get("/api/stores"),
-        axios.get("/api/mappings")
-      ]);
+      const storesRes = await axios.get("/api/stores");
       setStores(Array.isArray(storesRes.data) ? storesRes.data : []);
-      setMappings(Array.isArray(mappingsRes.data) ? mappingsRes.data : []);
     } catch (err) {
       console.error(err);
     } finally {
@@ -96,7 +83,7 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
   };
 
   useEffect(() => {
-    fetchStoresAndMappings();
+    fetchStores();
   }, []);
 
   const handleDeleteStore = async (storeId: number) => {
@@ -107,7 +94,7 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
       setDeletingStoreId(null);
       setDeleteStoreName("");
       // Refresh list
-      fetchStoresAndMappings();
+      fetchStores();
     } catch (err: any) {
       console.error(err);
       toast.error(err.response?.data?.error || "删除店铺失败，请重试");
@@ -226,7 +213,6 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {displayedStores.map((store) => {
-            const adAccCount = getAdAccountsCount(store.name);
             const apiBound = isApiBound(store);
             return (
               <Card
@@ -253,7 +239,7 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
                               {store.platform === "shoplazza" ? "店匠" : store.platform}
                             </span>
                           )}
-                          {(!adAccCount || !apiBound) && (
+                          {!apiBound && (
                             <span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold bg-amber-50 text-amber-600 border border-amber-200 uppercase inline-block">
                               未连接
                             </span>
@@ -286,12 +272,6 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
                   </div>
 
                   <div className="flex items-center justify-between text-sm text-gray-600 mt-4 border-t pt-4">
-                    <div className="flex items-center gap-2">
-                      <LinkIcon className="h-4 w-4" />
-                      <span>
-                        已关联 {adAccCount} 个广告账户
-                      </span>
-                    </div>
                     <span className={cn(
                       "text-xs px-1.5 py-0.5 rounded font-mono",
                       apiBound ? "text-emerald-700 bg-emerald-50" : "text-slate-400 bg-slate-50"

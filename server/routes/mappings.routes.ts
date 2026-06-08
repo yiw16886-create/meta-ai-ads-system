@@ -121,6 +121,14 @@ router.post("/batch", async (req, res) => {
               owner: (mapping.owner && String(mapping.owner).trim() !== "未分配") ? String(mapping.owner).trim() : null,
             }
           });
+          // Also delete corresponding AdAccount record since storeId is not nullable
+          try {
+            await prisma.adAccount.delete({
+              where: { fb_account_id: cleanAccId }
+            });
+          } catch (e) {
+            // ignore if not found in AdAccount
+          }
           return { success: true, accountId: cleanAccId, action: 'unmapped' };
         }
 

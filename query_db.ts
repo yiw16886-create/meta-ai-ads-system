@@ -1,17 +1,11 @@
 import prisma from './db/index.ts';
 
-async function checkOrders() {
-  const store = await prisma.store.findFirst({
-    where: { name: 'kolaich' }
-  });
-  if (!store) {
-    console.log('Store not found');
-    return;
+async function listStores() {
+  const stores = await prisma.store.findMany();
+  console.log('Stores in DB:');
+  for (const s of stores) {
+    console.log(`- ID: ${s.id}, Name: ${s.name}, Platform: ${s.platform}, Domain: ${s.domain}`);
+    console.log(`  Shoplazza Token: ${s.shoplazza_token ? 'YES' : 'NO'}, Shopline Token: ${s.shopline_token ? 'YES' : 'NO'}`);
   }
-  const o = await prisma.order.findMany({
-    where: { storeId: store.id },
-    take: 5
-  });
-  console.log(o);
 }
-checkOrders();
+listStores();

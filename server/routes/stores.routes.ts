@@ -19,20 +19,159 @@ router.get("/", async (req, res) => {
   }
 });
 
+function getOffsetByIana(ianaName: string): string {
+  try {
+    const date = new Date();
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: ianaName,
+      timeZoneName: 'longOffset'
+    });
+    const parts = formatter.formatToParts(date);
+    const offsetPart = parts.find(p => p.type === 'timeZoneName');
+    if (offsetPart) {
+      const val = offsetPart.value; // e.g. "GMT-05:00", "GMT+08:00", "GMT"
+      if (val === "GMT") return "UTC";
+      if (val.startsWith("GMT")) {
+        let off = val.replace("GMT", "");
+        const match = off.match(/([+-])(\d+):(\d+)/);
+        if (match) {
+          const sign = match[1];
+          const hrs = parseInt(match[2], 10);
+          const mins = parseInt(match[3], 10);
+          if (mins === 0) {
+            return `GMT${sign}${hrs}`;
+          } else {
+            return `GMT${sign}${hrs}:${mins}`;
+          }
+        }
+      }
+    }
+  } catch (e: any) {
+    console.error("[Tz Detection] Error formatting timezone using Intl", e.message);
+  }
+  return "GMT+8";
+}
+
+async function detectStoreTimezone(
+  platform: string,
+  domain: string,
+  token: string,
+  existingTimezone?: string | null
+): Promise<string> {
+  const cleanDomain = domain.replace(/^https?:\/\//, "").replace(/\/$/, "").replace(/\/admin\/.*$/, "");
+
+  // 1. Try Platform Shop Info API
+  if (platform === "shopify") {
+    try {
+      const response = await axios.get(`https://${cleanDomain}/admin/api/2024-01/shop.json`, {
+        headers: {
+          'X-Shopify-Access-Token': token,
+          'Content-Type': 'application/json'
+        },
+        timeout: 5000
+      });
+      const ianaTz = response.data?.shop?.iana_timezone;
+      if (ianaTz) {
+        return getOffsetByIana(ianaTz);
+      }
+      const tzExpr = response.data?.shop?.timezone;
+      if (tzExpr) {
+        const match = tzExpr.match(/GMT([+-]\d+:\d+|[+-]\d+)/);
+        if (match) return `GMT${match[1]}`;
+      }
+    } catch (e: any) {
+      console.warn(`[Tz Detection] Shopify Shop API failed:`, e.message);
+    }
+  }
+
+  // 2. Try Fetching Orders and inspecting the created_at/updated_at timestamp offset
+  try {
+    let orders: any[] = [];
+    if (platform === "shopify") {
+      const response = await axios.get(`https://${cleanDomain}/admin/api/2024-01/orders.json?limit=1`, {
+        headers: { 'X-Shopify-Access-Token': token },
+        timeout: 5000
+      });
+      orders = response.data?.orders || [];
+    } else if (platform === "shopline") {
+      const response = await axios.get(`https://${cleanDomain}/admin/openapi/v20240301/orders.json?limit=1`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+        timeout: 5000
+      });
+      orders = response.data?.data || response.data?.orders || [];
+    } else if (platform === "shoplazza") {
+      const response = await axios.get(`https://${cleanDomain}/openapi/2022-01/orders?limit=1`, {
+        headers: { 'Access-Token': token },
+        timeout: 5000
+      });
+      orders = response.data?.orders || [];
+    }
+
+    if (orders && orders.length > 0) {
+      const firstOrder = orders[0];
+      const stamp = firstOrder.created_at || firstOrder.updated_at || firstOrder.processed_at;
+      if (stamp && typeof stamp === "string") {
+        if (stamp.endsWith("Z")) {
+          return "UTC";
+        }
+        const match = stamp.match(/([+-])(\d{2}):?(\d{2})$/);
+        if (match) {
+          const sign = match[1];
+          const hrs = parseInt(match[2], 10);
+          const mins = parseInt(match[3], 10);
+          if (mins === 0) {
+            return `GMT${sign}${hrs}`;
+          } else {
+            return `GMT${sign}${hrs}:${mins}`;
+          }
+        }
+      }
+    }
+  } catch (e: any) {
+    console.warn(`[Tz Detection] Orders inspect failed:`, e.message);
+  }
+
+  // 3. Fallback to existing timezone
+  if (existingTimezone) {
+    return existingTimezone;
+  }
+
+  // 4. Fallback to GMT+8
+  return "GMT+8";
+}
+
 router.post("/", async (req, res) => {
   const { id, name, platform, shopline_token, shopify_token, shoplazza_token, domain, visitors, timezone } = req.body;
   try {
+    let resolvedTimezone = "GMT+8";
+    const actualPlatform = platform || "shopline";
+    const token = actualPlatform === "shopify" ? shopify_token : (actualPlatform === "shoplazza" ? shoplazza_token : shopline_token);
+
+    if (token && domain) {
+      let existingTz = "GMT+8";
+      if (id) {
+        const existing = await prisma.store.findUnique({ where: { id: parseInt(id, 10) } });
+        existingTz = existing?.timezone || "GMT+8";
+      }
+      resolvedTimezone = await detectStoreTimezone(actualPlatform, domain, token, existingTz);
+    } else if (timezone) {
+      resolvedTimezone = timezone;
+    } else if (id) {
+      const existing = await prisma.store.findUnique({ where: { id: parseInt(id, 10) } });
+      resolvedTimezone = existing?.timezone || "GMT+8";
+    }
+
     if (id) {
       const updatedStore = await prisma.store.update({
         where: { id: parseInt(id, 10) },
         data: { 
           name, 
-          platform: platform || "shopline",
+          platform: actualPlatform,
           shopline_token, 
           shopify_token, 
           shoplazza_token,
           domain,
-          timezone: timezone || undefined,
+          timezone: resolvedTimezone,
           visitors: visitors !== undefined ? parseInt(visitors, 10) : undefined
         },
       });
@@ -41,12 +180,12 @@ router.post("/", async (req, res) => {
       const newStore = await prisma.store.create({
         data: { 
           name, 
-          platform: platform || "shopline",
+          platform: actualPlatform,
           shopline_token, 
           shopify_token, 
           shoplazza_token,
           domain,
-          timezone: timezone || "GMT+8",
+          timezone: resolvedTimezone,
           visitors: visitors !== undefined ? parseInt(visitors, 10) : 0
         },
       });
@@ -114,14 +253,14 @@ router.get("/all-dashboard-summary", async (req, res) => {
       });
 
       const ordersForSales = orders.filter(
-        (o) => o.createdAt >= start && o.createdAt <= end
+        (o) => o.createdAt >= storeStart && o.createdAt <= storeEnd
       );
 
       const ordersForRefunds = orders.filter(
         (o) =>
           o.refunded &&
-          ((o.refundedAt && o.refundedAt >= start && o.refundedAt <= end) ||
-            (!o.refundedAt && o.createdAt >= start && o.createdAt <= end))
+          ((o.refundedAt && o.refundedAt >= storeStart && o.refundedAt <= storeEnd) ||
+            (!o.refundedAt && o.createdAt >= storeStart && o.createdAt <= storeEnd))
       );
 
       let totalSales = 0;
@@ -215,8 +354,8 @@ router.get("/:id/dashboard-summary", async (req, res) => {
     if (endDate && typeof endDate === "string") {
       end = new Date(`${endDate}T23:59:59.999${tzOffset}`);
     }
-    const startStr = start.toISOString().split("T")[0];
-    const endStr = end.toISOString().split("T")[0];
+    const startStr = (startDate && typeof startDate === "string") ? startDate : start.toISOString().split("T")[0];
+    const endStr = (endDate && typeof endDate === "string") ? endDate : end.toISOString().split("T")[0];
 
     const orders = await prisma.order.findMany({
       where: {
@@ -303,39 +442,45 @@ router.post("/test-shoplazza-connection", async (req, res) => {
     'Content-Type': 'application/json'
   };
 
-  // Define plausible Shoplazza OpenAPI paths for product query to try
-  const candidateUrls = [
+  const productCandidates = [
     `https://${cleanDomain}/openapi/2022-01/products?limit=10`,
     `https://${cleanDomain}/openapi/2020-01/products?limit=10`,
     `https://${cleanDomain}/openapi/2022-01/products.json?limit=10`,
     `https://${cleanDomain}/openapi/2020-01/products.json?limit=10`
   ];
 
-  let lastError: any = null;
-  let successfulResponse: any = null;
-  let chosenUrl = "";
+  const orderCandidates = [
+    `https://${cleanDomain}/openapi/2022-01/orders?limit=10`,
+    `https://${cleanDomain}/openapi/2020-01/orders?limit=10`,
+    `https://${cleanDomain}/openapi/2022-01/orders.json?limit=10`,
+    `https://${cleanDomain}/openapi/2020-01/orders.json?limit=10`
+  ];
 
-  for (const url of candidateUrls) {
-    console.log(`[Shoplazza Test HTTP] Trying candidate URL: ${url}`);
+  let successfulProductResponse: any = null;
+  let productsUrlUsed = "";
+  let productsError: any = null;
+
+  for (const url of productCandidates) {
+    console.log(`[Shoplazza Test HTTP] Trying Product Candidate URL: ${url}`);
     try {
-      const response = await axios.get(url, { headers, timeout: 8000 });
+      const response = await axios.get(url, { headers, timeout: 6000 });
       if (response.status === 200 && response.data) {
-        successfulResponse = response;
-        chosenUrl = url;
-        break; // Working endpoint found!
+        successfulProductResponse = response;
+        productsUrlUsed = url;
+        break;
       }
-    } catch (error: any) {
-      console.warn(`[Shoplazza Test HTTP] Failed candidate URL: ${url}. Status/Error: ${error.response?.status || error.message}`);
-      lastError = error;
+    } catch (prodErr: any) {
+      console.warn(`[Shoplazza Test HTTP] Product candidate failed: ${url}. Status/Error: ${prodErr.response?.status || prodErr.message}`);
+      productsError = prodErr;
     }
   }
 
-  if (successfulResponse) {
-    const products = successfulResponse.data.products || successfulResponse.data.data || [];
-    
+  if (successfulProductResponse) {
+    const productsData = successfulProductResponse.data;
+    const products = productsData.products || productsData.data?.products || (Array.isArray(productsData.data) ? productsData.data : []) || [];
     const fetchedList = products.map((p: any) => ({
       id: p.id,
-      title: p.title,
+      title: p.title || p.name,
       vendor: p.vendor || "",
       product_type: p.product_type || "Uncategorized",
       sku: p.variants?.[0]?.sku || "",
@@ -345,24 +490,83 @@ router.post("/test-shoplazza-connection", async (req, res) => {
       created_at: p.created_at,
     }));
 
-    const pathOnly = chosenUrl.replace(`https://${cleanDomain}`, "");
+    const pathOnly = productsUrlUsed.replace(`https://${cleanDomain}`, "");
     return res.json({
       success: true,
-      message: `成功通过接口 "${pathOnly}" 联通店匠 API 并获取到 ${fetchedList.length} 个商品！`,
+      message: `成功连通店匠 API (通过 Products 接口: "${pathOnly}") 并获取到 ${fetchedList.length} 个最新商品！`,
       products: fetchedList,
-      api_path_used: chosenUrl,
-    });
-  } else {
-    console.error(`[Shoplazza Test HTTP Error] All candidates failed.`);
-    const errorDetails = lastError?.response?.data 
-      ? typeof lastError.response.data === "object" ? JSON.stringify(lastError.response.data) : String(lastError.response.data)
-      : lastError?.message || "网络请求失败";
-    return res.status(500).json({
-      success: false,
-      error: `无法与 Shoplazza API 通信，已重试多个 OpenAPI 路径格式。`,
-      details: `最近一次错误: ${errorDetails}`,
+      api_path_used: productsUrlUsed,
     });
   }
+
+  console.log(`[Shoplazza Test HTTP] All product endpoints failed or returned error. Trying Fallback Orders URLs...`);
+
+  let successfulOrderResponse: any = null;
+  let ordersUrlUsed = "";
+  let ordersError: any = null;
+
+  for (const url of orderCandidates) {
+    console.log(`[Shoplazza Test HTTP] Trying Order Fallback Candidate URL: ${url}`);
+    try {
+      const response = await axios.get(url, { headers, timeout: 6000 });
+      if (response.status === 200 && response.data) {
+        successfulOrderResponse = response;
+        ordersUrlUsed = url;
+        break;
+      }
+    } catch (ordErr: any) {
+      console.warn(`[Shoplazza Test HTTP] Order candidate failed: ${url}. Status/Error: ${ordErr.response?.status || ordErr.message}`);
+      ordersError = ordErr;
+    }
+  }
+
+  if (successfulOrderResponse) {
+    const ordersData = successfulOrderResponse.data;
+    const orders = ordersData.orders || ordersData.data?.orders || (Array.isArray(ordersData.data) ? ordersData.data : []) || [];
+    const fetchedList: any[] = [];
+    const seenProductIds = new Set();
+
+    for (const order of orders) {
+      if (!order.line_items) continue;
+      for (const item of order.line_items) {
+        const productId = item.product_id ? item.product_id.toString() : null;
+        if (productId && !seenProductIds.has(productId)) {
+          seenProductIds.add(productId);
+          fetchedList.push({
+            id: productId,
+            title: item.title || item.name || "Unknown Product",
+            vendor: "",
+            product_type: "订单销售商品",
+            sku: item.sku || "",
+            price: item.price || "0.00",
+            inventory: item.quantity ?? 1,
+            image: null,
+            created_at: order.created_at,
+          });
+        }
+      }
+    }
+
+    const pathOnly = ordersUrlUsed.replace(`https://${cleanDomain}`, "");
+    return res.json({
+      success: true,
+      message: `成功连通店匠 API (通过 Orders 订单流接口: "${pathOnly}" 反查) 并成功同步到 ${fetchedList.length} 个订单关联商品！`,
+      products: fetchedList,
+      api_path_used: ordersUrlUsed,
+    });
+  }
+
+  const lastErr = productsError || ordersError;
+  console.error(`[Shoplazza Test HTTP Error] All candidates failed. Last error:`, lastErr?.response?.data || lastErr?.message);
+  const errorDetails = lastErr?.response?.data 
+    ? typeof lastErr.response.data === "object" ? JSON.stringify(lastErr.response.data) : String(lastErr.response.data)
+    : lastErr?.message || "网络请求失败";
+
+  return res.status(500).json({
+    success: false,
+    error: `无法与 Shoplazza API 通信，已重试多个 API 路由（已试 Products 与 Orders 多个版本及后缀）。`,
+    details: `最近一次错误: ${errorDetails}`,
+  });
 });
 
 router.post("/test-shopify-connection", async (req, res) => {

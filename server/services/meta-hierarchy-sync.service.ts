@@ -45,6 +45,18 @@ export async function ensureAdAccounts(token: string) {
           where: { fbAccountId: acc.account_id }
         });
 
+        if (mapping && mapping.storeId === null) {
+          // Explicitly unmapped by user -> delete existing AdAccount if it exists
+          if (existingAdAccount) {
+            try {
+              await prisma.adAccount.delete({
+                where: { fb_account_id: acc.account_id }
+              });
+            } catch (e) {}
+          }
+          continue; // Skip creating or updating AdAccount
+        }
+
         // Determine the correct storeId alignment:
         // Priority 1: Mapped store ID from AccountMapping
         // Priority 2: Existing store ID on the AdAccount
@@ -216,25 +228,32 @@ export async function syncMetaHierarchy(token: string, options: { syncCreative?:
       const adsets = adsetsRes.data?.data || [];
       console.log(`[Meta Hierarchy Sync] Received ${adsets.length} adsets`);
 
+      const cleanPrefix = (str: string | null | undefined): string => {
+        if (!str) return "";
+        return str.replace(/^(as-|ad-|camp-)/gi, "");
+      };
+
       let adsetSuccess = 0;
       for (const adset of adsets) {
         try {
+          const cleanedSetId = cleanPrefix(adset.id);
+          const cleanedCampId = cleanPrefix(adset.campaign_id);
           const existingAdSet = await prisma.adSet.findUnique({
-            where: { id: adset.id }
+            where: { id: cleanedSetId }
           });
 
           if (existingAdSet) {
-            if (existingAdSet.name !== adset.name || existingAdSet.campaignId !== adset.campaign_id) {
+            if (existingAdSet.name !== adset.name || existingAdSet.campaignId !== cleanedCampId) {
               await prisma.adSet.update({
-                where: { id: adset.id },
-                data: { name: adset.name, campaignId: adset.campaign_id }
+                where: { id: cleanedSetId },
+                data: { name: adset.name, campaignId: cleanedCampId }
               });
             }
           } else {
             await prisma.adSet.create({
               data: {
-                id: adset.id,
-                campaignId: adset.campaign_id,
+                id: cleanedSetId,
+                campaignId: cleanedCampId,
                 accountId: rawAccountId,
                 name: adset.name
               }
@@ -262,18 +281,21 @@ export async function syncMetaHierarchy(token: string, options: { syncCreative?:
       for (const ad of ads) {
         const creativeId = ad.creative?.id || null;
         try {
+          const cleanedAdId = cleanPrefix(ad.id);
+          const cleanedSetId = cleanPrefix(ad.adset_id);
+          const cleanedCampId = cleanPrefix(ad.campaign_id);
           const existingAd = await prisma.ad.findUnique({
-            where: { id: ad.id }
+            where: { id: cleanedAdId }
           });
 
           if (existingAd) {
-            if (existingAd.name !== ad.name || existingAd.adsetId !== ad.adset_id || existingAd.campaignId !== ad.campaign_id || existingAd.creativeId !== creativeId) {
+            if (existingAd.name !== ad.name || existingAd.adsetId !== cleanedSetId || existingAd.campaignId !== cleanedCampId || existingAd.creativeId !== creativeId) {
               await prisma.ad.update({
-                where: { id: ad.id },
+                where: { id: cleanedAdId },
                 data: {
                   name: ad.name,
-                  adsetId: ad.adset_id,
-                  campaignId: ad.campaign_id,
+                  adsetId: cleanedSetId,
+                  campaignId: cleanedCampId,
                   creativeId: creativeId
                 }
               });
@@ -281,9 +303,9 @@ export async function syncMetaHierarchy(token: string, options: { syncCreative?:
           } else {
             await prisma.ad.create({
               data: {
-                id: ad.id,
-                adsetId: ad.adset_id,
-                campaignId: ad.campaign_id,
+                id: cleanedAdId,
+                adsetId: cleanedSetId,
+                campaignId: cleanedCampId,
                 accountId: rawAccountId,
                 name: ad.name,
                 creativeId: creativeId
@@ -410,23 +432,30 @@ export async function syncMetaHierarchy(token: string, options: { syncCreative?:
           mockCampCount++;
         }
 
+        const cleanPrefixMock = (str: string | null | undefined): string => {
+          if (!str) return "";
+          return str.replace(/^(as-|ad-|camp-)/gi, "");
+        };
+
         let mockAdsetCount = 0;
         for (const adset of mockAdSets) {
+          const cleanedSetId = cleanPrefixMock(adset.id);
+          const cleanedCampId = cleanPrefixMock(adset.campaignId);
           const existingAdSet = await prisma.adSet.findUnique({
-            where: { id: adset.id }
+            where: { id: cleanedSetId }
           });
           if (existingAdSet) {
-            if (existingAdSet.name !== adset.name || existingAdSet.campaignId !== adset.campaignId) {
+            if (existingAdSet.name !== adset.name || existingAdSet.campaignId !== cleanedCampId) {
               await prisma.adSet.update({
-                where: { id: adset.id },
-                data: { name: adset.name, campaignId: adset.campaignId }
+                where: { id: cleanedSetId },
+                data: { name: adset.name, campaignId: cleanedCampId }
               });
             }
           } else {
             await prisma.adSet.create({
               data: {
-                id: adset.id,
-                campaignId: adset.campaignId,
+                id: cleanedSetId,
+                campaignId: cleanedCampId,
                 accountId: rawAccountId,
                 name: adset.name
               }
@@ -437,17 +466,20 @@ export async function syncMetaHierarchy(token: string, options: { syncCreative?:
 
         let mockAdCount = 0;
         for (const ad of mockAds) {
+          const cleanedAdId = cleanPrefixMock(ad.id);
+          const cleanedSetId = cleanPrefixMock(ad.adsetId);
+          const cleanedCampId = cleanPrefixMock(ad.campaignId);
           const existingAd = await prisma.ad.findUnique({
-            where: { id: ad.id }
+            where: { id: cleanedAdId }
           });
           if (existingAd) {
-            if (existingAd.name !== ad.name || existingAd.adsetId !== ad.adsetId || existingAd.campaignId !== ad.campaignId || existingAd.creativeId !== ad.creativeId) {
+            if (existingAd.name !== ad.name || existingAd.adsetId !== cleanedSetId || existingAd.campaignId !== cleanedCampId || existingAd.creativeId !== ad.creativeId) {
               await prisma.ad.update({
-                where: { id: ad.id },
+                where: { id: cleanedAdId },
                 data: {
                   name: ad.name,
-                  adsetId: ad.adsetId,
-                  campaignId: ad.campaignId,
+                  adsetId: cleanedSetId,
+                  campaignId: cleanedCampId,
                   creativeId: ad.creativeId
                 }
               });
@@ -455,9 +487,9 @@ export async function syncMetaHierarchy(token: string, options: { syncCreative?:
           } else {
             await prisma.ad.create({
               data: {
-                id: ad.id,
-                adsetId: ad.adsetId,
-                campaignId: ad.campaignId,
+                id: cleanedAdId,
+                adsetId: cleanedSetId,
+                campaignId: cleanedCampId,
                 accountId: rawAccountId,
                 name: ad.name,
                 creativeId: ad.creativeId

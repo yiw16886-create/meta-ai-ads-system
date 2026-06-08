@@ -172,6 +172,18 @@ export async function syncSingleAccountAdData(accountId: string, startDate: stri
     const mapping = await prisma.accountMapping.findFirst({
       where: { fbAccountId: rawAccountId }
     });
+
+    if (mapping && mapping.storeId === null) {
+      if (dbAdAccount) {
+        try {
+          await prisma.adAccount.delete({
+            where: { fb_account_id: rawAccountId }
+          });
+        } catch (e) {}
+      }
+      return; // Skip syncing this ad account since it is explicitly unmapped
+    }
+
     let targetStoreId: number | null = mapping ? mapping.storeId : null;
 
     if (!dbAdAccount) {

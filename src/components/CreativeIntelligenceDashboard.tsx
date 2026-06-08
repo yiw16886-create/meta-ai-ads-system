@@ -74,6 +74,16 @@ interface CreativeData {
   aiRiskStatus: string;
   trendStatus: string;
   aiSuggestion?: string;
+  accountId?: string;
+  adsetId?: string;
+  adId?: string;
+  adName?: string;
+  campaignId?: string;
+  reach?: number;
+  addToCart?: number;
+  productLink?: string;
+  imageUrl?: string;
+  impressions: number;
 }
 
 interface FatigueDetails {
@@ -159,6 +169,101 @@ export function CreativeIntelligenceDashboard({
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
   const [selectedPreviewCreative, setSelectedPreviewCreative] = useState<CreativeData | null>(null);
 
+  // Sorting state for (1)素材预览设置
+  const [previewSortField, setPreviewSortField] = useState<string>("spend");
+  const [previewSortOrder, setPreviewSortOrder] = useState<"asc" | "desc">("desc");
+
+  // Sorting state for (2)素材表现指标
+  const [metricsSortField, setMetricsSortField] = useState<string>("spend");
+  const [metricsSortOrder, setMetricsSortOrder] = useState<"asc" | "desc">("desc");
+
+  // Scroll Synchronization Refs & State
+  const previewContainerRef = React.useRef<HTMLDivElement>(null);
+  const metricsContainerRef = React.useRef<HTMLDivElement>(null);
+  const previewScrollBarRef = React.useRef<HTMLDivElement>(null);
+  const metricsScrollBarRef = React.useRef<HTMLDivElement>(null);
+
+  const [previewScrollWidth, setPreviewScrollWidth] = React.useState(0);
+  const [metricsScrollWidth, setMetricsScrollWidth] = React.useState(0);
+
+  React.useEffect(() => {
+    const updateWidths = () => {
+      if (previewContainerRef.current) {
+        setPreviewScrollWidth(previewContainerRef.current.scrollWidth);
+      }
+      if (metricsContainerRef.current) {
+        setMetricsScrollWidth(metricsContainerRef.current.scrollWidth);
+      }
+    };
+    
+    const timer = setTimeout(updateWidths, 150);
+
+    const observers: ResizeObserver[] = [];
+    if (previewContainerRef.current) {
+      const obs = new ResizeObserver(updateWidths);
+      obs.observe(previewContainerRef.current);
+      if (previewContainerRef.current.firstElementChild) {
+        obs.observe(previewContainerRef.current.firstElementChild);
+      }
+      observers.push(obs);
+    }
+    if (metricsContainerRef.current) {
+      const obs = new ResizeObserver(updateWidths);
+      obs.observe(metricsContainerRef.current);
+      if (metricsContainerRef.current.firstElementChild) {
+        obs.observe(metricsContainerRef.current.firstElementChild);
+      }
+      observers.push(obs);
+    }
+
+    return () => {
+      clearTimeout(timer);
+      observers.forEach(obs => obs.disconnect());
+    };
+  }, [activeSubTab, creatives, searchTerm]);
+
+  const handleContainerScroll = (tab: "preview" | "metrics") => {
+    const container = tab === "preview" ? previewContainerRef.current : metricsContainerRef.current;
+    const scrollBar = tab === "preview" ? previewScrollBarRef.current : metricsScrollBarRef.current;
+    if (container && scrollBar) {
+      scrollBar.scrollLeft = container.scrollLeft;
+    }
+  };
+
+  const handleScrollBarScroll = (tab: "preview" | "metrics", e: React.UIEvent<HTMLDivElement>) => {
+    const container = tab === "preview" ? previewContainerRef.current : metricsContainerRef.current;
+    if (container) {
+      container.scrollLeft = e.currentTarget.scrollLeft;
+    }
+  };
+
+  const handlePreviewSort = (field: string) => {
+    if (previewSortField === field) {
+      setPreviewSortOrder(prev => prev === "asc" ? "desc" : "asc");
+    } else {
+      setPreviewSortField(field);
+      setPreviewSortOrder("desc");
+    }
+  };
+
+  const handleMetricsSort = (field: string) => {
+    if (metricsSortField === field) {
+      setMetricsSortOrder(prev => prev === "asc" ? "desc" : "asc");
+    } else {
+      setMetricsSortField(field);
+      setMetricsSortOrder("desc");
+    }
+  };
+
+  const renderSortIcon = (field: string, currentField: string, currentOrder: "asc" | "desc") => {
+    if (currentField !== field) {
+      return <span className="inline-block ml-1 text-slate-300">↕</span>;
+    }
+    return currentOrder === "asc" 
+      ? <span className="inline-block ml-1 text-slate-800 font-extrabold text-[11px]">↑</span> 
+      : <span className="inline-block ml-1 text-slate-800 font-extrabold text-[11px]">↓</span>;
+  };
+
   const fetchCreatives = async () => {
     try {
       setLoading(true);
@@ -167,10 +272,10 @@ export function CreativeIntelligenceDashboard({
 
       const [resGrouped, resDaily, resStores] = await Promise.all([
         axios.get("/api/intelligence/creatives", {
-          params: { startDate: startStr, endDate: endStr, storeFilter: localStoreFilter }
+          params: { startDate: startStr, endDate: endStr, storeFilter: "all" }
         }),
         axios.get("/api/intelligence/creatives/daily", {
-          params: { startDate: startStr, endDate: endStr, storeFilter: localStoreFilter }
+          params: { startDate: startStr, endDate: endStr, storeFilter: "all" }
         }).catch(() => ({ data: [] })), 
         axios.get("/api/stores").catch(() => ({ data: [] }))
       ]);
@@ -202,7 +307,7 @@ export function CreativeIntelligenceDashboard({
 
   useEffect(() => {
     fetchCreatives();
-  }, [startStrKey, endStrKey, localStoreFilter]);
+  }, [startStrKey, endStrKey]);
 
   // Daily records index by creative ID
   const dailyRecordsByCreative = React.useMemo(() => {
@@ -218,6 +323,26 @@ export function CreativeIntelligenceDashboard({
     }
     return map;
   }, [dailyRecords]);
+
+  // Calculate ad spend per store ID inside this date range
+  const storeSpends = React.useMemo(() => {
+    const map: Record<string, number> = {};
+    creatives.forEach(c => {
+      const sId = c.storeId ? c.storeId.toString() : "";
+      if (sId) {
+        map[sId] = (map[sId] || 0) + (c.spend || 0);
+      }
+    });
+    return map;
+  }, [creatives]);
+
+  // Stores that have positive ad spend
+  const spendStores = React.useMemo(() => {
+    return storesList.filter(s => {
+      const sId = s.id.toString();
+      return (storeSpends[sId] || 0) > 0;
+    });
+  }, [storesList, storeSpends]);
 
   // Resolve stores matching parent active filters plus local dropdown selections
   const activeStores = React.useMemo(() => {
@@ -237,8 +362,8 @@ export function CreativeIntelligenceDashboard({
       matchedNames.add(localStoreFilter.toLowerCase());
     }
     
-    return storesList.filter(s => matchedNames.has(s.name.toLowerCase()));
-  }, [data, projectFilter, localStoreFilter, ownerFilter, storesList]);
+    return spendStores.filter(s => matchedNames.has(s.name.toLowerCase()));
+  }, [data, projectFilter, localStoreFilter, ownerFilter, spendStores]);
 
   const activeStoreIds = React.useMemo(() => {
     return activeStores.map(s => s.id);
@@ -247,6 +372,11 @@ export function CreativeIntelligenceDashboard({
   // Account filtration coupled with active filter store configurations
   const filteredCreatives = React.useMemo(() => {
     return creatives.filter(c => {
+      // 0. Spend constraint: Hide creative ad IDs that have no ad spend (spend <= 0)
+      // BUT if there is an active search term, bypass this check so the user can search and find any creative!
+      const isSearching = !!searchTerm;
+      if (!isSearching && (c.spend || 0) <= 0) return false;
+
       // 1. Account / Store coupling constraint
       // If store filter is "all" and no sub-filters exist, allow all.
       // Else, map through storeFilter matching IDs.
@@ -375,6 +505,111 @@ export function CreativeIntelligenceDashboard({
       recommendations: ["素材状态评估优良。无需额外优化策略。"]
     };
   };
+
+  // Sorted creatives for Preview tab
+  const sortedPreviewCreatives = React.useMemo(() => {
+    const list = [...filteredCreatives];
+    list.sort((a, b) => {
+      let valA: any = "";
+      let valB: any = "";
+
+      if (previewSortField === "spend") {
+        valA = a.spend || 0;
+        valB = b.spend || 0;
+      } else if (previewSortField === "purchases") {
+        valA = a.purchases || 0;
+        valB = b.purchases || 0;
+      } else if (previewSortField === "revenue") {
+        valA = a.revenue || 0;
+        valB = b.revenue || 0;
+      } else if (previewSortField === "name") {
+        valA = a.creativeName || "";
+        valB = b.creativeName || "";
+      } else if (previewSortField === "type") {
+        valA = a.type || "";
+        valB = b.type || "";
+      } else if (previewSortField === "fatigue") {
+        valA = evaluateSingleFatigue(a.id, a.creativeName, a.type).fatigueScore || 0;
+        valB = evaluateSingleFatigue(b.id, b.creativeName, b.type).fatigueScore || 0;
+      } else {
+        valA = a.spend || 0;
+        valB = b.spend || 0;
+      }
+
+      if (typeof valA === "string") {
+        return previewSortOrder === "asc"
+          ? valA.localeCompare(valB)
+          : valB.localeCompare(valA);
+      } else {
+        return previewSortOrder === "asc" ? valA - valB : valB - valA;
+      }
+    });
+    return list;
+  }, [filteredCreatives, previewSortField, previewSortOrder, fatigueMap]);
+
+  // Sorted creatives for Metrics tab
+  const sortedMetricsCreatives = React.useMemo(() => {
+    const list = [...filteredCreatives];
+    list.sort((a, b) => {
+      let valA: any = "";
+      let valB: any = "";
+
+      if (metricsSortField === "spend") {
+        valA = a.spend || 0;
+        valB = b.spend || 0;
+      } else if (metricsSortField === "purchases") {
+        valA = a.purchases || 0;
+        valB = b.purchases || 0;
+      } else if (metricsSortField === "revenue") {
+        valA = a.revenue || 0;
+        valB = b.revenue || 0;
+      } else if (metricsSortField === "cpc") {
+        const cpcA = a.purchases > 0 ? (a.spend / a.purchases) : 0;
+        const cpcB = b.purchases > 0 ? (b.spend / b.purchases) : 0;
+        valA = cpcA;
+        valB = cpcB;
+      } else if (metricsSortField === "impressions") {
+        valA = a.impressions || 0;
+        valB = b.impressions || 0;
+      } else if (metricsSortField === "reach") {
+        valA = a.reach || Math.round(a.impressions * 0.85);
+        valB = b.reach || Math.round(b.impressions * 0.85);
+      } else if (metricsSortField === "ctr") {
+        valA = a.ctr || 0;
+        valB = b.ctr || 0;
+      } else if (metricsSortField === "addToCart") {
+        valA = a.addToCart || 0;
+        valB = b.addToCart || 0;
+      } else if (metricsSortField === "accountId") {
+        valA = a.accountId || "";
+        valB = b.accountId || "";
+      } else if (metricsSortField === "adsetId") {
+        valA = a.adsetId || "";
+        valB = b.adsetId || "";
+      } else if (metricsSortField === "adId") {
+        valA = a.adId || "";
+        valB = b.adId || "";
+      } else if (metricsSortField === "id") {
+        valA = a.id || "";
+        valB = b.id || "";
+      } else if (metricsSortField === "type") {
+        valA = a.type || "";
+        valB = b.type || "";
+      } else {
+        valA = a.spend || 0;
+        valB = b.spend || 0;
+      }
+
+      if (typeof valA === "string") {
+        return metricsSortOrder === "asc"
+          ? valA.localeCompare(valB)
+          : valB.localeCompare(valA);
+      } else {
+        return metricsSortOrder === "asc" ? valA - valB : valB - valA;
+      }
+    });
+    return list;
+  }, [filteredCreatives, metricsSortField, metricsSortOrder]);
 
   // KPI aggregates for filtered data
   const totalSpend = filteredCreatives.reduce((sum, c) => sum + (c.spend || 0), 0);
@@ -545,7 +780,7 @@ export function CreativeIntelligenceDashboard({
               onChange={(e) => setLocalStoreFilter(e.target.value)}
             >
               <option value="all">全部店铺</option>
-              {storesList.map(s => (
+              {spendStores.map(s => (
                 <option key={s.id} value={s.name}>{s.name}</option>
               ))}
             </select>
@@ -676,470 +911,620 @@ export function CreativeIntelligenceDashboard({
         </Card>
       </div>
 
-      {/* THREE SECONDARY TABS KEPT ONLY */}
+            {/* SECONDARY NAVIGATION TABS */}
       <div className="flex border border-slate-150 bg-white p-1 rounded-xl shadow-sm gap-1">
         <button
+          type="button"
           onClick={() => setActiveSubTab("preview")}
-          className={`flex-1 py-3 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${activeSubTab === "preview" ? "bg-slate-900 text-white shadow" : "text-slate-500 hover:text-slate-800 hover:bg-slate-50 bg-transparent"}`}
+          className={`flex-1 py-3 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 cursor-pointer ${activeSubTab === "preview" ? "bg-slate-900 text-white shadow" : "text-slate-500 hover:text-slate-800 hover:bg-slate-50 bg-transparent"}`}
         >
-          <Maximize2 className="w-4 h-4" /> (1) 素材预览 (Creative Preview)
+          <Maximize2 className="w-4 h-4" /> (1) 素材预览设置 (Creative Setup & Preview)
         </button>
         <button
+          type="button"
           onClick={() => setActiveSubTab("metrics")}
-          className={`flex-1 py-3 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${activeSubTab === "metrics" ? "bg-slate-900 text-white shadow" : "text-slate-500 hover:text-slate-800 hover:bg-slate-50 bg-transparent"}`}
+          className={`flex-1 py-3 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 cursor-pointer ${activeSubTab === "metrics" ? "bg-slate-900 text-white shadow" : "text-slate-500 hover:text-slate-800 hover:bg-slate-50 bg-transparent"}`}
         >
-          <Award className="w-4 h-4" /> (2) 素材表现指标 (Performance Metrics)
+          <BarChart2 className="w-4 h-4" /> (2) 素材表现指标 (Performance Metrics)
         </button>
         <button
+          type="button"
           onClick={() => setActiveSubTab("trends")}
-          className={`flex-1 py-3 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${activeSubTab === "trends" ? "bg-slate-900 text-white shadow" : "text-slate-500 hover:text-slate-800 hover:bg-slate-50 bg-transparent"}`}
+          className={`flex-1 py-3 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 cursor-pointer ${activeSubTab === "trends" ? "bg-slate-900 text-white shadow" : "text-slate-500 hover:text-slate-800 hover:bg-slate-50 bg-transparent"}`}
         >
-          <BarChart2 className="w-4 h-4" /> (3) 素材趋势图表 (Trend Charts)
+          <Activity className="w-4 h-4" /> (3) 素材对比走势 (Trend Charts)
         </button>
       </div>
 
-      {loading ? (
-        <Card className="p-16 flex flex-col items-center justify-center space-y-4 bg-white border border-gray-100">
-          <Activity className="w-8 h-8 animate-spin text-slate-900" />
-          <p className="text-gray-400 text-xs font-mono">正在分析素材层级与天级性能诊断记录中...</p>
-        </Card>
-      ) : (
-        <div className="space-y-4">
-          
-          {/* TAB 1: 素材预览 (Creative Preview) */}
-          {activeSubTab === "preview" && (
-            <div className="space-y-4">
-              {/* Inline layout controller */}
-              <div className="bg-white p-4 border border-slate-100 rounded-xl shadow-sm flex flex-col sm:flex-row gap-4 items-center justify-between">
-                <div className="relative w-full sm:max-w-xs">
-                  <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
-                  <Input 
-                    type="text"
-                    placeholder="智能搜索素材名 / ID..."
-                    className="pl-9 h-9 text-xs border-slate-200"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                  />
-                </div>
-
-                <div className="flex items-center gap-2 w-full sm:w-auto">
-                  <span className="text-xs text-slate-500 font-bold shrink-0">素材类型:</span>
-                  <select
-                    className="h-9 text-xs bg-white border border-slate-200 rounded-lg px-2.5 outline-none focus:ring-1 focus:ring-slate-900"
-                    value={selectedType}
-                    onChange={(e) => setSelectedType(e.target.value)}
-                  >
-                    <option value="ALL">全部格式 (ALL)</option>
-                    <option value="IMAGE">单图 (IMAGE)</option>
-                    <option value="VIDEO">视频 (VIDEO)</option>
-                    <option value="CAROUSEL">轮播 (CAROUSEL)</option>
-                  </select>
-                </div>
-
-                <div className="text-xs text-slate-400 font-medium">
-                  符合筛选条件素材: <b className="text-slate-800">{filteredCreatives.length} / {creatives.length}</b> 个
-                </div>
+      {/* SUBTAB CONTENT */}
+      <div className="space-y-4">
+        {/* TAB 1: 素材预览设置 (Creative Preview & Settings) */}
+        {activeSubTab === "preview" && (
+          <div className="space-y-4">
+            {/* Inline layout controller */}
+            <div className="bg-white p-4 border border-slate-100 rounded-xl shadow-sm flex flex-col sm:flex-row gap-4 items-center justify-between">
+              <div className="relative w-full sm:max-w-xs">
+                <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+                <Input 
+                  type="text"
+                  placeholder="智能搜索素材名 / ID..."
+                  className="pl-9 h-9 text-xs border-slate-200"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
               </div>
 
-              {filteredCreatives.length === 0 ? (
-                <Card className="py-20 text-center text-slate-400 text-xs font-mono border-slate-100 bg-white">
-                  未匹配到符合条件的素材或当前该账户名下暂无同步的数据
-                </Card>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <span className="text-xs text-slate-500 font-bold shrink-0">素材类型:</span>
+                <select
+                  className="h-9 text-xs bg-white border border-slate-200 rounded-lg px-2.5 outline-none focus:ring-1 focus:ring-slate-900 font-medium cursor-pointer"
+                  value={selectedType}
+                  onChange={(e) => setSelectedType(e.target.value)}
+                >
+                  <option value="ALL">全部格式 (ALL)</option>
+                  <option value="IMAGE">单图 (IMAGE)</option>
+                  <option value="VIDEO">视频 (VIDEO)</option>
+                  <option value="CAROUSEL">轮播 (CAROUSEL)</option>
+                </select>
+              </div>
+
+              <div className="text-xs text-slate-450 font-medium">
+                符合筛选条件素材: <b className="text-slate-800 font-extrabold">{filteredCreatives.length} / {creatives.length}</b> 个
+              </div>
+            </div>
+
+            {filteredCreatives.length === 0 ? (
+              <Card className="py-20 text-center text-slate-400 text-xs font-mono border-slate-100 bg-white">
+                未匹配到符合条件的素材或当前该账户名下暂无同步的数据
+              </Card>
+            ) : (
+              <Card className="border border-slate-100 rounded-xl overflow-hidden shadow-sm bg-white">
+                <div 
+                  className="overflow-x-auto" 
+                  ref={previewContainerRef} 
+                  onScroll={() => handleContainerScroll("preview")}
+                >
+                  <Table>
+                    <TableHeader className="bg-slate-50 border-b border-slate-100">
+                      <TableRow>
+                        <TableHead className="text-xs font-bold text-slate-700 h-11 w-[90px] text-center">素材预览</TableHead>
+                        <TableHead 
+                          onClick={() => handlePreviewSort("name")}
+                          className="text-xs font-bold text-slate-700 h-11 cursor-pointer hover:bg-slate-100 select-none transition-all"
+                        >
+                          素材名称 / ID {renderSortIcon("name", previewSortField, previewSortOrder)}
+                        </TableHead>
+                        <TableHead 
+                          onClick={() => handlePreviewSort("type")}
+                          className="text-xs font-bold text-slate-700 h-11 w-[130px] cursor-pointer hover:bg-slate-100 select-none transition-all"
+                        >
+                          素材类型 {renderSortIcon("type", previewSortField, previewSortOrder)}
+                        </TableHead>
+                        <TableHead className="text-xs font-bold text-slate-700 h-11">关联广告标识</TableHead>
+                        <TableHead 
+                          onClick={() => handlePreviewSort("fatigue")}
+                          className="text-xs font-bold text-slate-700 h-11 w-[140px] cursor-pointer hover:bg-slate-100 select-none transition-all"
+                        >
+                          诊断疲劳评分 {renderSortIcon("fatigue", previewSortField, previewSortOrder)}
+                        </TableHead>
+                        <TableHead className="text-xs font-bold text-slate-700 h-11">商品落地页链接</TableHead>
+                        <TableHead className="text-xs font-bold text-slate-700 h-11 w-[120px] text-right">操作</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {sortedPreviewCreatives.flatMap((c, idx) => {
+                        const fatigue = evaluateSingleFatigue(c.id, c.creativeName, c.type);
+                        const row = (
+                          <TableRow key={c.id} className="hover:bg-slate-50/50 align-middle">
+                            <TableCell className="py-3 text-center">
+                              <div 
+                                className="w-12 h-12 rounded-lg bg-slate-100 border border-slate-200 overflow-hidden flex items-center justify-center cursor-pointer hover:border-meta-blue transition-colors mx-auto relative group"
+                                onClick={() => {
+                                  setSelectedPreviewCreative(c);
+                                  setPreviewModalOpen(true);
+                                }}
+                                title="点击查看详细诊断"
+                              >
+                                {c.type === "VIDEO" ? (
+                                  <div className="w-full h-full flex flex-col items-center justify-center text-blue-500 bg-blue-50 relative">
+                                    <Video className="w-5 h-5" />
+                                    <span className="text-[8px] font-bold absolute bottom-0.5 bg-blue-600 text-white px-1 py-0.2 rounded-sm scale-90">VIDEO</span>
+                                  </div>
+                                ) : c.type === "CAROUSEL" ? (
+                                  <div className="w-full h-full flex flex-col items-center justify-center text-purple-500 bg-purple-50 relative">
+                                    <Layers className="w-5 h-5" />
+                                    <span className="text-[8px] font-bold absolute bottom-0.5 bg-purple-600 text-white px-1 py-0.2 rounded-sm scale-90 text-[7px]">CAROUSEL</span>
+                                  </div>
+                                ) : (
+                                  <div className="w-full h-full flex flex-col items-center justify-center text-emerald-500 bg-emerald-50 relative">
+                                    {c.imageUrl ? (
+                                      <img src={c.imageUrl} alt="preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                    ) : (
+                                      <ImageIcon className="w-5 h-5" />
+                                    )}
+                                    <span className="text-[8px] font-bold absolute bottom-0.5 bg-emerald-600 text-white px-1 rounded-sm scale-90">IMAGE</span>
+                                  </div>
+                                )}
+                              </div>
+                            </TableCell>
+                            <TableCell className="py-3">
+                              <div className="space-y-0.5 max-w-[200px]">
+                                <div 
+                                  className="font-bold text-slate-800 hover:text-meta-blue cursor-pointer truncate text-[13px]"
+                                  onClick={() => {
+                                    setSelectedPreviewCreative(c);
+                                    setPreviewModalOpen(true);
+                                  }}
+                                >
+                                  {c.creativeName}
+                                </div>
+                                <div className="text-[10px] font-mono text-slate-400">ID: {c.id}</div>
+                              </div>
+                            </TableCell>
+                            <TableCell className="py-3">{getTypeBadge(c.type)}</TableCell>
+                            <TableCell className="py-3">
+                              <div className="space-y-1 font-mono text-[10px]">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="px-1 py-0.2 text-[8px] font-extrabold bg-slate-100 text-slate-500 rounded border border-slate-200">账户</span>
+                                  <span className="text-slate-600 font-medium">{c.accountId || "N/A"}</span>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="px-1 py-0.2 text-[8px] font-extrabold bg-blue-50 text-blue-600 rounded border border-blue-100">组ID</span>
+                                  <span className="text-slate-600 font-medium">{c.adsetId || "N/A"}</span>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="px-1 py-0.2 text-[8px] font-extrabold bg-indigo-50 text-indigo-600 rounded border border-indigo-100">广告</span>
+                                  <span className="text-slate-600 font-medium">{c.adId || "N/A"}</span>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="px-1 py-0.2 text-[8px] font-extrabold bg-emerald-50 text-emerald-600 rounded border border-emerald-100">素材</span>
+                                  <span className="text-slate-600 font-medium">{c.id}</span>
+                                </div>
+                              </div>
+                            </TableCell>
+                            <TableCell className="py-3">
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-xs font-mono font-bold text-slate-800">{fatigue.fatigueScore} 分</span>
+                                  <span className={`text-[9px] font-extrabold px-1.5 py-0.2 rounded border ${fatigue.riskBg}`}>
+                                    {fatigue.riskLevel}
+                                  </span>
+                                </div>
+                                <div className="w-20 bg-slate-100 rounded-full h-1 overflow-hidden">
+                                  <div 
+                                    className={`h-full rounded-full ${
+                                      fatigue.fatigueScore >= 70 ? 'bg-red-500' : 
+                                      fatigue.fatigueScore >= 40 ? 'bg-orange-500' : 
+                                      fatigue.fatigueScore >= 20 ? 'bg-yellow-500' : 'bg-green-500'
+                                    }`}
+                                    style={{ width: `${fatigue.fatigueScore}%` }}
+                                  ></div>
+                                </div>
+                              </div>
+                            </TableCell>
+                            <TableCell className="py-3">
+                              <div className="max-w-[220px] flex items-center gap-1.5 bg-slate-50/50 hover:bg-slate-100/50 transition-colors border border-slate-100 rounded-lg px-2.5 py-1.5 text-slate-800">
+                                <span className="overflow-hidden flex-1 shrink-0">
+                                  <a 
+                                    href={c.productLink || "#"} 
+                                    target="_blank" 
+                                    rel="noopener noreferrer"
+                                    className="text-[11px] font-mono text-meta-blue font-bold truncate block underline hover:text-blue-700"
+                                    onClick={(e) => e.stopPropagation()}
+                                    title={c.productLink}
+                                  >
+                                    {c.productLink}
+                                  </a>
+                                </span>
+                                <ExternalLink className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                              </div>
+                            </TableCell>
+                            <TableCell className="py-3 text-right">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-8 text-xs font-bold border-slate-200 text-slate-700 hover:bg-slate-50 cursor-pointer"
+                                onClick={() => {
+                                  setSelectedPreviewCreative(c);
+                                  setPreviewModalOpen(true);
+                                }}
+                              >
+                                深度诊断
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+
+                        if (idx === 9 && sortedPreviewCreatives.length > 10) {
+                          const scrollRow = (
+                            <TableRow key="floating-preview-scrollbar-row" className="bg-slate-50/50 border-y border-slate-200">
+                              <TableCell colSpan={7} className="p-0 h-6">
+                                <div 
+                                  className="overflow-x-auto w-full flex items-center h-6 bg-slate-100 border-b border-slate-200 scrollbar-thin scrollbar-thumb-slate-300"
+                                  onScroll={(e) => handleScrollBarScroll("preview", e)}
+                                  ref={previewScrollBarRef}
+                                >
+                                  <div style={{ width: `${previewScrollWidth}px`, height: '1px' }} />
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          );
+                          return [row, scrollRow];
+                        }
+
+                        return [row];
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              </Card>
+            )}
+          </div>
+        )}
+
+        {/* TAB 2: 素材表现指标 (Performance Metrics) */}
+        {activeSubTab === "metrics" && (
+          <div className="space-y-4">
+            <div className="bg-white p-4 rounded-xl border border-slate-100 flex items-center justify-between gap-4 flex-wrap text-slate-800 shadow-sm">
+              <div className="flex items-center gap-3 text-xs leading-relaxed">
+                <Info className="w-4 h-4 text-meta-blue shrink-0 animate-pulse" />
+                <p className="text-slate-600">
+                  此报表实时呈递全级别对准关联，包括 <b>广告账户 ID</b>、<b>广告组 ID</b>、<b>广告 ID</b> 及 <b>素材 ID (Creative ID)</b> 和转化数据。全表支持横向滑动。
+                </p>
+              </div>
+              <div className="text-xs font-semibold text-slate-500">
+                当前统计素材量: <span className="text-slate-900 font-bold">{filteredCreatives.length}</span> 个
+              </div>
+            </div>
+
+            {filteredCreatives.length === 0 ? (
+              <Card className="py-20 text-center text-slate-455 text-xs font-mono border-slate-100 bg-white">
+                当前无符合筛选条件的素材表现指标数据
+              </Card>
+            ) : (
+              <Card className="border border-slate-100 rounded-xl overflow-hidden shadow-sm bg-white">
+                <div 
+                  className="overflow-x-auto"
+                  ref={metricsContainerRef}
+                  onScroll={() => handleContainerScroll("metrics")}
+                >
+                  <Table>
+                    <TableHeader className="bg-slate-50/75 border-b border-slate-100 [&_tr]:border-b-0">
+                      <TableRow>
+                        <TableHead 
+                          onClick={() => handleMetricsSort("accountId")}
+                          className="text-xs font-bold text-slate-700 h-11 whitespace-nowrap cursor-pointer hover:bg-slate-100 select-none transition-all"
+                        >
+                          广告账户 ID (Account ID) {renderSortIcon("accountId", metricsSortField, metricsSortOrder)}
+                        </TableHead>
+                        <TableHead 
+                          onClick={() => handleMetricsSort("adsetId")}
+                          className="text-xs font-bold text-slate-700 h-11 whitespace-nowrap cursor-pointer hover:bg-slate-100 select-none transition-all"
+                        >
+                          广告组 ID (Ad Group ID) {renderSortIcon("adsetId", metricsSortField, metricsSortOrder)}
+                        </TableHead>
+                        <TableHead 
+                          onClick={() => handleMetricsSort("adId")}
+                          className="text-xs font-bold text-slate-700 h-11 whitespace-nowrap cursor-pointer hover:bg-slate-100 select-none transition-all"
+                        >
+                          广告 ID (Ad ID) {renderSortIcon("adId", metricsSortField, metricsSortOrder)}
+                        </TableHead>
+                        <TableHead 
+                          onClick={() => handleMetricsSort("id")}
+                          className="text-xs font-bold text-slate-700 h-11 whitespace-nowrap cursor-pointer hover:bg-slate-100 select-none transition-all"
+                        >
+                          素材 ID (Material ID) {renderSortIcon("id", metricsSortField, metricsSortOrder)}
+                        </TableHead>
+                        <TableHead 
+                          onClick={() => handleMetricsSort("type")}
+                          className="text-xs font-bold text-slate-700 h-11 whitespace-nowrap cursor-pointer hover:bg-slate-100 select-none transition-all"
+                        >
+                          素材类型 {renderSortIcon("type", metricsSortField, metricsSortOrder)}
+                        </TableHead>
+                        <TableHead 
+                          onClick={() => handleMetricsSort("spend")}
+                          className="text-xs font-bold text-slate-700 h-11 text-right whitespace-nowrap cursor-pointer hover:bg-slate-100 select-none transition-all"
+                        >
+                          花费金额 {renderSortIcon("spend", metricsSortField, metricsSortOrder)}
+                        </TableHead>
+                        <TableHead 
+                          onClick={() => handleMetricsSort("purchases")}
+                          className="text-xs font-bold text-slate-700 h-11 text-center whitespace-nowrap cursor-pointer hover:bg-slate-100 select-none transition-all"
+                        >
+                          购物次数 {renderSortIcon("purchases", metricsSortField, metricsSortOrder)}
+                        </TableHead>
+                        <TableHead 
+                          onClick={() => handleMetricsSort("cpc")}
+                          className="text-xs font-bold text-slate-700 h-11 text-right whitespace-nowrap cursor-pointer hover:bg-slate-100 select-none transition-all"
+                        >
+                          单次购物费用 {renderSortIcon("cpc", metricsSortField, metricsSortOrder)}
+                        </TableHead>
+                        <TableHead 
+                          onClick={() => handleMetricsSort("impressions")}
+                          className="text-xs font-bold text-slate-700 h-11 text-right whitespace-nowrap cursor-pointer hover:bg-slate-100 select-none transition-all"
+                        >
+                          展示次数 {renderSortIcon("impressions", metricsSortField, metricsSortOrder)}
+                        </TableHead>
+                        <TableHead 
+                          onClick={() => handleMetricsSort("reach")}
+                          className="text-xs font-bold text-slate-700 h-11 text-right whitespace-nowrap cursor-pointer hover:bg-slate-100 select-none transition-all"
+                        >
+                          覆盖人数 {renderSortIcon("reach", metricsSortField, metricsSortOrder)}
+                        </TableHead>
+                        <TableHead 
+                          onClick={() => handleMetricsSort("ctr")}
+                          className="text-xs font-bold text-slate-700 h-11 text-right whitespace-nowrap cursor-pointer hover:bg-slate-100 select-none transition-all"
+                        >
+                          点击率 {renderSortIcon("ctr", metricsSortField, metricsSortOrder)}
+                        </TableHead>
+                        <TableHead 
+                          onClick={() => handleMetricsSort("addToCart")}
+                          className="text-xs font-bold text-slate-700 h-11 text-center whitespace-nowrap cursor-pointer hover:bg-slate-100 select-none transition-all"
+                        >
+                          加入购物车 {renderSortIcon("addToCart", metricsSortField, metricsSortOrder)}
+                        </TableHead>
+                        <TableHead className="text-xs font-bold text-slate-700 h-11 whitespace-nowrap">商品链接/落地页链接</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {sortedMetricsCreatives.flatMap((c, idx) => {
+                        const singlePurchaseCost = c.purchases > 0 ? (c.spend / c.purchases) : 0;
+                        const row = (
+                          <TableRow key={c.id} className="hover:bg-slate-50/50 align-middle">
+                            {/* 1. 广告账户 ID */}
+                            <TableCell className="py-3 font-mono text-[11px] text-slate-600 font-medium whitespace-nowrap">
+                              {c.accountId || "N/A"}
+                            </TableCell>
+                            {/* 2. 广告组 ID */}
+                            <TableCell className="py-3 font-mono text-[11px] text-slate-600 font-medium whitespace-nowrap">
+                              {c.adsetId || "N/A"}
+                            </TableCell>
+                            {/* 3. 广告 ID */}
+                            <TableCell className="py-3 font-mono text-[11px] text-slate-600 font-medium whitespace-nowrap">
+                              {c.adId || "N/A"}
+                            </TableCell>
+                            {/* 4. 素材 ID */}
+                            <TableCell className="py-3 font-mono text-[11px] text-slate-800 font-bold whitespace-nowrap">
+                              {c.id}
+                            </TableCell>
+                            {/* 5. 素材类型 */}
+                            <TableCell className="py-3 whitespace-nowrap">
+                              {getTypeBadge(c.type)}
+                            </TableCell>
+                            {/* 4. 花费金额 */}
+                            <TableCell className="py-3 text-right font-mono font-bold text-slate-800 whitespace-nowrap">
+                              ${c.spend.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </TableCell>
+                            {/* 5. 购物次数 */}
+                            <TableCell className="py-3 text-center font-mono font-bold text-blue-650 whitespace-nowrap">
+                              {c.purchases}
+                            </TableCell>
+                            {/* 6. 单次购物费用 */}
+                            <TableCell className="py-3 text-right font-mono whitespace-nowrap">
+                              {singlePurchaseCost > 0 ? (
+                                <span className="font-semibold text-slate-800">${singlePurchaseCost.toFixed(2)}</span>
+                              ) : (
+                                <span className="text-slate-400 font-medium">-</span>
+                              )}
+                            </TableCell>
+                            {/* 7. 展示次数 */}
+                            <TableCell className="py-3 text-right font-mono text-slate-500 whitespace-nowrap">
+                              {c.impressions.toLocaleString()}
+                            </TableCell>
+                            {/* 8. 覆盖人数 */}
+                            <TableCell className="py-3 text-right font-mono text-slate-500 whitespace-nowrap">
+                              {(c.reach || Math.round(c.impressions * 0.85)).toLocaleString()}
+                            </TableCell>
+                            {/* 9. 点击率 */}
+                            <TableCell className="py-3 text-right font-mono font-bold text-emerald-650 whitespace-nowrap">
+                              {c.ctr.toFixed(2)}%
+                            </TableCell>
+                            {/* 10. 加入购物车 */}
+                            <TableCell className="py-3 text-center font-mono font-bold text-purple-650 whitespace-nowrap">
+                              {c.addToCart || 0}
+                            </TableCell>
+                            {/* 11. 商品链接/落地页链接 */}
+                            <TableCell className="py-3">
+                              <div className="max-w-[240px] min-w-[180px] flex items-center justify-between gap-1 bg-slate-50 hover:bg-slate-100 transition-colors border border-slate-100 rounded px-2.5 py-1 text-slate-800">
+                                <a 
+                                  href={c.productLink || "#"} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  className="text-[11px] font-mono text-meta-blue font-bold truncate block underline hover:text-blue-700"
+                                  onClick={(e) => e.stopPropagation()}
+                                  title={c.productLink}
+                                >
+                                  {c.productLink}
+                                </a>
+                                <ExternalLink className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+
+                        if (idx === 9 && sortedMetricsCreatives.length > 10) {
+                          const scrollRow = (
+                            <TableRow key="floating-metrics-scrollbar-row" className="bg-slate-50/50 border-y border-slate-200">
+                              <TableCell colSpan={13} className="p-0 h-6">
+                                <div 
+                                  className="overflow-x-auto w-full flex items-center h-6 bg-slate-100 border-b border-slate-200 scrollbar-thin scrollbar-thumb-slate-300"
+                                  onScroll={(e) => handleScrollBarScroll("metrics", e)}
+                                  ref={metricsScrollBarRef}
+                                >
+                                  <div style={{ width: `${metricsScrollWidth}px`, height: '1px' }} />
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          );
+                          return [row, scrollRow];
+                        }
+
+                        return [row];
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              </Card>
+            )}
+          </div>
+        )}
+
+        {/* TAB 3: 素材趋势图表 (Trend Charts) */}
+        {activeSubTab === "trends" && (
+          <div className="space-y-4">
+            <div className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-2">1. 挑选参与对比分析的素材 (最多 4 个):</label>
+                <div className="max-h-36 overflow-y-auto border border-slate-200 rounded-lg p-2.5 space-y-1.5 bg-slate-50/30">
                   {filteredCreatives.map(c => {
-                    const fatigue = evaluateSingleFatigue(c.id, c.creativeName, c.type);
+                    const isChecked = selectedTrendCreativeIds.includes(c.id);
                     return (
-                      <Card 
-                        key={c.id} 
-                        className="bg-white border border-slate-100 hover:shadow-md transition-all rounded-xl overflow-hidden flex flex-col justify-between group"
-                      >
-                        <div className="p-3 bg-slate-50/50">
-                          <div onClick={() => {
-                            setSelectedPreviewCreative(c);
-                            setPreviewModalOpen(true);
-                          }}>
-                            {generateMockThumbnail(c.id, c.type)}
-                          </div>
-                          
-                          <div className="mt-3">
-                            <h4 className="font-extrabold text-slate-800 text-xs truncate" title={c.creativeName}>{c.creativeName}</h4>
-                            <p className="text-[10px] text-slate-400 font-mono mt-0.5">ID: {c.id}</p>
-                          </div>
-                        </div>
-
-                        {/* Primary Performance Indicators */}
-                        <div className="border-t border-b border-slate-50 bg-white px-3 py-2 grid grid-cols-3 text-center text-xs font-mono">
-                          <div>
-                            <p className="text-[9px] text-slate-450 uppercase font-bold">花费</p>
-                            <p className="font-bold text-slate-800">${c.spend.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
-                          </div>
-                          <div>
-                            <p className="text-[9px] text-slate-450 uppercase font-bold">ROAS</p>
-                            <p className={`font-bold ${c.roas >= 1.5 ? 'text-blue-600' : 'text-slate-800'}`}>{c.roas.toFixed(2)}x</p>
-                          </div>
-                          <div>
-                            <p className="text-[9px] text-slate-450 uppercase font-bold">点击率</p>
-                            <p className="font-bold text-slate-700">{c.ctr.toFixed(2)}%</p>
-                          </div>
-                        </div>
-
-                        {/* Action details footer */}
-                        <div className="p-3 pt-2 bg-slate-50/30 flex items-center justify-between border-t border-slate-50">
-                          <span className={`inline-flex px-1.5 py-0.5 rounded text-[10px] font-bold border ${fatigue.riskBg}`}>
-                            {fatigue.riskLevel}
-                          </span>
-                          
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="h-7 text-xs text-meta-blue hover:text-blue-750 font-bold flex items-center gap-1"
-                            onClick={() => {
-                              setSelectedPreviewCreative(c);
-                              setPreviewModalOpen(true);
-                            }}
-                          >
-                            深度诊断 <ChevronRight className="w-3.5 h-3.5" />
-                          </Button>
-                        </div>
-                      </Card>
+                      <label key={c.id} className="flex items-center gap-2 text-xs cursor-pointer select-none py-0.5 font-medium hover:text-slate-950">
+                        <input 
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => {
+                            if (isChecked) {
+                              setSelectedTrendCreativeIds(selectedTrendCreativeIds.filter(id => id !== c.id));
+                            } else {
+                              if (selectedTrendCreativeIds.length >= 4) {
+                                toast.error("最多同时对比 4 个素材的走势情况");
+                                return;
+                              }
+                              setSelectedTrendCreativeIds([...selectedTrendCreativeIds, c.id]);
+                            }
+                          }}
+                          className="rounded border-slate-300 text-slate-900 focus:ring-slate-900 cursor-pointer"
+                        />
+                        <span className="truncate max-w-[250px] inline-block font-bold text-slate-800" title={c.creativeName}>{c.creativeName}</span>
+                      </label>
                     );
                   })}
                 </div>
-              )}
-            </div>
-          )}
-
-          {/* TAB 2: 素材表现指标 (Performance Metrics) */}
-          {activeSubTab === "metrics" && (
-            <div className="space-y-6">
-              <div className="bg-white p-4 rounded-xl border border-slate-100 flex items-center gap-3 text-xs text-slate-600 leading-relaxed">
-                <Info className="w-4 h-4 text-meta-blue shrink-0 animate-pulse" />
-                <p>
-                  以下表现指标基于当前选定的店铺与过滤区间实时排名。通过 <b>2x2 深度大盘</b> 多向对齐，便于敏捷锁定最具转化能效的核心素材。
-                </p>
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                
-                {/* 1. Star Creatives by ROAS */}
-                <Card className="bg-white border border-slate-100 rounded-xl overflow-hidden shadow-sm">
-                  <div className="p-4 border-b border-slate-100 bg-slate-50/40 flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                      <Award className="w-4 h-4 text-amber-500" /> ⭐ 投产之星高产回报素材排行 (Top ROAS)
-                    </span>
-                    <span className="text-[10px] text-slate-400">ROAS 降序比对</span>
-                  </div>
-                  <div className="p-4 divide-y divide-slate-100 space-y-2">
-                    {getLeaderboards().topRoas.length === 0 ? (
-                      <p className="text-center py-10 text-slate-400 text-xs">当前无数据</p>
-                    ) : (
-                      getLeaderboards().topRoas.map((c, idx) => (
-                        <div key={c.id} className="py-2.5 flex items-center justify-between text-xs hover:bg-slate-50/50 px-1 rounded transition-colors last:pb-0 first:pt-0">
-                          <div className="flex items-center gap-3 overflow-hidden">
-                            <span className={`w-5 h-5 flex items-center justify-center text-[10px] font-extrabold rounded-full ${idx === 0 ? 'bg-amber-400 text-white' : idx === 1 ? 'bg-slate-300 text-slate-800' : idx === 2 ? 'bg-orange-300 text-white' : 'bg-slate-100 text-slate-500'}`}>
-                              {idx + 1}
-                            </span>
-                            <div className="overflow-hidden">
-                              <span 
-                                onClick={() => { setSelectedPreviewCreative(c); setPreviewModalOpen(true); }}
-                                className="font-extrabold text-slate-800 hover:underline cursor-pointer truncate max-w-[220px] block"
-                              >
-                                {c.creativeName}
-                              </span>
-                              <span className="text-[10px] text-slate-400 font-mono">ID: {c.id}</span>
-                            </div>
-                          </div>
-                          
-                          <div className="text-right shrink-0">
-                            <p className="font-mono font-bold text-blue-650 text-[13px]">{c.roas.toFixed(2)}x</p>
-                            <p className="text-[9px] text-slate-450 font-mono">Spend: ${c.spend.toFixed(0)}</p>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </Card>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-2">2. 选择走势折线监控的指标 Core Metric:</label>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <button 
+                    type="button"
+                    onClick={() => setTrendMetric("roas")}
+                    className={`h-9 px-3 rounded-lg border text-left font-bold transition-all cursor-pointer ${trendMetric === "roas" ? 'bg-slate-900 border-slate-900 text-white font-extrabold' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                  >
+                    🌟 回报率 ROAS (x)
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={() => setTrendMetric("spend")}
+                    className={`h-9 px-3 rounded-lg border text-left font-bold transition-all cursor-pointer ${trendMetric === "spend" ? 'bg-slate-900 border-slate-900 text-white font-extrabold' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                  >
+                    💰 每日花费 Spend ($)
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={() => setTrendMetric("ctr")}
+                    className={`h-9 px-3 rounded-lg border text-left font-bold transition-all cursor-pointer ${trendMetric === "ctr" ? 'bg-slate-900 border-slate-900 text-white font-extrabold' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                  >
+                    📈 点击率 CTR (%)
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={() => setTrendMetric("cpm")}
+                    className={`h-9 px-3 rounded-lg border text-left font-bold transition-all cursor-pointer ${trendMetric === "cpm" ? 'bg-slate-900 border-slate-900 text-white font-extrabold' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                  >
+                    🎯 CPM 展现成本 ($)
+                  </button>
+                </div>
+              </div>
 
-                {/* 2. Top Engagement by CTR */}
-                <Card className="bg-white border border-slate-100 rounded-xl overflow-hidden shadow-sm">
-                  <div className="p-4 border-b border-slate-100 bg-slate-50/40 flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                      <Percent className="w-4 h-4 text-indigo-500" /> 🎯 视觉先锋点击留存排行 (Top CTR)
-                    </span>
-                    <span className="text-[10px] text-slate-400">点击率降序比对</span>
-                  </div>
-                  <div className="p-4 divide-y divide-slate-100 space-y-2">
-                    {getLeaderboards().topCtr.length === 0 ? (
-                      <p className="text-center py-10 text-slate-400 text-xs">当前无数据</p>
-                    ) : (
-                      getLeaderboards().topCtr.map((c, idx) => (
-                        <div key={c.id} className="py-2.5 flex items-center justify-between text-xs hover:bg-slate-50/50 px-1 rounded transition-colors last:pb-0 first:pt-0">
-                          <div className="flex items-center gap-3 overflow-hidden">
-                            <span className="w-5 h-5 flex items-center justify-center text-[10px] font-bold bg-slate-100 text-slate-600 rounded">
-                              {idx + 1}
-                            </span>
-                            <div className="overflow-hidden">
-                              <span 
-                                onClick={() => { setSelectedPreviewCreative(c); setPreviewModalOpen(true); }}
-                                className="font-bold text-slate-800 hover:underline cursor-pointer truncate max-w-[220px] block"
-                              >
-                                {c.creativeName}
-                              </span>
-                              <span className="text-[10px] text-slate-400 font-mono inline-flex items-center gap-1 mt-0.5">
-                                {getTypeBadge(c.type)}
-                              </span>
-                            </div>
-                          </div>
-
-                          <div className="text-right shrink-0">
-                            <p className="font-mono font-bold text-emerald-600 text-[13px]">{c.ctr.toFixed(2)}%</p>
-                            <p className="text-[9px] text-slate-400 font-mono">CPM: ${c.cpm.toFixed(1)}</p>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </Card>
-
-                {/* 3. Budget Leaks Indicator */}
-                <Card className="bg-white border border-slate-100 rounded-xl overflow-hidden shadow-sm">
-                  <div className="p-4 border-b border-slate-100 bg-slate-50/40 flex items-center justify-between">
-                    <span className="text-xs font-bold text-red-800 flex items-center gap-1.5">
-                      <XCircle className="w-4 h-4 text-red-500" /> ⚠️ 资金高耗低转警告提醒 (ROAS &lt; 1.1)
-                    </span>
-                    <span className="text-[10px] text-red-500 font-bold">空烧风险监控</span>
-                  </div>
-                  <div className="p-4 divide-y divide-slate-100 space-y-2">
-                    {getLeaderboards().topWaste.length === 0 ? (
-                      <div className="text-center py-10 text-slate-400 text-xs">
-                        🎉 太棒了，当前没有花费超 $100 且 ROAS &lt; 1.1 的低效损耗素材。
-                      </div>
-                    ) : (
-                      getLeaderboards().topWaste.map((c, idx) => (
-                        <div key={c.id} className="py-2.5 flex items-center justify-between text-xs hover:bg-red-50/20 px-1 rounded transition-colors last:pb-0 first:pt-0">
-                          <div className="flex items-center gap-3 overflow-hidden">
-                            <span className="w-5 h-5 flex items-center justify-center text-[10px] font-bold bg-red-100 text-red-700 rounded-full shrink-0">
-                              !
-                            </span>
-                            <div className="overflow-hidden">
-                              <span 
-                                onClick={() => { setSelectedPreviewCreative(c); setPreviewModalOpen(true); }}
-                                className="font-extrabold text-red-950 hover:underline cursor-pointer truncate max-w-[200px] block"
-                              >
-                                {c.creativeName}
-                              </span>
-                              <span className="text-[10px] text-red-500 font-bold font-mono">浪费支出: ${c.spend.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
-                            </div>
-                          </div>
-
-                          <div className="text-right shrink-0">
-                            <p className="font-mono font-extrabold text-red-600 text-[13px]">{c.roas.toFixed(2)}x</p>
-                            <p className="text-[9px] text-slate-400 font-mono">订单: {c.purchases}</p>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </Card>
-
-                {/* 4. Best Video Hook Rating */}
-                <Card className="bg-white border border-slate-100 rounded-xl overflow-hidden shadow-sm">
-                  <div className="p-4 border-b border-slate-100 bg-slate-50/40 flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                      <Video className="w-4 h-4 text-blue-600" /> 📹 视频 3s 视线挂钩留存率 (Hook Speed)
-                    </span>
-                    <span className="text-[10px] text-slate-400">前 3 秒吸引率</span>
-                  </div>
-                  <div className="p-4 divide-y divide-slate-100 space-y-2">
-                    {getLeaderboards().topHook.length === 0 ? (
-                      <p className="text-center py-10 text-slate-400 text-xs">没有匹配到视频素材</p>
-                    ) : (
-                      getLeaderboards().topHook.map((c, idx) => (
-                        <div key={c.id} className="py-2.5 flex items-center justify-between text-xs hover:bg-slate-50/50 px-1 rounded transition-colors last:pb-0 first:pt-0">
-                          <div className="flex items-center gap-3 overflow-hidden">
-                            <span className="w-5 h-5 flex items-center justify-center text-[10px] font-bold bg-blue-50 text-blue-700 rounded-full shrink-0">
-                              VK
-                            </span>
-                            <div className="overflow-hidden">
-                              <span 
-                                onClick={() => { setSelectedPreviewCreative(c); setPreviewModalOpen(true); }}
-                                className="font-bold text-slate-800 hover:underline cursor-pointer truncate max-w-[200px] block"
-                              >
-                                {c.creativeName}
-                              </span>
-                              <span className="text-[10px] text-slate-450 font-mono">转化订单: {c.purchases}</span>
-                            </div>
-                          </div>
-
-                          <div className="text-right shrink-0">
-                            <p className="font-mono font-bold text-indigo-600 text-[13px]">{c.hookRate.toFixed(1)}%</p>
-                            <p className="text-[9px] text-slate-400">完播意愿良好</p>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </Card>
-
+              <div className="bg-slate-50 border border-slate-100 p-4 rounded-xl text-xs space-y-2 flex flex-col justify-between">
+                <div>
+                  <h5 className="font-bold text-slate-800">趋势对比说明:</h5>
+                  <p className="text-slate-500 mt-1 leading-relaxed">
+                    折线图 dynamic ranges.
+                  </p>
+                </div>
+                <div className="text-[10px] text-slate-400 font-bold">
+                  当前对比素材数量: <b>{selectedTrendCreativeIds.length} / 4</b> 个
+                </div>
               </div>
             </div>
-          )}
 
-          {/* TAB 3: 素材趋势图表 (Trend Charts) */}
-          {activeSubTab === "trends" && (
-            <div className="space-y-4">
-              <div className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-2">1. 挑选参与对比分析的素材 (最多 4 个):</label>
-                  <div className="max-h-36 overflow-y-auto border border-slate-200 rounded-lg p-2.5 space-y-1.5 bg-slate-50/30">
-                    {filteredCreatives.map(c => {
-                      const isChecked = selectedTrendCreativeIds.includes(c.id);
-                      return (
-                        <label key={c.id} className="flex items-center gap-2 text-xs cursor-pointer select-none py-0.5 font-medium hover:text-slate-950">
-                          <input 
-                            type="checkbox"
-                            checked={isChecked}
-                            onChange={() => {
-                              if (isChecked) {
-                                setSelectedTrendCreativeIds(selectedTrendCreativeIds.filter(id => id !== c.id));
-                              } else {
-                                if (selectedTrendCreativeIds.length >= 4) {
-                                  toast.error("最多同时对比 4 个素材的走势情况");
-                                  return;
-                                }
-                                setSelectedTrendCreativeIds([...selectedTrendCreativeIds, c.id]);
-                              }
-                            }}
-                            className="rounded border-slate-300 text-slate-900 focus:ring-slate-900"
-                          />
-                          <span className="truncate max-w-[250px] inline-block font-bold text-slate-800" title={c.creativeName}>{c.creativeName}</span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-2">2. 选择走势折线监控的指标 Core Metric:</label>
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <button 
-                      onClick={() => setTrendMetric("roas")}
-                      className={`h-9 px-3 rounded-lg border text-left font-bold transition-all ${trendMetric === "roas" ? 'bg-slate-900 border-slate-900 text-white font-extrabold' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
-                    >
-                      🌟 回报率 ROAS (x)
-                    </button>
-                    <button 
-                      onClick={() => setTrendMetric("spend")}
-                      className={`h-9 px-3 rounded-lg border text-left font-bold transition-all ${trendMetric === "spend" ? 'bg-slate-900 border-slate-900 text-white font-extrabold' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
-                    >
-                      💰 每日花费 Spend ($)
-                    </button>
-                    <button 
-                      onClick={() => setTrendMetric("ctr")}
-                      className={`h-9 px-3 rounded-lg border text-left font-bold transition-all ${trendMetric === "ctr" ? 'bg-slate-900 border-slate-900 text-white font-extrabold' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
-                    >
-                      📈 点击率 CTR (%)
-                    </button>
-                    <button 
-                      onClick={() => setTrendMetric("cpm")}
-                      className={`h-9 px-3 rounded-lg border text-left font-bold transition-all ${trendMetric === "cpm" ? 'bg-slate-900 border-slate-900 text-white font-extrabold' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
-                    >
-                      🎯 CPM 展现成本 ($)
-                    </button>
-                  </div>
-                </div>
-
-                <div className="bg-slate-50 border border-slate-100 p-4 rounded-xl text-xs space-y-2 flex flex-col justify-between">
-                  <div>
-                    <h5 className="font-bold text-slate-800">趋势对比说明:</h5>
-                    <p className="text-slate-500 mt-1 leading-relaxed">
-                      折线图动态自适应整合天级监控走势历史记录。勾选上方素材即可对比它们在同一周期内的成效波动。
-                    </p>
-                  </div>
-                  <div className="text-[10px] text-slate-400 font-bold">
-                    当前对比素材数量: <b>{selectedTrendCreativeIds.length} / 4</b> 个
-                  </div>
-                </div>
+            {/* Chart Panel */}
+            <Card className="bg-white p-6 border border-slate-100 shadow-sm rounded-xl">
+              <div className="mb-4">
+                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                  素材天级性能指标波动曲线（监测：
+                  {trendMetric === "roas" ? "投资回报率 ROAS" : 
+                   trendMetric === "spend" ? "广告消耗 Spend" : 
+                   trendMetric === "ctr" ? "页面点击率 CTR" : "千次曝光 CPM"}
+                  ）
+                </h4>
               </div>
 
-              {/* Chart Panel */}
-              <Card className="bg-white p-6 border border-slate-100 shadow-sm rounded-xl">
-                <div className="mb-4">
-                  <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-                    素材天级性能指标波动曲线（监测：
-                    {trendMetric === "roas" ? "投资回报率 ROAS" : 
-                     trendMetric === "spend" ? "广告消耗 Spend" : 
-                     trendMetric === "ctr" ? "页面点击率 CTR" : "千次曝光 CPM"}
-                    ）
-                  </h4>
-                </div>
-
-                <div className="h-[400px] w-full mt-4 font-mono text-xs">
-                  {selectedTrendCreativeIds.length === 0 ? (
-                    <div className="h-full flex items-center justify-center text-slate-400 border border-dashed border-slate-200 rounded-lg">
-                      请在上方区域先勾选至少 1 个对比素材
-                    </div>
-                  ) : getTrendChartData().length === 0 ? (
-                    <div className="h-full flex items-center justify-center text-slate-400 border border-dashed border-slate-200 rounded-lg">
-                      该时间段内暂无这些选定素材的历史每日流水数据
-                    </div>
-                  ) : (
-                    <ResponsiveContainer width="100%" height="100%" minWidth={0}>
-                      <LineChart data={getTrendChartData()} margin={{ top: 10, right: 30, left: 10, bottom: 20 }}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                        <XAxis 
-                          dataKey="date" 
-                          stroke="#94a3b8" 
-                          fontSize={11}
-                          tickLine={false} 
-                          axisLine={false}
-                          dy={10} 
-                        />
-                        <YAxis 
-                          stroke="#94a3b8" 
-                          fontSize={11}
-                          tickLine={false} 
-                          axisLine={false}
-                          dx={-10}
-                        />
-                        <RechartsTooltip 
-                          contentStyle={{ backgroundColor: "#1e293b", borderColor: "#334155", color: "#f8fafc", borderRadius: "8px" }}
-                          labelStyle={{ color: "#94a3b8", fontWeight: "bold" }}
-                        />
-                        <Legend verticalAlign="top" height={36} iconType="circle" />
+              <div className="h-[400px] w-full mt-4 font-mono text-xs">
+                {selectedTrendCreativeIds.length === 0 ? (
+                  <div className="h-full flex items-center justify-center text-slate-400 border border-dashed border-slate-200 rounded-lg">
+                    请在上方区域先勾选至少 1 个对比素材
+                  </div>
+                ) : getTrendChartData().length === 0 ? (
+                  <div className="h-full flex items-center justify-center text-slate-400 border border-dashed border-slate-200 rounded-lg">
+                    该时间段内暂无这些选定素材的历史每日流水数据
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+                    <LineChart data={getTrendChartData()} margin={{ top: 10, right: 30, left: 10, bottom: 20 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <XAxis 
+                        dataKey="date" 
+                        stroke="#94a3b8" 
+                        fontSize={11}
+                        tickLine={false} 
+                        axisLine={false}
+                        dy={10} 
+                      />
+                      <YAxis 
+                        stroke="#94a3b8" 
+                        fontSize={11}
+                        tickLine={false} 
+                        axisLine={false}
+                        dx={-10}
+                      />
+                      <RechartsTooltip 
+                        contentStyle={{ backgroundColor: "#1e293b", borderColor: "#334155", color: "#f8fafc", borderRadius: "8px" }}
+                        labelStyle={{ color: "#94a3b8", fontWeight: "bold" }}
+                      />
+                      <Legend verticalAlign="top" height={36} iconType="circle" />
+                      
+                      {selectedTrendCreativeIds.map((id, index) => {
+                        const creativeObj = creatives.find(c => c.id === id);
+                        const name = creativeObj ? creativeObj.creativeName : `素材 ${id}`;
                         
-                        {selectedTrendCreativeIds.map((id, index) => {
-                          const creativeObj = creatives.find(c => c.id === id);
-                          const name = creativeObj ? creativeObj.creativeName : `素材 ${id}`;
-                          
-                          const colors = ["#2563eb", "#10b981", "#ef4444", "#8b5cf6"];
-                          const lineColor = colors[index % colors.length];
+                        const colors = ["#2563eb", "#10b981", "#ef4444", "#8b5cf6"];
+                        const lineColor = colors[index % colors.length];
 
-                          return (
-                            <Line 
-                              key={id}
-                              type="monotone" 
-                              dataKey={name} 
-                              stroke={lineColor} 
-                              strokeWidth={2.5}
-                              dot={{ r: 3, strokeWidth: 1 }}
-                              activeDot={{ r: 5 }}
-                            />
-                          );
-                        })}
-                      </LineChart>
-                    </ResponsiveContainer>
-                  )}
-                </div>
-              </Card>
-            </div>
-          )}
+                        return (
+                          <Line 
+                            key={id}
+                            type="monotone" 
+                            dataKey={name} 
+                            stroke={lineColor} 
+                            strokeWidth={2.5}
+                            dot={{ r: 3, strokeWidth: 1 }}
+                            activeDot={{ r: 5 }}
+                          />
+                        );
+                      })}
+                    </LineChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+            </Card>
+          </div>
+        )}
+      </div>
 
-        </div>
-      )}
-
-      {/* Slide-in Detailed Profile Drawer (深度诊断档案) */}
+{/* Slide-in Detailed Profile Drawer (深度诊断档案) */}
       {previewModalOpen && selectedPreviewCreative && (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-end animate-in fade-in duration-200">
           <div className="w-full max-w-lg h-full bg-white shadow-2xl flex flex-col justify-between slide-in-from-right duration-300 transform transition-all">
@@ -1193,6 +1578,29 @@ export function CreativeIntelligenceDashboard({
                   <div>
                     <span className="text-[10px] text-slate-400 block pb-0.5">底层数据关联</span>
                     <span className="font-bold text-meta-blue">Meta SDK</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Data mapping path block */}
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/60 shadow-sm space-y-2">
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest leading-none mb-1">链式归因路径 (ATTRIBUTION PATH)</p>
+                <div className="space-y-1.5 text-xs font-mono">
+                  <div className="bg-white px-3 py-2 rounded border border-slate-100 flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-semibold text-slate-400">广告账户 ID:</span>
+                    <span className="font-bold text-slate-850 select-all">{selectedPreviewCreative.accountId || "N/A"}</span>
+                  </div>
+                  <div className="bg-white px-3 py-2 rounded border border-slate-100 flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-semibold text-slate-400">广告组 ID:</span>
+                    <span className="font-bold text-slate-850 select-all">{selectedPreviewCreative.adsetId || "N/A"}</span>
+                  </div>
+                  <div className="bg-white px-3 py-2 rounded border border-slate-100 flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-semibold text-slate-400">广告 ID:</span>
+                    <span className="font-bold text-slate-850 select-all">{selectedPreviewCreative.adId || "N/A"}</span>
+                  </div>
+                  <div className="bg-white px-3 py-2 rounded border border-slate-100 flex items-center justify-between gap-2 bg-indigo-50/10 border-indigo-100/30">
+                    <span className="text-[10px] font-semibold text-indigo-500">素材 / 创意 ID:</span>
+                    <span className="font-bold text-indigo-700 select-all">{selectedPreviewCreative.id}</span>
                   </div>
                 </div>
               </div>

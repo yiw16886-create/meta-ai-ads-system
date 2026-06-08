@@ -52,12 +52,54 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
   const { accountId } = useParams<{ accountId: string }>();
   const navigate = useNavigate();
 
-  const [startDate, setStartDate] = useState<Date>(subDays(new Date(), 1));
-  const [endDate, setEndDate] = useState<Date>(subDays(new Date(), 1));
-  const [tempDateRange, setTempDateRange] = useState<{ from: Date; to?: Date }>({
-    from: subDays(new Date(), 1),
-    to: subDays(new Date(), 1),
+  const [startDate, setStartDate] = useState<Date>(() => {
+    try {
+      const saved = localStorage.getItem("META_DASHBOARD_START_DATE");
+      if (saved) {
+        const parsed = new Date(saved);
+        if (!isNaN(parsed.getTime())) return parsed;
+      }
+    } catch (e) {}
+    return subDays(new Date(), 1);
   });
+  const [endDate, setEndDate] = useState<Date>(() => {
+    try {
+      const saved = localStorage.getItem("META_DASHBOARD_END_DATE");
+      if (saved) {
+        const parsed = new Date(saved);
+        if (!isNaN(parsed.getTime())) return parsed;
+      }
+    } catch (e) {}
+    return subDays(new Date(), 1);
+  });
+  const [tempDateRange, setTempDateRange] = useState<{ from: Date; to?: Date }>(() => {
+    try {
+      const savedStart = localStorage.getItem("META_DASHBOARD_START_DATE");
+      const savedEnd = localStorage.getItem("META_DASHBOARD_END_DATE");
+      const from = savedStart ? new Date(savedStart) : subDays(new Date(), 1);
+      const to = savedEnd ? new Date(savedEnd) : subDays(new Date(), 1);
+      return {
+        from: !isNaN(from.getTime()) ? from : subDays(new Date(), 1),
+        to: !isNaN(to.getTime()) ? to : subDays(new Date(), 1)
+      };
+    } catch (e) {}
+    return {
+      from: subDays(new Date(), 1),
+      to: subDays(new Date(), 1),
+    };
+  });
+
+  useEffect(() => {
+    if (startDate) {
+      localStorage.setItem("META_DASHBOARD_START_DATE", startDate.toISOString());
+    }
+  }, [startDate]);
+
+  useEffect(() => {
+    if (endDate) {
+      localStorage.setItem("META_DASHBOARD_END_DATE", endDate.toISOString());
+    }
+  }, [endDate]);
   const [datePickerOpen, setDatePickerOpen] = useState(false);
 
 
