@@ -31,45 +31,115 @@ export function extractMetaError(error: any): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export async function evaluateActivityStatus(accountId: string, fbAccountStatus: number, token: string): Promise<number> {
-  // If status is disabled (2), return 3 (Red: disabled)
+export async function evaluateActivityStatus(accountId: string, fbAccountStatus: number, token?: string): Promise<number> {
+  const cleanAccountId = accountId.replace("act_", "");
+
+  // Helper helper to update both tables
+  const saveActivityStatus = async (statusVal: number) => {
+    try {
+      await prisma.adAccount.update({
+        where: { fb_account_id: cleanAccountId },
+        data: { activityStatus: statusVal }
+      });
+    } catch (e) {}
+    try {
+      await prisma.metaAccountMonitoring.update({
+        where: { accountId: cleanAccountId },
+        data: { 
+          activityStatus: statusVal,
+          status: statusVal
+        }
+      });
+    } catch (e) {}
+  };
+
+  // Priority 1: Meta-level Disabled status (2) -> return 3 (Disabled/Red)
   if (fbAccountStatus === 2) {
+    await saveActivityStatus(3);
     return 3;
   }
-  // If status is closed/resolved (101), return 4 (Gray: dormant)
-  if (fbAccountStatus === 101) {
+
+  // Priority 2: Closed/Dormant statuses
+  if (fbAccountStatus === 101 || fbAccountStatus === 102 || fbAccountStatus === 201) {
+    await saveActivityStatus(4);
     return 4;
   }
 
+  // Priority 3: Evaluate based on database AdInsight spend records if available
   try {
-    const cleanAccountId = accountId.replace("act_", "");
-    const today = new Date();
-    const startDate = format(subDays(today, 7), "yyyy-MM-dd");
-    const endDate = format(today, "yyyy-MM-dd");
-
-    const res = await axios.get(`https://graph.facebook.com/v19.0/act_${cleanAccountId}/insights`, {
-      params: {
-        level: "account",
-        time_range: JSON.stringify({ since: startDate, until: endDate }),
-        fields: "spend",
-        access_token: token,
+    const lastSpendRecord = await prisma.adInsight.findFirst({
+      where: {
+        accountId: cleanAccountId,
+        spend: { gt: 0 }
       },
-      timeout: 5000
+      orderBy: {
+        date: 'desc'
+      }
     });
 
-    const insights = res.data?.data || [];
-    const totalSpend = insights.reduce((sum: number, item: any) => sum + parseFloat(item.spend || "0"), 0);
+    if (lastSpendRecord) {
+      const today = new Date();
+      const lastSpendDate = new Date(lastSpendRecord.date);
+      
+      // Calculate diff in calendar days
+      today.setHours(0,0,0,0);
+      lastSpendDate.setHours(0,0,0,0);
+      const diffTime = today.getTime() - lastSpendDate.getTime();
+      const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
 
-    if (totalSpend > 0) {
-      return 1; // Green: highly active
+      let resStatus = 2; // Default
+      if (diffDays <= 7) {
+        resStatus = 1; // Highly active (Green)
+      } else if (diffDays <= 30) {
+        resStatus = 2; // Normal active (Blue)
+      } else if (diffDays <= 60) {
+        resStatus = 5; // Inactive / Warning (Orange: exceeded 30 days)
+      } else {
+        resStatus = 4; // Dormant (Gray: exceeded 60 days)
+      }
+
+      await saveActivityStatus(resStatus);
+      return resStatus;
     }
-    return 2; // Blue: active normal
-  } catch (err: any) {
-    if (err.response?.status === 403 || err.response?.status === 401) {
-      return 3; // Red: unauthorized / locked
-    }
-    return 2;
+  } catch (dbErr) {
+    console.error(`[evaluateActivityStatus] DB Error:`, dbErr);
   }
+
+  // Fallback: Check Meta API for latest spend as a backup if token is provided
+  if (token) {
+    try {
+      const today = new Date();
+      const startDate = format(subDays(today, 7), "yyyy-MM-dd");
+      const endDate = format(today, "yyyy-MM-dd");
+
+      const res = await axios.get(`https://graph.facebook.com/v19.0/act_${cleanAccountId}/insights`, {
+        params: {
+          level: "account",
+          time_range: JSON.stringify({ since: startDate, until: endDate }),
+          fields: "spend",
+          access_token: token,
+        },
+        timeout: 5000
+      });
+
+      const insights = res.data?.data || [];
+      const totalSpend = insights.reduce((sum: number, item: any) => sum + parseFloat(item.spend || "0"), 0);
+
+      const resStatus = totalSpend > 0 ? 1 : 4;
+
+      await saveActivityStatus(resStatus);
+      return resStatus;
+    } catch (err: any) {
+      if (err.response?.status === 403 || err.response?.status === 401) {
+        await saveActivityStatus(3);
+        return 3; // Red: unauthorized / locked
+      }
+    }
+  }
+
+  // Default fallback/no-spend
+  await saveActivityStatus(4);
+  return 4;
 }
 
 export function getCachedData(key: string) {

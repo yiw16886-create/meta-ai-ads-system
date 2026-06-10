@@ -86,15 +86,17 @@ model Store {
 }
 
 model MetaAccountMonitoring {
-  accountId     String   @id
-  accountName   String?
-  status        Int?
-  spendCap      Float?
-  amountSpent   Float?
-  balance       Float?
-  currency      String?
-  timezone      String?
-  updatedAt     DateTime @updatedAt
+  accountId      String   @id
+  accountName    String?
+  status         Int?
+  activityStatus Int?     @default(2)
+  spendCap       Float?
+  amountSpent    Float?
+  balance        Float?
+  currency       String?
+  timezone       String?
+  updatedAt      DateTime @updatedAt
+  adAccount      AdAccount? @relation(fields: [accountId], references: [fb_account_id], onDelete: Cascade)
 }
 
 model AdAccount {
@@ -108,6 +110,7 @@ model AdAccount {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   campaigns       Campaign[]
+  monitoring      MetaAccountMonitoring?
 }
 
 model Product {
@@ -140,6 +143,7 @@ model Campaign {
   name        String
   region      String?
   status      String?
+  storeId     Int?
   adAccount   AdAccount? @relation(fields: [accountId], references: [fb_account_id], onDelete: Cascade)
   adSets      AdSet[]
 }
@@ -149,6 +153,7 @@ model AdSet {
   campaignId  String
   accountId   String
   name        String
+  storeId     Int?
   campaign    Campaign? @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   ads         Ad[]
 }
@@ -160,6 +165,7 @@ model Ad {
   accountId   String
   name        String
   creativeId  String?
+  storeId     Int?
   adSet       AdSet?    @relation(fields: [adsetId], references: [id], onDelete: Cascade)
   creative    AdCreative? @relation(fields: [creativeId], references: [creativeId], onDelete: SetNull)
 }
@@ -171,7 +177,7 @@ model AdCreative {
   imageUrl     String?
   videoId      String?
   videoHash    String?
-  imageHash    String?                    @unique
+  imageHash    String?
   storeId      Int?
   name         String?
   type         String?

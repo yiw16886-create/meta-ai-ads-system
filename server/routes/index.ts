@@ -9,6 +9,7 @@ import insightsRoutes from "./insights.routes.js";
 import settingsRoutes from "./settings.routes.js";
 import mappingsRoutes from "./mappings.routes.js";
 import monitoringRoutes from "./monitoring.routes.js";
+import materialRoutes from "./material.routes.js";
 
 const routes = Router();
 
@@ -17,6 +18,7 @@ routes.use("/users", usersRoutes);
 routes.use("/stores", storesRoutes);
 routes.use("/intelligence", intelligenceRoutes);
 routes.use("/accounts", accountsRoutes);
+routes.use("/materials", materialRoutes);
 routes.use("/", syncRoutes);
 routes.use("/insights", insightsRoutes);
 routes.use("/settings", settingsRoutes);

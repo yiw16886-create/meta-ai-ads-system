@@ -503,7 +503,13 @@ router.get("/list", async (req, res) => {
 
     // 获取停用的账户 ID 列表
     const disabledAccounts = await prisma.metaAccountMonitoring.findMany({
-      where: { status: 2 },
+      where: {
+        OR: [
+          { status: 3 },
+          { status: 2 },
+          { activityStatus: 3 }
+        ]
+      },
       select: { accountId: true }
     });
     const disabledAccountIds = disabledAccounts.map(a => a.accountId);

@@ -225,7 +225,13 @@ async function runBackgroundSync() {
 
     // 获取系统的停用账户 ID 且常态过滤 dormant/限制账户
     const disabledAccounts = await prisma.metaAccountMonitoring.findMany({
-      where: { status: 2 },
+      where: {
+        OR: [
+          { status: 3 },
+          { status: 2 },
+          { activityStatus: 3 }
+        ]
+      },
       select: { accountId: true }
     });
     const disabledAccountIds = disabledAccounts.map(a => a.accountId);

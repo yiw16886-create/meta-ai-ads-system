@@ -150,13 +150,84 @@ router.get("/accounts", async (req, res) => {
       };
     });
 
-    const adAccounts = await prisma.adAccount.findMany({ select: { fb_account_id: true, activityStatus: true } });
-    const activityMap = new Map();
-    adAccounts.forEach(a => activityMap.set(a.fb_account_id, a.activityStatus));
-    
-    monitoringData.forEach(item => {
-       item.activityStatus = activityMap.get(item.accountId) || 2;
+    // 计算最新的消耗记录时间以确定活跃标签 1(活跃)、2(一般)、5(超30天警告)、4(超60天/无消耗休眠)、3(停用)
+    const latestSpendDates = await prisma.adInsight.groupBy({
+      by: ["accountId"],
+      where: {
+        spend: { gt: 0 }
+      },
+      _max: {
+        date: true
+      }
     });
+
+    const latestSpendMap = new Map<string, string>();
+    latestSpendDates.forEach(r => {
+      if (r._max?.date) {
+        latestSpendMap.set(r.accountId, r._max.date);
+      }
+    });
+
+    monitoringData.forEach(item => {
+      const cleanId = item.accountId;
+      const fbStatus = item.accountStatus;
+      
+      if (fbStatus === 2) {
+        item.activityStatus = 3; // Red: Disabled
+      } else if (fbStatus === 101 || fbStatus === 102 || fbStatus === 201) {
+        item.activityStatus = 4; // Gray: Dormant/Closed
+      } else {
+        const lastSpendDateStr = latestSpendMap.get(cleanId);
+        if (lastSpendDateStr) {
+          const d1 = new Date(lastSpendDateStr);
+          const d2 = new Date();
+          d1.setHours(0,0,0,0);
+          d2.setHours(0,0,0,0);
+          const diffDays = Math.round((d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24));
+          
+          if (diffDays <= 7) {
+            item.activityStatus = 1; // Green: Highly Active
+          } else if (diffDays <= 30) {
+            item.activityStatus = 2; // Blue: Active
+          } else if (diffDays <= 60) {
+            item.activityStatus = 5; // Orange: Warn (> 30 and <= 60 days of inactivity)
+          } else {
+            item.activityStatus = 4; // Gray: Dormant (> 60 days of inactivity)
+          }
+        } else {
+          item.activityStatus = 4; // Dormant/No Spend ever
+        }
+      }
+    });
+
+    // 将计算结果同步更新到 AdAccount 广告账户表以及 MetaAccountMonitoring 关系监控缓存表
+    const activeAdAccounts = await prisma.adAccount.findMany({ select: { fb_account_id: true } });
+    const activeAccountIdsInDb = new Set(activeAdAccounts.map(a => a.fb_account_id));
+    
+    await Promise.all(
+      monitoringData.map(async (item) => {
+        // 1. 始终同步更新 MetaAccountMonitoring 缓存表中的活跃度状态
+        try {
+          await prisma.metaAccountMonitoring.update({
+            where: { accountId: item.accountId },
+            data: { 
+              activityStatus: item.activityStatus,
+              status: item.activityStatus
+            }
+          });
+        } catch (e) {}
+
+        // 2. 如果已被关联/绑定，同步更新 AdAccount 表的活跃度
+        if (activeAccountIdsInDb.has(item.accountId)) {
+          try {
+            await prisma.adAccount.update({
+              where: { fb_account_id: item.accountId },
+              data: { activityStatus: item.activityStatus }
+            });
+          } catch (e) {}
+        }
+      })
+    );
 
     const filteredMonitoringData = monitoringData;
 

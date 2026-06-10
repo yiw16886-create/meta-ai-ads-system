@@ -35,6 +35,7 @@ router.get("/", async (req, res) => {
         accountName: nameMap.get(cleanId) || m.fbAccountId,
         fbPageId: m.fbPageId,
         store: m.store ? m.store.name : "未分配",
+        storeId: m.storeId,
         project: m.project || "未分配",
         owner: m.owner || "未分配"
       };

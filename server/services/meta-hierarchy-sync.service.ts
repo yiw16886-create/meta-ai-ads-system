@@ -45,8 +45,9 @@ export async function ensureAdAccounts(token: string) {
           where: { fbAccountId: acc.account_id }
         });
 
-        if (mapping && mapping.storeId === null) {
-          // Explicitly unmapped by user -> delete existing AdAccount if it exists
+        // 严格检验：如果未在 AccountMapping 表显式绑定店铺（即映射不存在、或者 storeId 为 null/空），则该账户不属于任何有效工作组。
+        // 清理掉已存在的 AdAccount 避免数据污染，然后跳过
+        if (!mapping || !mapping.storeId) {
           if (existingAdAccount) {
             try {
               await prisma.adAccount.delete({
@@ -54,19 +55,10 @@ export async function ensureAdAccounts(token: string) {
               });
             } catch (e) {}
           }
-          continue; // Skip creating or updating AdAccount
+          continue; // 跳过此账户以防数据污染
         }
 
-        // Determine the correct storeId alignment:
-        // Priority 1: Mapped store ID from AccountMapping
-        // Priority 2: Existing store ID on the AdAccount
-        // Priority 3: Fallback default store ID
-        let targetStoreId = defaultStore.id;
-        if (mapping && mapping.storeId) {
-          targetStoreId = mapping.storeId;
-        } else if (existingAdAccount) {
-          targetStoreId = existingAdAccount.storeId;
-        }
+        let targetStoreId = mapping.storeId;
 
         if (existingAdAccount) {
           // Keep name, token, and storeId up to date by adhering to the mapping table source of truth
@@ -272,7 +264,7 @@ export async function syncMetaHierarchy(token: string, options: { syncCreative?:
       const adsUrl = `https://graph.facebook.com/v19.0/${actId}/ads`;
       console.log(`[Meta Hierarchy Sync] Fetching ads from URL: ${adsUrl}`);
       const adsRes = await axios.get(adsUrl, {
-        params: { fields: "id,name,adset_id,campaign_id,status,creative{id}", limit: 100, access_token: token }
+        params: { fields: "id,name,adset_id,campaign_id,status,creative{id,image_hash,video_id}", limit: 100, access_token: token }
       });
       const ads = adsRes.data?.data || [];
       console.log(`[Meta Hierarchy Sync] Received ${ads.length} ads`);

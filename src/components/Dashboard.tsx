@@ -37,6 +37,7 @@ import { CreativeIntelligenceDashboard } from "./CreativeIntelligenceDashboard";
 import { AudienceAnalysisDashboard } from "./AudienceAnalysisDashboard";
 import { CampaignStructureDashboard } from "./CampaignStructureDashboard";
 import { StoreDataDashboard } from "./StoreDataDashboard";
+import { MaterialPerformanceTable } from "./MaterialPerformanceTable";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -698,13 +699,13 @@ export function Dashboard({ onLogout }: DashboardProps) {
             ) : currentTab === "store_data" ? (
               <StoreDataDashboard data={data} mappings={mappings} storeSummaries={storeSummaries} />
             ) : currentTab === "creative_intelligence" ? (
-              <CreativeIntelligenceDashboard data={data} startDate={startDate} endDate={endDate} onStartDateChange={setStartDate} onEndDateChange={setEndDate} />
+              <MaterialPerformanceTable />
             ) : currentTab === "campaign_structure" ? (
               <CampaignStructureDashboard startDate={startDate} endDate={endDate} />
             ) : currentTab === "audience_analysis" ? (
               <AudienceAnalysisDashboard startDate={startDate} endDate={endDate} />
             ) : currentTab === "creative_analysis" ? (
-              <CreativeIntelligenceDashboard data={data} startDate={startDate} endDate={endDate} onStartDateChange={setStartDate} onEndDateChange={setEndDate} />
+              <MaterialPerformanceTable />
             ) : (
               <>
                 <div className="grid grid-cols-4 gap-[16px] mb-[20px]">

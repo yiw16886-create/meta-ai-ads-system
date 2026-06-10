@@ -1,4 +1,6 @@
 import React, { useState, useMemo } from "react";
+import axios from "axios";
+import { toast } from "sonner";
 import { 
   Sparkles, 
   Calendar as CalendarIcon, 
@@ -10,7 +12,8 @@ import {
   Layers,
   Search,
   Filter,
-  Check
+  Check,
+  DownloadCloud
 } from "lucide-react";
 import { format } from "date-fns";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -45,6 +48,7 @@ export function CreativeIntelligenceDashboard({
   const [storeFilter, setStoreFilter] = useState<string>("all");
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>(["all"]);
   const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   // Mocked filtering options based on expected usage
   const creativeTypes = [
@@ -54,18 +58,61 @@ export function CreativeIntelligenceDashboard({
     { value: "carousel", label: "轮播 (Carousel)" }
   ];
 
-  const stores = [
-    { value: "all", label: "全部" },
-    { value: "store_1", label: "Store 1" },
-    { value: "store_2", label: "Store 2" }
-  ];
+  const [storesList, setStoresList] = useState<{value: string, label: string}[]>([{ value: "all", label: "全部" }]);
+  const [availableAccounts, setAvailableAccounts] = useState<{value: string, label: string, storeName: string}[]>([{ value: "all", label: "全部", storeName: "all" }]);
 
-  const accountsList = [
-    { value: "all", label: "全选" },
-    { value: "act_1", label: "YF-Kolaich-1" },
-    { value: "act_2", label: "YF-Kolaich-2" },
-    { value: "act_3", label: "YF-Kolaich-3" }
-  ];
+  React.useEffect(() => {
+    const fetchStores = async () => {
+      try {
+        const { data } = await axios.get("/api/mappings");
+        
+        const storeSet = new Set<string>();
+        const newAccounts = [{ value: "all", label: "全部", storeName: "all" }];
+        
+        data.forEach((m: any) => {
+          if (m.store && m.store !== "未分配") {
+            storeSet.add(m.store);
+          }
+          newAccounts.push({
+             value: m.accountId,
+             label: m.accountName || m.accountId,
+             storeName: m.store || "未分配"
+          });
+        });
+        
+        const newStores = [{ value: "all", label: "全部" }];
+        Array.from(storeSet).sort().forEach(s => {
+          newStores.push({ value: s, label: s });
+        });
+
+        setStoresList(newStores);
+        setAvailableAccounts(newAccounts);
+      } catch (err) {
+        console.error("Failed to load stores/accounts mapping", err);
+      }
+    };
+    fetchStores();
+  }, []);
+
+  const filteredAccounts = useMemo(() => {
+    if (storeFilter === "all") return availableAccounts;
+    return availableAccounts.filter(a => a.value === "all" || a.storeName === storeFilter);
+  }, [storeFilter, availableAccounts]);
+
+  // Adjust selectedAccounts when store Filter changes, if selected account isn't in filteredAccounts anymore
+  React.useEffect(() => {
+    if (storeFilter !== "all" && !selectedAccounts.includes("all")) {
+        const validIds = filteredAccounts.map(a => a.value);
+        const newSelected = selectedAccounts.filter(id => validIds.includes(id));
+        if (newSelected.length === 0) {
+            setSelectedAccounts(["all"]);
+        } else if (newSelected.length !== selectedAccounts.length) {
+            setSelectedAccounts(newSelected);
+        }
+    }
+  }, [storeFilter, filteredAccounts, selectedAccounts]);
+
+
 
   const toggleAccount = (val: string) => {
     if (val === "all") {
@@ -94,7 +141,98 @@ export function CreativeIntelligenceDashboard({
     setSelectedAccounts(newSelected);
   };
 
-  const mockTableData: any[] = [];
+  const [creativeData, setCreativeData] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const fetchCreativeData = async () => {
+    if (!startDate || !endDate) return;
+    setIsLoading(true);
+    try {
+      const res = await axios.get("/api/intelligence/creatives", {
+        params: {
+          startDate: format(startDate, 'yyyy-MM-dd'),
+          endDate: format(endDate, 'yyyy-MM-dd'),
+          storeFilter: storeFilter
+        }
+      });
+      // The API streams chunks but Axios will reassemble it if we let it
+      // if it's chunked, res.data might be string or parsed.
+      const parsedData = typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
+      setCreativeData(parsedData || []);
+      toast.success("素材数据已刷新");
+    } catch (e: any) {
+      toast.error("加载素材数据失败");
+      console.error(e);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  React.useEffect(() => {
+    fetchCreativeData();
+  }, [startDate, endDate, storeFilter]);
+
+  const filteredTableData = useMemo(() => {
+    return creativeData.filter(item => {
+      // Filter by search query
+      if (searchQuery.trim() !== "") {
+        const query = searchQuery.toLowerCase().trim();
+        const matchesName = item.name && item.name.toLowerCase().includes(query);
+        const matchesId = item.creativeId && item.creativeId.toLowerCase().includes(query);
+        if (!matchesName && !matchesId) return false;
+      }
+
+      // Filter by account
+      if (!selectedAccounts.includes("all")) {
+        // Here selectedAccounts contain account IDs
+        if (!selectedAccounts.includes(item.accountId)) {
+           return false;
+        }
+      }
+      
+      // Filter by creative type
+      if (creativeType !== "all") {
+        const t = (item.type || "IMAGE").toLowerCase();
+        if (creativeType === "image" && t !== "image") return false;
+        if (creativeType === "video" && t !== "video") return false;
+        if (creativeType === "carousel" && t !== "carousel") return false;
+      }
+      
+      return true;
+    });
+  }, [creativeData, selectedAccounts, creativeType, searchQuery]);
+
+  const tableSummary = useMemo(() => {
+      let spend = 0;
+      let purchaseValue = 0;
+      let purchases = 0;
+      let impressions = 0;
+      let reach = 0;
+      
+      filteredTableData.forEach(r => {
+          spend += r.spend || 0;
+          purchaseValue += r.purchaseValue || 0;
+          purchases += r.purchases || 0;
+          impressions += r.impressions || 0;
+          reach += r.reach || 0;
+      });
+      
+      return { spend, purchaseValue, purchases, impressions, reach, roas: spend > 0 ? purchaseValue / spend : 0, cpp: purchases > 0 ? spend / purchases : 0 };
+  }, [filteredTableData]);
+
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const handleSyncCreativeHash = async () => {
+    setIsSyncing(true);
+    try {
+      const res = await axios.post("/api/sync-creative-hash");
+      toast.success(res.data.message || "素材特征抓取已在后台开始运行");
+    } catch (error: any) {
+      toast.error(error.response?.data?.error || "同步请求失败");
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
@@ -142,18 +280,6 @@ export function CreativeIntelligenceDashboard({
 
         {/* 过滤项群 */}
         <div className="flex items-center gap-4 text-sm">
-          {/* 素材类型 (单选) */}
-          <div className="flex items-center gap-2">
-            <span className="text-slate-500 font-medium">素材类型:</span>
-            <select
-              value={creativeType}
-              onChange={(e) => setCreativeType(e.target.value)}
-              className="px-3 py-2 bg-white border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-meta-blue focus:border-meta-blue font-medium text-slate-700 cursor-pointer min-w-[120px]"
-            >
-              {creativeTypes.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
-            </select>
-          </div>
-
           {/* 店铺 (单选) */}
           <div className="flex items-center gap-2">
             <span className="text-slate-500 font-medium">店铺:</span>
@@ -162,7 +288,7 @@ export function CreativeIntelligenceDashboard({
               onChange={(e) => setStoreFilter(e.target.value)}
               className="px-3 py-2 bg-white border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-meta-blue focus:border-meta-blue font-medium text-slate-700 cursor-pointer min-w-[120px]"
             >
-              {stores.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+              {storesList.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
             </select>
           </div>
 
@@ -175,9 +301,9 @@ export function CreativeIntelligenceDashboard({
                   {selectedAccounts.includes("all") ? "全部" : `已选 (${selectedAccounts.length})`}
                 </span>
               </PopoverTrigger>
-              <PopoverContent className="w-[180px] p-2" align="start">
+              <PopoverContent className="w-[200px] p-2 max-h-[400px] overflow-y-auto" align="start">
                 <div className="space-y-1">
-                  {accountsList.map(act => {
+                  {filteredAccounts.map(act => {
                     const isSelected = selectedAccounts.includes(act.value);
                     return (
                       <div 
@@ -187,15 +313,28 @@ export function CreativeIntelligenceDashboard({
                           isSelected && "bg-slate-50 text-meta-blue font-medium"
                         )}
                         onClick={() => toggleAccount(act.value)}
+                        title={act.label}
                       >
-                        {act.label}
-                        {isSelected && <Check className="w-4 h-4 text-meta-blue" />}
+                        <span className="truncate">{act.label}</span>
+                        {isSelected && <Check className="shrink-0 w-4 h-4 text-meta-blue" />}
                       </div>
                     );
                   })}
                 </div>
               </PopoverContent>
             </Popover>
+          </div>
+
+          {/* 素材类型 (单选) */}
+          <div className="flex items-center gap-2">
+            <span className="text-slate-500 font-medium">素材类型:</span>
+            <select
+              value={creativeType}
+              onChange={(e) => setCreativeType(e.target.value)}
+              className="px-3 py-2 bg-white border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-meta-blue focus:border-meta-blue font-medium text-slate-700 cursor-pointer min-w-[120px]"
+            >
+              {creativeTypes.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+            </select>
           </div>
         </div>
       </div>
@@ -247,14 +386,27 @@ export function CreativeIntelligenceDashboard({
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                   <input 
                     type="text" 
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder="搜索名称 / 广告创意 ID" 
                     className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg outline-none focus:ring-1 focus:ring-meta-blue transition-colors"
                   />
                 </div>
               </div>
-              <Button variant="outline" className="text-sm h-9 gap-2 font-medium text-slate-700 bg-white border-slate-200">
-                <RefreshCw className="w-4 h-4" /> 刷新数据
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button 
+                  variant="outline" 
+                  className="text-sm h-9 gap-2 font-medium text-slate-700 bg-white border-slate-200 hover:bg-slate-50 hover:text-meta-blue transition-colors"
+                  onClick={handleSyncCreativeHash}
+                  disabled={isSyncing}
+                >
+                  <DownloadCloud className={cn("w-4 h-4", isSyncing && "animate-pulse text-meta-blue")} /> 
+                  {isSyncing ? "同步中..." : "素材同步"}
+                </Button>
+                <Button variant="outline" onClick={fetchCreativeData} disabled={isLoading} className="text-sm h-9 gap-2 font-medium text-slate-700 bg-white border-slate-200">
+                  <RefreshCw className={cn("w-4 h-4", isLoading && "animate-spin")} /> {isLoading ? "加载中" : "刷新数据"}
+                </Button>
+              </div>
             </div>
             
             <div className="overflow-x-auto">
@@ -266,6 +418,8 @@ export function CreativeIntelligenceDashboard({
                     </TableHead>
                     <TableHead className="text-[13px] font-bold text-slate-700 h-11 whitespace-nowrap">名称</TableHead>
                     <TableHead className="text-[13px] font-bold text-slate-700 h-11 whitespace-nowrap">广告创意 ID</TableHead>
+                    <TableHead className="text-[13px] font-bold text-slate-700 h-11 whitespace-nowrap">店铺</TableHead>
+                    <TableHead className="text-[13px] font-bold text-slate-700 h-11 whitespace-nowrap">账户</TableHead>
                     <TableHead className="text-[13px] font-bold text-slate-700 h-11 whitespace-nowrap text-center">投放状态</TableHead>
                     <TableHead className="text-[13px] font-bold text-slate-700 h-11 whitespace-nowrap text-right">花费金额</TableHead>
                     <TableHead className="text-[13px] font-bold text-slate-700 h-11 whitespace-nowrap text-right">转化价值</TableHead>
@@ -278,16 +432,22 @@ export function CreativeIntelligenceDashboard({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {mockTableData.map((row) => (
+                  {filteredTableData.map((row) => (
                     <TableRow key={row.id} className="hover:bg-slate-50/50 align-middle">
                       <TableCell className="text-center py-2.5">
                         <input type="checkbox" className="rounded border-slate-300 text-meta-blue focus:ring-meta-blue cursor-pointer" />
                       </TableCell>
-                      <TableCell className="py-2.5 text-[13px] text-meta-blue cursor-pointer font-medium hover:underline whitespace-nowrap">
+                      <TableCell className="py-2.5 text-[13px] text-meta-blue cursor-pointer font-medium hover:underline whitespace-nowrap max-w-[200px] truncate" title={row.name}>
                         {row.name}
                       </TableCell>
                       <TableCell className="py-2.5 px-4 font-mono text-[12px] text-slate-600 bg-slate-50/50 rounded-md">
                         {row.creativeId}
+                      </TableCell>
+                      <TableCell className="py-2.5 text-[13px] text-slate-700">
+                        {row.storeName || "未分配"}
+                      </TableCell>
+                      <TableCell className="py-2.5 text-[13px] text-slate-700 whitespace-nowrap">
+                        {row.accountName || "未分配"}
                       </TableCell>
                       <TableCell className="py-2.5 text-center">
                         <span className={cn(
@@ -298,55 +458,65 @@ export function CreativeIntelligenceDashboard({
                         </span>
                       </TableCell>
                       <TableCell className="py-2.5 text-right font-mono text-[13px] text-slate-800">
-                        ${row.spend.toFixed(2)}
+                        ${(row.spend || 0).toFixed(2)}
                       </TableCell>
                       <TableCell className="py-2.5 text-right font-mono text-[13px] text-blue-600">
-                        ${row.conversionValue.toFixed(2)}
+                        ${(row.purchaseValue || 0).toFixed(2)}
                       </TableCell>
                       <TableCell className="py-2.5 text-right font-mono text-[13px] font-bold text-slate-900">
-                        {row.roas.toFixed(2)}
+                        {(row.roas || 0).toFixed(2)}
                       </TableCell>
                       <TableCell className="py-2.5 text-center font-mono text-[13px] text-slate-800">
-                        {row.purchases}
+                        {row.purchases || 0}
                       </TableCell>
                       <TableCell className="py-2.5 text-right font-mono text-[13px] text-slate-800">
-                        ${row.cpc.toFixed(2)}
+                        ${(row.cpp || 0).toFixed(2)}
                       </TableCell>
-                      <TableCell className="py-2.5 text-[12px] text-slate-500 whitespace-nowrap">
-                        {row.budget}
-                      </TableCell>
-                      <TableCell className="py-2.5 text-right font-mono text-[13px] text-slate-700">
-                        {row.impressions}
+                      <TableCell className="py-2.5 text-[12px] text-slate-500 whitespace-nowrap text-center">
+                        —
                       </TableCell>
                       <TableCell className="py-2.5 text-right font-mono text-[13px] text-slate-700">
-                        {row.reach}
+                        {row.impressions || 0}
+                      </TableCell>
+                      <TableCell className="py-2.5 text-right font-mono text-[13px] text-slate-700">
+                        {row.reach || 0}
                       </TableCell>
                     </TableRow>
                   ))}
                   {/* Summary Row */}
-                  {mockTableData.length > 0 && (
-                  <TableRow className="bg-slate-50 hover:bg-slate-50">
-                    <TableCell colSpan={3} className="py-4">
-                      <div className="flex flex-col ml-12">
-                        <span className="text-[13px] font-bold text-slate-900">{mockTableData.length} 个数据的汇总</span>
+                  {filteredTableData.length > 0 && (
+                  <TableRow className="bg-slate-50 hover:bg-slate-50 border-t-2 border-slate-200">
+                    <TableCell colSpan={5} className="py-4">
+                      <div className="flex flex-col ml-8">
+                        <span className="text-[13px] font-bold text-slate-900">{filteredTableData.length} 个数据的汇总</span>
                         <span className="text-[11px] text-slate-500 text-left">成功运行</span>
                       </div>
                     </TableCell>
                     <TableCell className="py-4 text-center font-bold text-slate-400">—</TableCell>
-                    <TableCell className="py-4 text-right font-mono text-[13px] font-bold text-slate-900">$0.00</TableCell>
-                    <TableCell className="py-4 text-right font-mono text-[13px] font-bold text-blue-600">$0.00</TableCell>
-                    <TableCell className="py-4 text-right font-mono text-[13px] font-bold text-slate-900">0.00</TableCell>
-                    <TableCell className="py-4 text-center font-mono text-[13px] font-bold text-slate-900">0</TableCell>
-                    <TableCell className="py-4 text-right font-mono text-[13px] font-bold text-slate-900">$0.00</TableCell>
+                    <TableCell className="py-4 text-right font-mono text-[13px] font-bold text-slate-900">${tableSummary.spend.toFixed(2)}</TableCell>
+                    <TableCell className="py-4 text-right font-mono text-[13px] font-bold text-blue-600">${tableSummary.purchaseValue.toFixed(2)}</TableCell>
+                    <TableCell className="py-4 text-right font-mono text-[13px] font-bold text-slate-900">{tableSummary.roas.toFixed(2)}x</TableCell>
+                    <TableCell className="py-4 text-center font-mono text-[13px] font-bold text-slate-900">{tableSummary.purchases}</TableCell>
+                    <TableCell className="py-4 text-right font-mono text-[13px] font-bold text-slate-900">${tableSummary.cpp.toFixed(2)}</TableCell>
                     <TableCell className="py-4 text-center font-bold text-slate-400">—</TableCell>
-                    <TableCell className="py-4 text-right font-mono text-[13px] font-bold text-slate-900">0</TableCell>
-                    <TableCell className="py-4 text-right font-mono text-[13px] font-bold text-slate-900">0</TableCell>
+                    <TableCell className="py-4 text-right font-mono text-[13px] font-bold text-slate-900">{tableSummary.impressions}</TableCell>
+                    <TableCell className="py-4 text-right font-mono text-[13px] font-bold text-slate-900">{tableSummary.reach}</TableCell>
                   </TableRow>
                   )}
-                  {mockTableData.length === 0 && (
+                  {filteredTableData.length === 0 && !isLoading && (
                     <TableRow>
-                      <TableCell colSpan={12} className="h-32 text-center text-slate-500 font-medium">
+                      <TableCell colSpan={14} className="h-32 text-center text-slate-500 font-medium">
                         暂无数据。请重新选择日期或过滤项。
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {isLoading && (
+                    <TableRow>
+                      <TableCell colSpan={14} className="h-32 text-center text-slate-500 font-medium">
+                        <div className="flex flex-col items-center justify-center gap-2">
+                           <RefreshCw className="w-5 h-5 animate-spin text-slate-400" />
+                           <p>正在加载指标数据...</p>
+                        </div>
                       </TableCell>
                     </TableRow>
                   )}

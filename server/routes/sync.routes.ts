@@ -7,6 +7,7 @@ import { ensureAdAccounts, syncMetaHierarchy } from "../services/meta-hierarchy-
 import { syncStoreData } from "../services/store-sync.service.js";
 import { attributePurchases } from "../services/attribution.service.js";
 import { aggregateData } from "../services/aggregation.service.js";
+import { runMetaCreativeAutoPatch } from "../services/metaFetchPatch.service.js";
 
 const router = Router();
 
@@ -39,7 +40,13 @@ router.post("/sync", async (req, res) => {
 
     // 获取系统的停用账户 ID 且常态过滤 dormant/限制账户
     const disabledAccounts = await prisma.metaAccountMonitoring.findMany({
-      where: { status: 2 },
+      where: {
+        OR: [
+          { status: 3 },
+          { status: 2 },
+          { activityStatus: 3 }
+        ]
+      },
       select: { accountId: true }
     });
     const disabledAccountIds = disabledAccounts.map(a => a.accountId);
@@ -184,6 +191,26 @@ router.post("/sync-creatives", async (req, res) => {
   }
 });
 
+router.post("/sync-creative-hash", async (req, res) => {
+  try {
+    const token = await getMetaToken();
+    if (!token) {
+      return res.status(400).json({ error: "Meta Token 未配置，请前往设置页面填写" });
+    }
+    console.log(`[Manual Creative Sync] Starting creative adcreatives auto patch sync`);
+    // NOTE: This runs in background as it could take a while
+    runMetaCreativeAutoPatch(token).then(() => {
+        console.log("Auto patch completed");
+    }).catch(e => {
+        console.error("Auto patch failed", e);
+    });
+    return res.json({ success: true, message: "素材特征抓取已在后台开始运行" });
+  } catch (error: any) {
+    console.error("Creative sync error:", error);
+    return res.status(500).json({ error: extractMetaError(error) });
+  }
+});
+
 router.get("/cron/sync-monthly", async (req, res) => {
   console.log("⏰ Starting background sync: Last 30 days...");
   try {
@@ -208,7 +235,13 @@ router.get("/cron/sync-monthly", async (req, res) => {
 
     // 获取系统的停用账户 ID 且常态过滤 dormant/限制账户
     const disabledAccounts = await prisma.metaAccountMonitoring.findMany({
-      where: { status: 2 },
+      where: {
+        OR: [
+          { status: 3 },
+          { status: 2 },
+          { activityStatus: 3 }
+        ]
+      },
       select: { accountId: true }
     });
     const disabledAccountIds = disabledAccounts.map(a => a.accountId);

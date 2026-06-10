@@ -80,9 +80,9 @@ export function MonitoringDashboard() {
       result = result.filter(acc => acc.hasSpendLast30Days);
     }
 
-    // Filter by status
+    // Filter by label (activityStatus)
     if (statusFilter !== "all") {
-      result = result.filter(acc => acc.accountStatus.toString() === statusFilter);
+      result = result.filter(acc => (acc.activityStatus ?? 2).toString() === statusFilter);
     }
 
     // Filter by search term
@@ -189,13 +189,15 @@ export function MonitoringDashboard() {
         <div className="md:col-span-3">
           <Select value={statusFilter} onValueChange={setStatusFilter}>
             <SelectTrigger className="h-11 border-gray-200 bg-white">
-              <SelectValue placeholder="筛选状态" />
+              <SelectValue placeholder="筛选活跃度标签" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">全部状态 (All Status)</SelectItem>
-              <SelectItem value="1">正常 (Active)</SelectItem>
-              <SelectItem value="2">停用 (Disabled)</SelectItem>
-              <SelectItem value="3">待清退 (Unsettled)</SelectItem>
+              <SelectItem value="all">全部标签 (All)</SelectItem>
+              <SelectItem value="1">标签 1 (活跃)</SelectItem>
+              <SelectItem value="2">标签 2 (一般)</SelectItem>
+              <SelectItem value="3">标签 3 (停用/限制)</SelectItem>
+              <SelectItem value="4">标签 4 (休眠/无消耗)</SelectItem>
+              <SelectItem value="5">标签 5 (警告/断档)</SelectItem>
             </SelectContent>
           </Select>
         </div>
