@@ -13,6 +13,9 @@ export interface MaterialPerformanceItem {
   impressions: number;
   clicks: number;
   cpm: string;
+  pageId: string | null;
+  pageName: string | null;
+  effectivePostId: string | null;
 }
 
 export function useMaterialPerformance(filters: {

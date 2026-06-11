@@ -95,7 +95,7 @@ router.post("/sync", async (req, res) => {
           const accountId = account.account_id || account.id;
           try {
             const activityStatus = await evaluateActivityStatus(accountId, account.account_status, token);
-            if (activityStatus <= 4) {
+            if (activityStatus <= 2) {
                 const count = await syncSingleAccountAdData(accountId, startDate, endDate, token);
                 totalSynced += count;
             } else {
@@ -264,7 +264,7 @@ router.get("/cron/sync-monthly", async (req, res) => {
       const accountId = account.account_id || account.id;
       try {
         const activityStatus = await evaluateActivityStatus(accountId, account.account_status, token);
-        if (activityStatus <= 4) {
+        if (activityStatus <= 2) {
              const count = await syncSingleAccountAdData(accountId, startDate, endDate, token);
              totalSynced += count;
         } else {

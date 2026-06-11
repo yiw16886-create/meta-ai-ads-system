@@ -24,7 +24,7 @@ export async function getCreativeIntelligence(startDate: string, endDate: string
   const hashAggregations: Record<string, any> = {};
 
   for (const acc of targetAccounts) {
-      if (acc.activityStatus !== 1) continue;
+      if (acc.activityStatus > 2) continue;
 
       const fbAccountId = acc.fb_account_id.startsWith('act_') ? acc.fb_account_id : `act_${acc.fb_account_id}`;
       const url = `https://graph.facebook.com/v21.0/${fbAccountId}/insights`;
@@ -33,7 +33,7 @@ export async function getCreativeIntelligence(startDate: string, endDate: string
               params: {
                   level: 'ad',
                   time_range: JSON.stringify({ since: startDate, until: endDate }),
-                  fields: 'ad_id,ad_name,spend,impressions,reach,actions,action_values',
+                  fields: 'ad_id,ad_name,spend,impressions,clicks,reach,actions,action_values',
                   limit: 1000,
                   access_token: token
               }
@@ -55,7 +55,10 @@ export async function getCreativeIntelligence(startDate: string, endDate: string
                           creativeId: dbAd.creativeId,
                           hash: dbAd.creative?.imageHash || dbAd.creative?.videoHash || dbAd.creative?.metaAssetId || dbAd.creativeId,
                           previewUrl: dbAd.creative?.previewUrl,
-                          type: dbAd.creative?.type 
+                          type: dbAd.creative?.type,
+                          landingUrl: dbAd.creative?.landingUrl,
+                          pageId: dbAd.creative?.pageId,
+                          effectivePostId: dbAd.creative?.effectivePostId
                       });
                   }
               }
@@ -79,10 +82,15 @@ export async function getCreativeIntelligence(startDate: string, endDate: string
                           status: "ACTIVE", 
                           spend: 0,
                           impressions: 0,
+                          clicks: 0,
                           reach: 0,
                           purchases: 0,
                           purchaseValue: 0,
                           previewUrl: adData.previewUrl,
+                          landingUrl: adData.landingUrl,
+                          pageId: adData.pageId,
+                          pageName: adData.pageName,
+                          effectivePostId: adData.effectivePostId,
                           type: adData.type
                       };
                   }
@@ -91,6 +99,10 @@ export async function getCreativeIntelligence(startDate: string, endDate: string
                   agg.spend += parseFloat(stat.spend || "0");
                   agg.impressions += parseInt(stat.impressions || "0", 10);
                   agg.reach += parseInt(stat.reach || "0", 10);
+                  
+                  // Extract clicks if they exist in basic fields or actions. Let's fetch clicks from action type 'link_click' or total 'clicks' 
+                  // usually clicks is a field in insights. We need to ensure we request it. 
+                  agg.clicks += parseInt(stat.clicks || "0", 10);
                   
                   if (stat.actions) {
                       const pur = stat.actions.find((a: any) => a.action_type === 'purchase' || a.action_type === 'omni_purchase');
@@ -113,6 +125,9 @@ export async function getCreativeIntelligence(startDate: string, endDate: string
   return Object.values(hashAggregations).map(agg => {
       agg.roas = agg.spend > 0 ? agg.purchaseValue / agg.spend : 0;
       agg.cpp = agg.purchases > 0 ? agg.spend / agg.purchases : 0;
+      agg.cpc = agg.clicks > 0 ? agg.spend / agg.clicks : 0;
+      agg.ctr = agg.impressions > 0 ? (agg.clicks / agg.impressions) * 100 : 0;
+      agg.cpm = agg.impressions > 0 ? (agg.spend / agg.impressions) * 1000 : 0;
       return agg;
   }).sort((a,b) => b.spend - a.spend); 
 }

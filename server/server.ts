@@ -262,7 +262,7 @@ async function runBackgroundSync() {
           const accountId = account.account_id || account.id;
           try {
             const activityStatus = await evaluateActivityStatus(accountId, account.account_status, token);
-            if (activityStatus <= 4) {
+            if (activityStatus <= 2) {
                await syncSingleAccountAdData(accountId, startDate, endDate, token);
             } else {
                console.log(`[后台同步 | ${syncId}] ⏭️ 跳过账户 ${accountId} (活跃度: ${activityStatus})`);

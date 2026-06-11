@@ -171,21 +171,24 @@ model Ad {
 }
 
 model AdCreative {
-  creativeId   String                     @id
-  fbAccountId  String
-  mediaType    String                     // IMAGE/VIDEO
-  imageUrl     String?
-  videoId      String?
-  videoHash    String?
-  imageHash    String?
-  storeId      Int?
-  name         String?
-  type         String?
-  landingUrl   String?
-  previewUrl   String?
-  metaAssetId  String?
-  hookRate     Float                      @default(0)
-  ads          Ad[]
+  creativeId      String                     @id
+  fbAccountId     String
+  mediaType       String                     // IMAGE/VIDEO
+  imageUrl        String?
+  videoId         String?
+  videoHash       String?
+  imageHash       String?
+  storeId         Int?
+  name            String?
+  type            String?
+  landingUrl      String?
+  previewUrl      String?
+  metaAssetId     String?
+  hookRate        Float                      @default(0)
+  pageId          String?
+  pageName        String?
+  effectivePostId String?
+  ads             Ad[]
 }
 
 model ProductPerformanceDaily {

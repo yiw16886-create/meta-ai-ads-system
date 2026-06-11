@@ -5,14 +5,24 @@ const router = Router();
 
 router.get("/", async (req, res) => {
   try {
-    const mappings = await prisma.accountMapping.findMany({
+    const { activeOnly } = req.query;
+
+    let mappings = await prisma.accountMapping.findMany({
       include: { store: true }
     });
 
     const monitoringData = await prisma.metaAccountMonitoring.findMany({
-      select: { accountId: true, accountName: true },
+      select: { accountId: true, accountName: true, activityStatus: true },
     });
     
+    if (activeOnly === 'true') {
+      const activeIds = new Set(monitoringData.filter(d => (d.activityStatus || 0) <= 2).map(d => d.accountId));
+      mappings = mappings.filter(m => {
+        const cleanId = String(m.fbAccountId).replace("act_", "").trim();
+        return activeIds.has(cleanId);
+      });
+    }
+
     const adAccountData = await prisma.adAccount.findMany({
       select: { fb_account_id: true, fb_account_name: true },
     });

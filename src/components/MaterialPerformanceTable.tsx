@@ -404,7 +404,7 @@ export function MaterialPerformanceTable() {
           </div>
           
           <div className="overflow-x-auto table-scrollbar pb-2">
-            <Table>
+            <Table className="min-w-[1550px]">
               <TableHeader className="bg-slate-50/80 border-b border-slate-200">
                 <TableRow>
                   <TableHead className="w-24 text-[13px] font-bold text-slate-600 h-12 whitespace-nowrap text-center">素材预览</TableHead>
@@ -419,12 +419,14 @@ export function MaterialPerformanceTable() {
                   <TableHead className="text-[13px] font-bold text-slate-600 h-12 whitespace-nowrap text-right">CTR</TableHead>
                   <TableHead className="text-[13px] font-bold text-slate-600 h-12 whitespace-nowrap text-right">CPM</TableHead>
                   <TableHead className="text-[13px] font-bold text-slate-600 h-12 whitespace-nowrap text-right">CPC</TableHead>
+                  <TableHead className="text-[13px] font-bold text-slate-600 h-12 whitespace-nowrap">主页名</TableHead>
+                  <TableHead className="text-[13px] font-bold text-slate-600 h-12 whitespace-nowrap">有效帖子 ID</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={12} className="h-44 text-center">
+                    <TableCell colSpan={14} className="h-44 text-center">
                       <div className="flex flex-col items-center justify-center gap-3">
                         <RefreshCw className="w-6 h-6 animate-spin text-meta-blue" />
                         <span className="text-slate-500 font-medium text-sm">正在加载素材层级表现流水数据...</span>
@@ -433,7 +435,7 @@ export function MaterialPerformanceTable() {
                   </TableRow>
                 ) : tableData.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={12} className="h-44 text-center text-slate-400 font-medium text-sm">
+                    <TableCell colSpan={14} className="h-44 text-center text-slate-400 font-medium text-sm">
                       暂无对应的素材流水表现数据。请重新选择日期或过虑项。
                     </TableCell>
                   </TableRow>
@@ -492,10 +494,15 @@ export function MaterialPerformanceTable() {
                             {/* Rich Floating Tooltip on Hover */}
                             <div className="invisible group-hover:visible opacity-0 group-hover:opacity-100 transition-all duration-200 absolute z-50 bottom-full left-0 mb-2 p-3.5 bg-slate-900 border border-slate-800 text-white text-[12px] font-normal leading-relaxed rounded-xl shadow-xl w-80 pointer-events-none break-all max-h-48 overflow-y-auto">
                               <div className="font-semibold text-slate-400 text-[10px] uppercase tracking-wider mb-2 border-b border-slate-800 pb-1.5 flex items-center justify-between">
-                                <span>完整广告文案 / 姓名</span>
+                                <span className="flex items-center gap-1">📋 完整文本 / 姓名</span>
                                 <span className="text-[9px] font-mono font-medium text-slate-500">Creative ID: {row.creative_id}</span>
                               </div>
-                              <div className="whitespace-normal select-text text-slate-100 font-sans">{row.material_name}</div>
+                              <div className="whitespace-normal select-text text-slate-100 font-sans mb-1">{row.material_name}</div>
+                              {row.landing_url && (
+                                <div className="border-t border-slate-800 pt-2 mt-2 text-blue-400 break-all select-all text-[11px] font-medium">
+                                  🔗 点击可直接前往商品落地页
+                                </div>
+                              )}
                             </div>
                           </div>
                         </TableCell>
@@ -555,6 +562,16 @@ export function MaterialPerformanceTable() {
                         <TableCell className="py-3 text-right font-mono text-[13px] text-slate-700">
                           ${row.clicks > 0 ? (parseFloat(row.spend || "0") / row.clicks).toFixed(2) : "0.00"}
                         </TableCell>
+
+                        {/* 13. 主页名 */}
+                        <TableCell className="py-3 text-[12px] truncate max-w-[150px]" title={row.pageName || row.pageId || ''}>
+                          {row.pageName ? row.pageName : (row.pageId || <span className="text-slate-400 italic">暂无主页</span>)}
+                        </TableCell>
+
+                        {/* 14. 有效帖子 ID */}
+                        <TableCell className="py-3 font-mono text-[12px] text-slate-600">
+                          {row.effectivePostId || <span className="text-slate-400 italic">暂无帖子</span>}
+                        </TableCell>
                       </TableRow>
                     );
                   })
@@ -589,6 +606,8 @@ export function MaterialPerformanceTable() {
                     <TableCell className="py-4 text-right font-mono text-[13px] font-bold text-slate-900">
                       ${tableSummary.cpc.toFixed(2)}
                     </TableCell>
+                    <TableCell className="py-4 text-center font-bold text-slate-400">—</TableCell>
+                    <TableCell className="py-4 text-center font-bold text-slate-400">—</TableCell>
                   </TableRow>
                 )}
               </TableBody>

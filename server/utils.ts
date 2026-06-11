@@ -51,6 +51,24 @@ export async function evaluateActivityStatus(accountId: string, fbAccountStatus:
         }
       });
     } catch (e) {}
+    
+    if (statusVal > 2) {
+      try {
+         await prisma.adInsight.deleteMany({ where: { accountId: cleanAccountId } });
+         await prisma.campaign.deleteMany({ where: { accountId: cleanAccountId } });
+         await prisma.adCreative.deleteMany({ 
+           where: { 
+             OR: [
+               { fbAccountId: cleanAccountId },
+               { fbAccountId: `act_${cleanAccountId}` }
+             ]
+           } 
+         });
+         console.log(`[evaluateActivityStatus] Cleaned up dormant data for account: ${cleanAccountId}`);
+      } catch (cleanErr) {
+         console.error(`[evaluateActivityStatus] Cleanup Error for ${cleanAccountId}:`, cleanErr);
+      }
+    }
   };
 
   // Priority 1: Meta-level Disabled status (2) -> return 3 (Disabled/Red)

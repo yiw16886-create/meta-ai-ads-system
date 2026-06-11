@@ -64,7 +64,7 @@ export function CreativeIntelligenceDashboard({
   React.useEffect(() => {
     const fetchStores = async () => {
       try {
-        const { data } = await axios.get("/api/mappings");
+        const { data } = await axios.get("/api/mappings?activeOnly=true");
         
         const storeSet = new Set<string>();
         const newAccounts = [{ value: "all", label: "全部", storeName: "all" }];
@@ -207,6 +207,7 @@ export function CreativeIntelligenceDashboard({
       let purchaseValue = 0;
       let purchases = 0;
       let impressions = 0;
+      let clicks = 0;
       let reach = 0;
       
       filteredTableData.forEach(r => {
@@ -214,10 +215,23 @@ export function CreativeIntelligenceDashboard({
           purchaseValue += r.purchaseValue || 0;
           purchases += r.purchases || 0;
           impressions += r.impressions || 0;
+          clicks += r.clicks || 0;
           reach += r.reach || 0;
       });
       
-      return { spend, purchaseValue, purchases, impressions, reach, roas: spend > 0 ? purchaseValue / spend : 0, cpp: purchases > 0 ? spend / purchases : 0 };
+      return { 
+        spend, 
+        purchaseValue, 
+        purchases, 
+        impressions, 
+        clicks,
+        reach, 
+        roas: spend > 0 ? purchaseValue / spend : 0, 
+        cpp: purchases > 0 ? spend / purchases : 0,
+        cpc: clicks > 0 ? spend / clicks : 0,
+        ctr: impressions > 0 ? (clicks / impressions) * 100 : 0,
+        cpm: impressions > 0 ? (spend / impressions) * 1000 : 0
+      };
   }, [filteredTableData]);
 
   const [isSyncing, setIsSyncing] = useState(false);
@@ -410,7 +424,7 @@ export function CreativeIntelligenceDashboard({
             </div>
             
             <div className="overflow-x-auto">
-              <Table>
+              <Table className="min-w-[1600px]">
                 <TableHeader className="bg-slate-50/80 border-b border-slate-100">
                   <TableRow>
                     <TableHead className="w-12 text-center">
@@ -418,17 +432,22 @@ export function CreativeIntelligenceDashboard({
                     </TableHead>
                     <TableHead className="text-[13px] font-bold text-slate-700 h-11 whitespace-nowrap">名称</TableHead>
                     <TableHead className="text-[13px] font-bold text-slate-700 h-11 whitespace-nowrap">广告创意 ID</TableHead>
+                    <TableHead className="text-[13px] font-bold text-slate-700 h-11 whitespace-nowrap">独立站落地页</TableHead>
                     <TableHead className="text-[13px] font-bold text-slate-700 h-11 whitespace-nowrap">店铺</TableHead>
                     <TableHead className="text-[13px] font-bold text-slate-700 h-11 whitespace-nowrap">账户</TableHead>
                     <TableHead className="text-[13px] font-bold text-slate-700 h-11 whitespace-nowrap text-center">投放状态</TableHead>
                     <TableHead className="text-[13px] font-bold text-slate-700 h-11 whitespace-nowrap text-right">花费金额</TableHead>
+                    <TableHead className="text-[13px] font-bold text-slate-700 h-11 whitespace-nowrap text-right">展示次数</TableHead>
+                    <TableHead className="text-[13px] font-bold text-slate-700 h-11 whitespace-nowrap text-right">点击数</TableHead>
+                    <TableHead className="text-[13px] font-bold text-slate-700 h-11 whitespace-nowrap text-right">CTR</TableHead>
+                    <TableHead className="text-[13px] font-bold text-slate-700 h-11 whitespace-nowrap text-right">CPM</TableHead>
+                    <TableHead className="text-[13px] font-bold text-slate-700 h-11 whitespace-nowrap text-right">CPC</TableHead>
+                    <TableHead className="text-[13px] font-bold text-slate-700 h-11 whitespace-nowrap">主页名</TableHead>
+                    <TableHead className="text-[13px] font-bold text-slate-700 h-11 whitespace-nowrap">有效帖子 ID</TableHead>
                     <TableHead className="text-[13px] font-bold text-slate-700 h-11 whitespace-nowrap text-right">转化价值</TableHead>
                     <TableHead className="text-[13px] font-bold text-slate-700 h-11 whitespace-nowrap text-right">ROAS</TableHead>
                     <TableHead className="text-[13px] font-bold text-slate-700 h-11 whitespace-nowrap text-center">购物量</TableHead>
-                    <TableHead className="text-[13px] font-bold text-slate-700 h-11 whitespace-nowrap text-right">单次购物费用</TableHead>
-                    <TableHead className="text-[13px] font-bold text-slate-700 h-11 whitespace-nowrap">预算</TableHead>
-                    <TableHead className="text-[13px] font-bold text-slate-700 h-11 whitespace-nowrap text-right">展示次数</TableHead>
-                    <TableHead className="text-[13px] font-bold text-slate-700 h-11 whitespace-nowrap text-right">覆盖人数</TableHead>
+                    <TableHead className="text-[13px] font-bold text-slate-700 h-11 whitespace-nowrap text-right">单次<br/>购物费用</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -442,6 +461,21 @@ export function CreativeIntelligenceDashboard({
                       </TableCell>
                       <TableCell className="py-2.5 px-4 font-mono text-[12px] text-slate-600 bg-slate-50/50 rounded-md">
                         {row.creativeId}
+                      </TableCell>
+                      <TableCell className="py-2.5 max-w-[200px] truncate text-[12px]">
+                        {row.landingUrl ? (
+                          <a 
+                            href={row.landingUrl} 
+                            target="_blank" 
+                            rel="noopener noreferrer" 
+                            className="text-blue-500 hover:underline font-mono"
+                            title={row.landingUrl}
+                          >
+                            {row.landingUrl}
+                          </a>
+                        ) : (
+                          <span className="text-slate-400 italic">未反解 (请同步)</span>
+                        )}
                       </TableCell>
                       <TableCell className="py-2.5 text-[13px] text-slate-700">
                         {row.storeName || "未分配"}
@@ -460,6 +494,27 @@ export function CreativeIntelligenceDashboard({
                       <TableCell className="py-2.5 text-right font-mono text-[13px] text-slate-800">
                         ${(row.spend || 0).toFixed(2)}
                       </TableCell>
+                      <TableCell className="py-2.5 text-right font-mono text-[13px] text-slate-700">
+                        {row.impressions || 0}
+                      </TableCell>
+                      <TableCell className="py-2.5 text-right font-mono text-[13px] text-slate-700">
+                        {row.clicks || 0}
+                      </TableCell>
+                      <TableCell className="py-2.5 text-right font-mono text-[13px] text-slate-700">
+                        {(row.ctr || 0).toFixed(2)}%
+                      </TableCell>
+                      <TableCell className="py-2.5 text-right font-mono text-[13px] text-slate-700">
+                        ${(row.cpm || 0).toFixed(2)}
+                      </TableCell>
+                      <TableCell className="py-2.5 text-right font-mono text-[13px] text-slate-700">
+                        ${(row.cpc || 0).toFixed(2)}
+                      </TableCell>
+                      <TableCell className="py-2.5 text-[12px] truncate max-w-[150px]" title={row.pageName || row.pageId}>
+                        {row.pageName ? row.pageName : (row.pageId || <span className="text-slate-400 italic">暂无主页</span>)}
+                      </TableCell>
+                      <TableCell className="py-2.5 font-mono text-[12px] text-slate-600">
+                        {row.effectivePostId || <span className="text-slate-400 italic">暂无帖子</span>}
+                      </TableCell>
                       <TableCell className="py-2.5 text-right font-mono text-[13px] text-blue-600">
                         ${(row.purchaseValue || 0).toFixed(2)}
                       </TableCell>
@@ -472,47 +527,41 @@ export function CreativeIntelligenceDashboard({
                       <TableCell className="py-2.5 text-right font-mono text-[13px] text-slate-800">
                         ${(row.cpp || 0).toFixed(2)}
                       </TableCell>
-                      <TableCell className="py-2.5 text-[12px] text-slate-500 whitespace-nowrap text-center">
-                        —
-                      </TableCell>
-                      <TableCell className="py-2.5 text-right font-mono text-[13px] text-slate-700">
-                        {row.impressions || 0}
-                      </TableCell>
-                      <TableCell className="py-2.5 text-right font-mono text-[13px] text-slate-700">
-                        {row.reach || 0}
-                      </TableCell>
                     </TableRow>
                   ))}
                   {/* Summary Row */}
                   {filteredTableData.length > 0 && (
                   <TableRow className="bg-slate-50 hover:bg-slate-50 border-t-2 border-slate-200">
-                    <TableCell colSpan={5} className="py-4">
+                    <TableCell colSpan={7} className="py-4">
                       <div className="flex flex-col ml-8">
                         <span className="text-[13px] font-bold text-slate-900">{filteredTableData.length} 个数据的汇总</span>
                         <span className="text-[11px] text-slate-500 text-left">成功运行</span>
                       </div>
                     </TableCell>
-                    <TableCell className="py-4 text-center font-bold text-slate-400">—</TableCell>
                     <TableCell className="py-4 text-right font-mono text-[13px] font-bold text-slate-900">${tableSummary.spend.toFixed(2)}</TableCell>
+                    <TableCell className="py-4 text-right font-mono text-[13px] font-bold text-slate-900">{tableSummary.impressions}</TableCell>
+                    <TableCell className="py-4 text-right font-mono text-[13px] font-bold text-slate-900">{tableSummary.clicks}</TableCell>
+                    <TableCell className="py-4 text-right font-mono text-[13px] font-bold text-slate-900">{tableSummary.ctr.toFixed(2)}%</TableCell>
+                    <TableCell className="py-4 text-right font-mono text-[13px] font-bold text-slate-900">${tableSummary.cpm.toFixed(2)}</TableCell>
+                    <TableCell className="py-4 text-right font-mono text-[13px] font-bold text-slate-900">${tableSummary.cpc.toFixed(2)}</TableCell>
+                    <TableCell className="py-4 text-center font-bold text-slate-400">—</TableCell>
+                    <TableCell className="py-4 text-center font-bold text-slate-400">—</TableCell>
                     <TableCell className="py-4 text-right font-mono text-[13px] font-bold text-blue-600">${tableSummary.purchaseValue.toFixed(2)}</TableCell>
                     <TableCell className="py-4 text-right font-mono text-[13px] font-bold text-slate-900">{tableSummary.roas.toFixed(2)}x</TableCell>
                     <TableCell className="py-4 text-center font-mono text-[13px] font-bold text-slate-900">{tableSummary.purchases}</TableCell>
                     <TableCell className="py-4 text-right font-mono text-[13px] font-bold text-slate-900">${tableSummary.cpp.toFixed(2)}</TableCell>
-                    <TableCell className="py-4 text-center font-bold text-slate-400">—</TableCell>
-                    <TableCell className="py-4 text-right font-mono text-[13px] font-bold text-slate-900">{tableSummary.impressions}</TableCell>
-                    <TableCell className="py-4 text-right font-mono text-[13px] font-bold text-slate-900">{tableSummary.reach}</TableCell>
                   </TableRow>
                   )}
                   {filteredTableData.length === 0 && !isLoading && (
                     <TableRow>
-                      <TableCell colSpan={14} className="h-32 text-center text-slate-500 font-medium">
+                      <TableCell colSpan={19} className="h-32 text-center text-slate-500 font-medium">
                         暂无数据。请重新选择日期或过滤项。
                       </TableCell>
                     </TableRow>
                   )}
                   {isLoading && (
                     <TableRow>
-                      <TableCell colSpan={14} className="h-32 text-center text-slate-500 font-medium">
+                      <TableCell colSpan={19} className="h-32 text-center text-slate-500 font-medium">
                         <div className="flex flex-col items-center justify-center gap-2">
                            <RefreshCw className="w-5 h-5 animate-spin text-slate-400" />
                            <p>正在加载指标数据...</p>
@@ -528,16 +577,107 @@ export function CreativeIntelligenceDashboard({
 
         {/* ... remaining empty panels for future implementation ... */}
         {activeTab === "preview" && (
-          <div className="bg-white border border-slate-100 rounded-xl p-16 text-center shadow-sm">
-            <div className="max-w-md mx-auto space-y-3">
-              <div className="w-12 h-12 rounded-full bg-slate-50 flex items-center justify-center mx-auto text-slate-400 border border-slate-100">
-                <Eye className="w-5 h-5" />
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 animate-in fade-in duration-300">
+            {filteredTableData.map((row) => (
+              <Card key={row.id} className="border border-slate-200/80 rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow flex flex-col bg-white">
+                {/* Visual Preview Container */}
+                <div className="relative aspect-square bg-slate-50 flex items-center justify-center border-b border-slate-100 group overflow-hidden">
+                  {row.previewUrl ? (
+                    <img 
+                      src={row.previewUrl} 
+                      alt={row.name} 
+                      referrerPolicy="no-referrer"
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" 
+                    />
+                  ) : (
+                    <div className="text-center p-6 text-slate-400">
+                      <span className="text-xs p-1 bg-slate-100 rounded text-slate-500 font-medium font-mono uppercase tracking-wide">
+                        {row.type || "IMAGE"}
+                      </span>
+                      <p className="text-[11px] mt-2 italic">无预览缩略图</p>
+                    </div>
+                  )}
+                  <div className="absolute top-2.5 right-2.5 bg-slate-900/85 backdrop-blur-sm text-white font-extrabold text-[10px] px-2.5 py-1 rounded-full uppercase tracking-wider">
+                    {row.type || "IMAGE"}
+                  </div>
+                </div>
+
+                {/* Info and Metadata */}
+                <div className="p-4 flex-1 flex flex-col justify-between space-y-4">
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-bold text-slate-800 line-clamp-2" title={row.name}>
+                      {row.name || `创意 - ${row.creativeId}`}
+                    </h4>
+                    
+                    <div className="font-mono text-[10px] text-slate-500 flex flex-wrap gap-x-2 gap-y-1">
+                      <span>ID:</span>
+                      <span className="text-slate-700 bg-slate-100/80 px-1 py-0.2 rounded font-medium select-all">{row.creativeId}</span>
+                    </div>
+
+                    {/* Stores & Page Accounts */}
+                    <div className="text-[11px] space-y-1">
+                      <div className="flex justify-between border-b border-dashed border-slate-100 pb-1">
+                        <span className="text-slate-400">店铺:</span>
+                        <span className="font-medium text-slate-700">{row.storeName || "未分配"}</span>
+                      </div>
+                      <div className="flex justify-between border-b border-dashed border-slate-100 pb-1">
+                        <span className="text-slate-400">账户:</span>
+                        <span className="font-medium text-slate-700 truncate max-w-[120px]">{row.accountName}</span>
+                      </div>
+                      <div className="flex justify-between border-b border-dashed border-slate-100 pb-1">
+                        <span className="text-slate-400">主页 Id:</span>
+                        <span className="font-mono text-slate-700 select-all">{row.pageId || <span className="text-slate-400 italic">未抓取</span>}</span>
+                      </div>
+                      <div className="flex justify-between border-b border-dashed border-slate-100 pb-1">
+                        <span className="text-slate-400">帖子 Id:</span>
+                        <span className="font-mono text-slate-700 select-all">{row.effectivePostId || <span className="text-slate-400 italic">未抓取</span>}</span>
+                      </div>
+                    </div>
+
+                    {/* Landing URL */}
+                    <div className="text-[11px] space-y-1 pt-1">
+                      <div className="text-slate-400">跳转独立站:</div>
+                      {row.landingUrl ? (
+                        <a 
+                          href={row.landingUrl} 
+                          target="_blank" 
+                          rel="noopener noreferrer" 
+                          className="block text-blue-600 hover:underline font-mono truncate bg-blue-50/50 p-1.5 rounded border border-blue-100/60"
+                          title={row.landingUrl}
+                        >
+                          {row.landingUrl}
+                        </a>
+                      ) : (
+                        <div className="text-slate-400 italic bg-slate-50 p-1.5 rounded text-left">
+                          未成功反解 (请先在指标页同步)
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Tiny performance badge */}
+                  <div className="pt-3 border-t border-slate-100 grid grid-cols-3 gap-1 text-center">
+                    <div>
+                      <div className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Spend</div>
+                      <div className="text-[11px] font-bold font-mono text-slate-800">${(row.spend || 0).toFixed(1)}</div>
+                    </div>
+                    <div>
+                      <div className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">ROAS</div>
+                      <div className="text-[11px] font-bold font-mono text-emerald-600">{(row.roas || 0).toFixed(2)}</div>
+                    </div>
+                    <div>
+                      <div className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Purchases</div>
+                      <div className="text-[11px] font-bold font-mono text-blue-600">{row.purchases || 0}</div>
+                    </div>
+                  </div>
+                </div>
+              </Card>
+            ))}
+            {filteredTableData.length === 0 && (
+              <div className="col-span-full py-16 text-center text-slate-400">
+                暂无素材可供预览，请重新调整筛选或选择同步。
               </div>
-              <h4 className="text-sm font-bold text-slate-800 mt-4">素材预览面板</h4>
-              <p className="text-xs text-slate-400 leading-relaxed">
-                此处将按您的需求展示具体的素材图片/视频预览画布。
-              </p>
-            </div>
+            )}
           </div>
         )}
 

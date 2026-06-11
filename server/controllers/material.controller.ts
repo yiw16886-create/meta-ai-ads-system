@@ -254,6 +254,17 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
       }
     }
 
+    // Fetch all stores to build domain mapping for fallback landing URLs
+    const storeIdsJoined = Array.from(new Set(validAccounts.map(a => a.storeId).filter(Boolean))) as number[];
+    const storesList = await prisma.store.findMany({
+      where: { id: { in: storeIdsJoined } },
+      select: { id: true, domain: true, name: true }
+    });
+    const storeDomainMap: Record<number, string> = {};
+    for (const s of storesList) {
+      storeDomainMap[s.id] = s.domain || `${s.name}.myshopline.com`;
+    }
+
     // 6. 转换结果并组装，拼装创意素材和所属店铺
     const formattedData: any[] = [];
     
@@ -293,19 +304,31 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
         rawMaterialName = cleanedName || ad.name || '未知广告名称';
       }
 
+      const calcStoreId = currentMapping?.storeId || ad.storeId || null;
+      let finalLandingUrl = creative?.landingUrl || null;
+      if (!finalLandingUrl && calcStoreId) {
+        const domain = storeDomainMap[calcStoreId];
+        if (domain) {
+          finalLandingUrl = `https://${domain}/products/${ad.creativeId || ad.id}`;
+        }
+      }
+
       formattedData.push({
         creative_id: ad.id,               // 映射为 creative_id 以兼容前端字段结构，实为广告 ID
         real_creative_id: ad.creativeId,  // 备用
         material_name: rawMaterialName,
         material_type: creative?.type || creative?.mediaType || 'IMAGE',
         preview_url: creative?.previewUrl || creative?.imageUrl || null,
-        landing_url: creative?.landingUrl || null,
-        storeId: currentMapping?.storeId || ad.storeId || null,
+        landing_url: finalLandingUrl,
+        storeId: calcStoreId,
         account_id: ad.accountId,
         spend: totalSpend.toFixed(2),
         impressions: totalImpressions,
         clicks: totalClicks,
-        cpm: cpm.toFixed(2)
+        cpm: cpm.toFixed(2),
+        pageId: creative?.pageId || null,
+        pageName: creative?.pageName || null,
+        effectivePostId: creative?.effectivePostId || null
       });
     }
 
