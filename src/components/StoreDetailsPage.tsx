@@ -119,6 +119,8 @@ export function StoreDetailsPage({
   const [adInsights, setAdInsights] = useState<any[]>([]);
   const [accountsLoading, setAccountsLoading] = useState(false);
   const [addAccountOpen, setAddAccountOpen] = useState(false);
+  const [unmapConfirmOpen, setUnmapConfirmOpen] = useState(false);
+  const [accountToUnmap, setAccountToUnmap] = useState<string | null>(null);
   const [newAccount, setNewAccount] = useState({
     accountId: "",
     accountName: "",
@@ -320,13 +322,19 @@ export function StoreDetailsPage({
     }
   };
 
-  const handleUnmapAccount = async (accountId: string) => {
-    if (!window.confirm("确定要解除该广告账户与当前店铺的关联吗？")) return;
+  const handleUnmapAccount = (accountId: string) => {
+    setAccountToUnmap(accountId);
+    setUnmapConfirmOpen(true);
+  };
+
+  const handleUnmapAccountConfirm = async () => {
+    if (!accountToUnmap) return;
+    setUnmapConfirmOpen(false);
     try {
       const payload = {
         mappings: [
           {
-            accountId: accountId,
+            accountId: accountToUnmap,
             store: "未分配"
           }
         ]
@@ -341,6 +349,8 @@ export function StoreDetailsPage({
     } catch (error) {
       console.error("Failed to unmap account:", error);
       toast.error("解除关联失败");
+    } finally {
+      setAccountToUnmap(null);
     }
   };
 
@@ -838,6 +848,42 @@ export function StoreDetailsPage({
                     </form>
                   </DialogContent>
                 </Dialog>
+
+                <Dialog open={unmapConfirmOpen} onOpenChange={setUnmapConfirmOpen}>
+                  <DialogContent className="max-w-md rounded-xl bg-white p-5 shadow-xl border border-slate-100 z-50">
+                    <DialogHeader className="border-b pb-2 mb-3">
+                      <DialogTitle className="flex items-center gap-2 text-slate-800 font-bold text-sm">
+                        <AlertTriangle className="w-4 h-4 text-amber-500" />
+                        解除广告账户关联
+                      </DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-4 py-1">
+                      <p className="text-xs text-slate-600 leading-relaxed">
+                        确定要解除广告账户 <strong className="text-slate-900 bg-slate-100 px-1.5 py-0.5 rounded font-mono text-xs">{accountToUnmap}</strong> 与当前店铺的关联吗？
+                      </p>
+                      <div className="flex items-center justify-end gap-2.5 pt-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => {
+                            setUnmapConfirmOpen(false);
+                            setAccountToUnmap(null);
+                          }}
+                          className="h-8 text-xs rounded-md"
+                        >
+                          取消
+                        </Button>
+                        <Button
+                          type="button"
+                          onClick={handleUnmapAccountConfirm}
+                          className="h-8 text-xs bg-red-600 hover:bg-red-700 text-white rounded-md px-4 font-semibold border-0"
+                        >
+                          确认解除
+                        </Button>
+                      </div>
+                    </div>
+                  </DialogContent>
+                </Dialog>
               </CardHeader>
               <CardContent className="p-0 overflow-auto">
                 {accountsLoading ? (
@@ -1156,11 +1202,20 @@ export function StoreDetailsPage({
                         店铺时区
                       </label>
                       <div className="flex h-10 w-full items-center rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-sm text-slate-500 font-medium">
-                        自动解析为店铺后台时区 (当前: {storeData.timezone || "GMT+8"})
+                        自动解析为店铺后台时区 (当前: {storeData.timezone || "America/Los_Angeles"})
                       </div>
                       <p className="text-[10px] text-slate-400">
                         * 已取消手动自定义。系统将根据接口授权自动与您的店匠/SHOPLINE/Shopify后台时区保持100%同步。
                       </p>
+                      {storeData.timezone_fallback_warning && (
+                        <div className="mt-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-2 text-amber-800 text-[11px] leading-relaxed">
+                          <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                          <div>
+                            <span className="font-bold block mb-0.5" id="store-timezone-warning">时区同步风险警告 (Timezone Sync Risk)</span>
+                            平台店铺 API 获取时区失败，目前已退回到默认时区 ({storeData.timezone || "America/Los_Angeles"})。这可能会导致小部分订单的付款日期统计存在偏差，建议检查 API 授权配置并在重新保存域或 Token 属性后重新激活。
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
 

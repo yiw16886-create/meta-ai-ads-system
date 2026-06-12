@@ -530,9 +530,10 @@ async function syncShoplazzaStoreData(store: any, startDate: string, endDate: st
     let hasNextOrders = true;
     let ordersCount = 0;
 
-    // Use dayjs specifying America/Los_Angeles timezone strictly as requested (locks with proper dst/est offset tail)
-    const formattedMin = dayjs.tz(`${startDate}T00:00:00`, "America/Los_Angeles").format();
-    const formattedMax = dayjs.tz(`${endDate}T23:59:59`, "America/Los_Angeles").format();
+    // Use dayjs specifying store.timezone or America/Los_Angeles with proper UTC conversion
+    const storeTz = store.timezone || "America/Los_Angeles";
+    const formattedMin = dayjs.tz(`${startDate}T00:00:00`, storeTz).utc().format();
+    const formattedMax = dayjs.tz(`${endDate}T23:59:59`, storeTz).utc().format();
 
     while (hasNextOrders) {
       const updated_at_min = encodeURIComponent(formattedMin);
@@ -614,7 +615,8 @@ async function syncShoplazzaStoreData(store: any, startDate: string, endDate: st
                 refunded,
                 refundedAt,
                 orderId,
-                orderTotal
+                orderTotal,
+                createdAt: new Date(o.processed_at || o.created_at)
               },
               create: {
                 id: lineItem.id.toString(),
@@ -626,7 +628,7 @@ async function syncShoplazzaStoreData(store: any, startDate: string, endDate: st
                 refundedAt,
                 orderId,
                 orderTotal,
-                createdAt: new Date(o.created_at)
+                createdAt: new Date(o.processed_at || o.created_at)
               }
             });
             successCount++;

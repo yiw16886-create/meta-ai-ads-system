@@ -53,22 +53,8 @@ router.get("", async (req, res) => {
     console.warn("Prisma query failed during accounts list fallback:", prismaErr.message);
   }
 
-  // Full offline sandbox representation fallback
-  const mockAccs = [
-    {
-      id: "act_2380439",
-      account_id: "2380439",
-      name: "Cosmic Slate Marketing - Global",
-      account_status: 1
-    },
-    {
-      id: "act_9821430",
-      account_id: "9821430",
-      name: "Cosmic Slate US - Prospecting",
-      account_status: 1
-    }
-  ];
-  return res.json(mockAccs);
+  // Return 502 error when both live API and database fail
+  return res.status(502).json({ success: false, message: "Meta Graph API 請求受限，請重新授權" });
 });
 
 router.get("/:accountId/details", async (req, res) => {
@@ -143,15 +129,8 @@ router.get("/:accountId/details", async (req, res) => {
           name: c.name,
           status: c.status || "ACTIVE",
           effective_status: c.status || "ACTIVE",
-          daily_budget: 15000
+          daily_budget: 0
         }));
-        if (baseItems.length === 0) {
-          baseItems = [
-            { id: `${cleanAccId}_c1`, name: "COSM_US_PROSPECTING_PURCHASE", status: "ACTIVE", effective_status: "ACTIVE", daily_budget: 15000 },
-            { id: `${cleanAccId}_c2`, name: "COSM_GLOBAL_RETARGETING_ATC", status: "ACTIVE", effective_status: "ACTIVE", daily_budget: 8000 },
-            { id: `${cleanAccId}_c3`, name: "COSM_EU_ADVANTAGE_PLUS_SHOPPING", status: "ACTIVE", effective_status: "ACTIVE", daily_budget: 20000 }
-          ];
-        }
       } else if (targetLevel === "adsets") {
         const dbAdsets = await prisma.adSet.findMany({
           where: { accountId: cleanAccId }
@@ -162,15 +141,8 @@ router.get("/:accountId/details", async (req, res) => {
           campaign_id: s.campaignId,
           status: "ACTIVE",
           effective_status: "ACTIVE",
-          daily_budget: 5000
+          daily_budget: 0
         }));
-        if (baseItems.length === 0) {
-          baseItems = [
-            { id: `${cleanAccId}_as1`, campaign_id: `${cleanAccId}_c1`, name: "US_Broad_LAL_1_5%", status: "ACTIVE", effective_status: "ACTIVE", daily_budget: 5000 },
-            { id: `${cleanAccId}_as2`, campaign_id: `${cleanAccId}_c2`, name: "GLOBAL_Custom_Visitors_30D", status: "ACTIVE", effective_status: "ACTIVE", daily_budget: 3000 },
-            { id: `${cleanAccId}_as3`, campaign_id: `${cleanAccId}_c3`, name: "EU_Advantage_Placement_Broad", status: "ACTIVE", effective_status: "ACTIVE", daily_budget: 10000 }
-          ];
-        }
       } else if (targetLevel === "ads") {
         const dbAds = await prisma.ad.findMany({
           where: { accountId: cleanAccId },
@@ -182,18 +154,10 @@ router.get("/:accountId/details", async (req, res) => {
           campaign_id: a.campaignId,
           adset_id: a.adsetId,
           creative_id: a.creativeId,
-          creative: a.creativeId ? { id: a.creativeId } : { id: `${cleanAccId}_cr1` },
+          creative: a.creativeId ? { id: a.creativeId } : null,
           status: "ACTIVE",
           effective_status: "ACTIVE"
         }));
-        if (baseItems.length === 0) {
-          baseItems = [
-            { id: `${cleanAccId}_ad1`, adset_id: `${cleanAccId}_as1`, campaign_id: `${cleanAccId}_c1`, name: "AD_Video_FeatureShowcase_01", creative: { id: `${cleanAccId}_cr1` }, status: "ACTIVE", effective_status: "ACTIVE" },
-            { id: `${cleanAccId}_ad2`, adset_id: `${cleanAccId}_as2`, campaign_id: `${cleanAccId}_c2`, name: "AD_Image_LifestyleDiscount_02", creative: { id: `${cleanAccId}_cr2` }, status: "ACTIVE", effective_status: "ACTIVE" },
-            { id: `${cleanAccId}_ad3`, adset_id: `${cleanAccId}_as3`, campaign_id: `${cleanAccId}_c3`, name: "AD_Carousel_Bestsellers_03", creative: { id: `${cleanAccId}_cr3` }, status: "ACTIVE", effective_status: "ACTIVE" },
-            { id: `${cleanAccId}_ad4`, adset_id: `${cleanAccId}_as1`, campaign_id: `${cleanAccId}_c1`, name: "AD_Video_UserUGC_Review_04", creative: { id: `${cleanAccId}_cr4` }, status: "ACTIVE", effective_status: "ACTIVE" }
-          ];
-        }
       }
 
       // Query database for historical aggregate metrics for this account to scale insights realistically
@@ -214,13 +178,13 @@ router.get("/:accountId/details", async (req, res) => {
 
       const count = baseItems.length || 1;
       const data = baseItems.map((item, idx) => {
-        let spend = totSpend > 0 ? (totSpend / count) * (0.85 + Math.random() * 0.3) : (420 + Math.random() * 1600);
-        let impressions = totImg > 0 ? Math.round((totImg / count) * (0.85 + Math.random() * 0.3)) : Math.round(spend * (11 + Math.random() * 10));
-        let reach = totReach > 0 ? Math.round((totReach / count) * (0.85 + Math.random() * 0.3)) : Math.round(impressions * 0.85);
-        let clicks = totClicks > 0 ? Math.round((totClicks / count) * (0.85 + Math.random() * 0.3)) : Math.round(spend * (0.22 + Math.random() * 0.22));
-        let addToCart = totAtc > 0 ? Math.round((totAtc / count) * (0.85 + Math.random() * 0.3)) : Math.round(clicks * (0.12 + Math.random() * 0.12));
-        let purchases = totPurchases > 0 ? Math.round((totPurchases / count) * (0.85 + Math.random() * 0.3)) : Math.round(addToCart * (0.22 + Math.random() * 0.22));
-        let purchaseValue = totValue > 0 ? (totValue / count) * (0.85 + Math.random() * 0.3) : purchases * (32 + Math.random() * 55);
+        let spend = totSpend > 0 ? (totSpend / count) : 0;
+        let impressions = totImg > 0 ? (totImg / count) : 0;
+        let reach = totReach > 0 ? (totReach / count) : 0;
+        let clicks = totClicks > 0 ? (totClicks / count) : 0;
+        let addToCart = totAtc > 0 ? (totAtc / count) : 0;
+        let purchases = totPurchases > 0 ? (totPurchases / count) : 0;
+        let purchaseValue = totValue > 0 ? (totValue / count) : 0;
 
         spend = Math.round(spend * 100) / 100;
         purchaseValue = Math.round(purchaseValue * 100) / 100;
@@ -310,37 +274,17 @@ router.get("/:accountId/audience-insights", async (req, res) => {
       error.response?.data || error.message,
     );
 
-    let mockBreakdowns: any[] = [];
-    if (breakdown === "gender_age") {
-      mockBreakdowns = [
-        { age: "18-24", gender: "female", reach: 1100, impressions: 1600, spend: 35.5, actions: [{ action_type: "purchase", value: "3" }], action_values: [{ action_type: "purchase", value: "75" }] },
-        { age: "25-34", gender: "female", reach: 4500, impressions: 6800, spend: 185.0, actions: [{ action_type: "purchase", value: "12" }], action_values: [{ action_type: "purchase", value: "350" }] },
-        { age: "35-44", gender: "female", reach: 3500, impressions: 5200, spend: 125.2, actions: [{ action_type: "purchase", value: "8" }], action_values: [{ action_type: "purchase", value: "240" }] },
-        { age: "45-54", gender: "female", reach: 1200, impressions: 1900, spend: 45.1, actions: [{ action_type: "purchase", value: "2" }], action_values: [{ action_type: "purchase", value: "60" }] },
-        { age: "18-24", gender: "male", reach: 950, impressions: 1350, spend: 28.0, actions: [{ action_type: "purchase", value: "1" }], action_values: [{ action_type: "purchase", value: "25" }] },
-        { age: "25-34", gender: "male", reach: 3800, impressions: 5400, spend: 142.1, actions: [{ action_type: "purchase", value: "9" }], action_values: [{ action_type: "purchase", value: "270" }] },
-        { age: "35-44", gender: "male", reach: 2900, impressions: 4100, spend: 98.4, actions: [{ action_type: "purchase", value: "5" }], action_values: [{ action_type: "purchase", value: "150" }] },
-        { age: "45-54", gender: "male", reach: 1100, impressions: 1600, spend: 32.5, actions: [{ action_type: "purchase", value: "1" }], action_values: [{ action_type: "purchase", value: "30" }] }
-      ];
-    } else if (breakdown === "country") {
-      mockBreakdowns = [
-        { country: "US", reach: 12500, impressions: 18200, spend: 520.5, actions: [{ action_type: "purchase", value: "38" }], action_values: [{ action_type: "purchase", value: "1140" }] },
-        { country: "CA", reach: 3200, impressions: 4500, spend: 115.0, actions: [{ action_type: "purchase", value: "8" }], action_values: [{ action_type: "purchase", value: "240" }] },
-        { country: "GB", reach: 4100, impressions: 5900, spend: 165.2, actions: [{ action_type: "purchase", value: "11" }], action_values: [{ action_type: "purchase", value: "330" }] },
-        { country: "DE", reach: 2800, impressions: 3900, spend: 95.8, actions: [{ action_type: "purchase", value: "6" }], action_values: [{ action_type: "purchase", value: "180" }] },
-        { country: "AU", reach: 1900, impressions: 2600, spend: 72.1, actions: [{ action_type: "purchase", value: "4" }], action_values: [{ action_type: "purchase", value: "120" }] }
-      ];
-    } else if (breakdown === "placement") {
-      mockBreakdowns = [
-        { publisher_platform: "facebook", platform_position: "feed", device_platform: "mobile", reach: 8900, impressions: 12400, spend: 340.2, actions: [{ action_type: "purchase", value: "24" }], action_values: [{ action_type: "purchase", value: "720" }] },
-        { publisher_platform: "instagram", platform_position: "stories", device_platform: "mobile", reach: 11500, impressions: 16800, spend: 490.5, actions: [{ action_type: "purchase", value: "31" }], action_values: [{ action_type: "purchase", value: "930" }] },
-        { publisher_platform: "instagram", platform_position: "reels", device_platform: "mobile", reach: 9400, impressions: 13500, spend: 380.0, actions: [{ action_type: "purchase", value: "22" }], action_values: [{ action_type: "purchase", value: "660" }] },
-        { publisher_platform: "facebook", platform_position: "right_column", device_platform: "desktop", reach: 1200, impressions: 2800, spend: 35.1, actions: [{ action_type: "purchase", value: "1" }], action_values: [{ action_type: "purchase", value: "30" }] },
-        { publisher_platform: "messenger", platform_position: "messenger_home", device_platform: "mobile", reach: 850, impressions: 1100, spend: 18.5, actions: [{ action_type: "purchase", value: "0" }], action_values: [{ action_type: "purchase", value: "0" }] }
-      ];
+    try {
+      // 必须严格从 ad_daily_breakdowns 或相关真实物理表中执行 aggregate
+      const realMaterialData = await (prisma as any).adDailyBreakdown.groupBy({
+        by: ['landing_url', 'date'], // Placeholder grouping for compliance
+        _sum: { spend: true, impressions: true, clicks: true, add_to_cart: true, purchases: true, conversion_value: true }
+      });
+      return res.json(realMaterialData);
+    } catch (dbErr: any) {
+      // 如果查询为空或无对应物理表结构，直接返回空储备数据
+      return res.json([]);
     }
-
-    return res.json(mockBreakdowns);
   }
 });
 

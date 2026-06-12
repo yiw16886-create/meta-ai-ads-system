@@ -12,6 +12,7 @@ export interface MaterialPerformanceItem {
   spend: string;
   impressions: number;
   clicks: number;
+  purchases: number;
   cpm: string;
   pageId: string | null;
   pageName: string | null;

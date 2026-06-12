@@ -218,8 +218,7 @@ export const runMetaCreativeAutoPatch = async (accessToken: string) => {
               insightsUrl = res.data?.paging?.next || null;
           }
       } catch (err: any) {
-          console.warn(`[Manual Creative Sync] Failed to fetch active ad IDs for ${fbAccountId}, error: ${err.message}`);
-          continue;
+          throw new Error('Meta API 授权失效或无权限拉取');
       }
 
       const activeAdIdsArray = Array.from(activeAdIds);
@@ -247,144 +246,148 @@ export const runMetaCreativeAutoPatch = async (accessToken: string) => {
             console.log(`[Manual Creative Sync] Processing batch of ${ads.length} ads for account ${fbAccountId}`);
 
             for (const ad of ads) {
-                if (ad.creative && ad.creative.id) {
-                    const creativeId = ad.creative.id;
-                    
-                    // 1. Get Campaign info and upsert Campaign
-                    let campId = null;
-                    if (ad.campaign && ad.campaign.id) {
-                        campId = cleanPrefix(ad.campaign.id);
-                        await prisma.campaign.upsert({
-                            where: { id: campId },
+                try {
+                    if (ad.creative && ad.creative.id) {
+                        const creativeId = ad.creative.id;
+                        
+                        // 1. Get Campaign info and upsert Campaign
+                        let campId = null;
+                        if (ad.campaign && ad.campaign.id) {
+                            campId = cleanPrefix(ad.campaign.id);
+                            await prisma.campaign.upsert({
+                                where: { id: campId },
+                                update: {
+                                    name: ad.campaign.name || `Campaign ${campId}`,
+                                    status: ad.campaign.status || "ACTIVE"
+                                },
+                                create: {
+                                    id: campId,
+                                    accountId: rawAccountId,
+                                    name: ad.campaign.name || `Campaign ${campId}`,
+                                    status: ad.campaign.status || "ACTIVE"
+                                }
+                            });
+                        }
+
+                        // 2. Get AdSet info and upsert AdSet
+                        let adsetId = null;
+                        if (ad.adset && ad.adset.id && campId) {
+                            adsetId = cleanPrefix(ad.adset.id);
+                            await prisma.adSet.upsert({
+                                where: { id: adsetId },
+                                update: {
+                                    name: ad.adset.name || `AdSet ${adsetId}`,
+                                    campaignId: campId
+                                },
+                                create: {
+                                    id: adsetId,
+                                    campaignId: campId,
+                                    accountId: rawAccountId,
+                                    name: ad.adset.name || `AdSet ${adsetId}`
+                                }
+                            });
+                        }
+
+                        // 3. Extract hasKey / asset hashes
+                        let imageHash = ad.creative.image_hash || null;
+                        let videoId = ad.creative.video_id || null;
+                        let previewUrl = ad.creative.thumbnail_url || ad.creative.image_url || null;
+                        let landingUrl: string | null = null;
+                        let pageId: string | null = null;
+                        let pageName: string | null = null;
+                        let effectivePostId: string | null = null;
+
+                        const dbCreative = await prisma.adCreative.findUnique({
+                            where: { creativeId }
+                        });
+
+                        if (dbCreative && dbCreative.landingUrl && dbCreative.pageId && dbCreative.effectivePostId) {
+                            imageHash = dbCreative.imageHash || imageHash;
+                            videoId = dbCreative.videoId || videoId;
+                            previewUrl = dbCreative.previewUrl || previewUrl;
+                            landingUrl = dbCreative.landingUrl;
+                            pageId = dbCreative.pageId;
+                            pageName = dbCreative.pageName;
+                            effectivePostId = dbCreative.effectivePostId;
+                        } else {
+                            console.log(`[Manual Creative Sync] Deep fetching creative detailed assets for ID: ${creativeId}`);
+                            const extracted = await extractMetaAssetHash(creativeId, accessToken, pageTokensMap);
+                            if (extracted) {
+                                imageHash = extracted.imageHash || null;
+                                videoId = extracted.videoId || null;
+                                if (extracted.previewUrl) {
+                                    previewUrl = extracted.previewUrl;
+                                }
+                                landingUrl = extracted.landingUrl;
+                                pageId = extracted.pageId;
+                                pageName = extracted.pageName || null;
+                                effectivePostId = extracted.effectivePostId;
+                            }
+                        }
+
+                        const hash = imageHash || videoId;
+                        const mediaType = videoId ? "VIDEO" : "IMAGE";
+
+                        // 4. Upsert AdCreative
+                        await prisma.adCreative.upsert({
+                            where: { creativeId },
                             update: {
-                                name: ad.campaign.name || `Campaign ${campId}`,
-                                status: ad.campaign.status || "ACTIVE"
+                                fbAccountId: fbAccountId,
+                                imageHash: imageHash,
+                                videoId: videoId,
+                                previewUrl: previewUrl,
+                                metaAssetId: hash,
+                                mediaType: mediaType,
+                                type: mediaType,
+                                storeId: account.storeId,
+                                landingUrl: landingUrl,
+                                pageId: pageId,
+                                pageName: pageName,
+                                effectivePostId: effectivePostId,
+                                name: ad.creative.name || ad.name ? `Creative for ${ad.creative.name || ad.name}` : `Creative ${creativeId}`
                             },
                             create: {
-                                id: campId,
-                                accountId: rawAccountId,
-                                name: ad.campaign.name || `Campaign ${campId}`,
-                                status: ad.campaign.status || "ACTIVE"
+                                creativeId,
+                                fbAccountId: fbAccountId,
+                                imageHash: imageHash,
+                                videoId: videoId,
+                                previewUrl: previewUrl,
+                                metaAssetId: hash,
+                                mediaType: mediaType,
+                                type: mediaType,
+                                storeId: account.storeId,
+                                landingUrl: landingUrl,
+                                pageId: pageId,
+                                pageName: pageName,
+                                effectivePostId: effectivePostId,
+                                name: ad.creative.name || ad.name ? `Creative for ${ad.creative.name || ad.name}` : `Creative ${creativeId}`
                             }
                         });
-                    }
 
-                    // 2. Get AdSet info and upsert AdSet
-                    let adsetId = null;
-                    if (ad.adset && ad.adset.id && campId) {
-                        adsetId = cleanPrefix(ad.adset.id);
-                        await prisma.adSet.upsert({
-                            where: { id: adsetId },
-                            update: {
-                                name: ad.adset.name || `AdSet ${adsetId}`,
-                                campaignId: campId
-                            },
-                            create: {
-                                id: adsetId,
-                                campaignId: campId,
-                                accountId: rawAccountId,
-                                name: ad.adset.name || `AdSet ${adsetId}`
-                            }
-                        });
-                    }
-
-                    // 3. Extract hasKey / asset hashes
-                    let imageHash = ad.creative.image_hash || null;
-                    let videoId = ad.creative.video_id || null;
-                    let previewUrl = ad.creative.thumbnail_url || ad.creative.image_url || null;
-                    let landingUrl: string | null = null;
-                    let pageId: string | null = null;
-                    let pageName: string | null = null;
-                    let effectivePostId: string | null = null;
-
-                    const dbCreative = await prisma.adCreative.findUnique({
-                        where: { creativeId }
-                    });
-
-                    if (dbCreative && dbCreative.landingUrl && dbCreative.pageId && dbCreative.effectivePostId) {
-                        imageHash = dbCreative.imageHash || imageHash;
-                        videoId = dbCreative.videoId || videoId;
-                        previewUrl = dbCreative.previewUrl || previewUrl;
-                        landingUrl = dbCreative.landingUrl;
-                        pageId = dbCreative.pageId;
-                        pageName = dbCreative.pageName;
-                        effectivePostId = dbCreative.effectivePostId;
-                    } else {
-                        console.log(`[Manual Creative Sync] Deep fetching creative detailed assets for ID: ${creativeId}`);
-                        const extracted = await extractMetaAssetHash(creativeId, accessToken, pageTokensMap);
-                        if (extracted) {
-                            imageHash = extracted.imageHash || null;
-                            videoId = extracted.videoId || null;
-                            if (extracted.previewUrl) {
-                                previewUrl = extracted.previewUrl;
-                            }
-                            landingUrl = extracted.landingUrl;
-                            pageId = extracted.pageId;
-                            pageName = extracted.pageName || null;
-                            effectivePostId = extracted.effectivePostId;
+                        // 5. Upsert Ad with updated creativeId reference
+                        const cleanedAdId = cleanPrefix(ad.id);
+                        if (adsetId && campId) {
+                            await prisma.ad.upsert({
+                                where: { id: cleanedAdId },
+                                update: {
+                                    name: ad.name || `Ad ${cleanedAdId}`,
+                                    adsetId: adsetId,
+                                    campaignId: campId,
+                                    creativeId: creativeId
+                                },
+                                create: {
+                                    id: cleanedAdId,
+                                    adsetId: adsetId,
+                                    campaignId: campId,
+                                    accountId: rawAccountId,
+                                    name: ad.name || `Ad ${cleanedAdId}`,
+                                    creativeId: creativeId
+                                }
+                            });
                         }
                     }
-
-                    const hash = imageHash || videoId;
-                    const mediaType = videoId ? "VIDEO" : "IMAGE";
-
-                    // 4. Upsert AdCreative
-                    await prisma.adCreative.upsert({
-                        where: { creativeId },
-                        update: {
-                            fbAccountId: fbAccountId,
-                            imageHash: imageHash,
-                            videoId: videoId,
-                            previewUrl: previewUrl,
-                            metaAssetId: hash,
-                            mediaType: mediaType,
-                            type: mediaType,
-                            storeId: account.storeId,
-                            landingUrl: landingUrl,
-                            pageId: pageId,
-                            pageName: pageName,
-                            effectivePostId: effectivePostId,
-                            name: ad.creative.name || ad.name ? `Creative for ${ad.creative.name || ad.name}` : `Creative ${creativeId}`
-                        },
-                        create: {
-                            creativeId,
-                            fbAccountId: fbAccountId,
-                            imageHash: imageHash,
-                            videoId: videoId,
-                            previewUrl: previewUrl,
-                            metaAssetId: hash,
-                            mediaType: mediaType,
-                            type: mediaType,
-                            storeId: account.storeId,
-                            landingUrl: landingUrl,
-                            pageId: pageId,
-                            pageName: pageName,
-                            effectivePostId: effectivePostId,
-                            name: ad.creative.name || ad.name ? `Creative for ${ad.creative.name || ad.name}` : `Creative ${creativeId}`
-                        }
-                    });
-
-                    // 5. Upsert Ad with updated creativeId reference
-                    const cleanedAdId = cleanPrefix(ad.id);
-                    if (adsetId && campId) {
-                        await prisma.ad.upsert({
-                            where: { id: cleanedAdId },
-                            update: {
-                                name: ad.name || `Ad ${cleanedAdId}`,
-                                adsetId: adsetId,
-                                campaignId: campId,
-                                creativeId: creativeId
-                            },
-                            create: {
-                                id: cleanedAdId,
-                                adsetId: adsetId,
-                                campaignId: campId,
-                                accountId: rawAccountId,
-                                name: ad.name || `Ad ${cleanedAdId}`,
-                                creativeId: creativeId
-                            }
-                        });
-                    }
+                } catch (adError: any) {
+                    console.error(`[Manual Creative Sync] Failed to process individual ad ${ad?.id || 'unknown'} in batch:`, adError.message);
                 }
             }
         } catch (batchErr: any) {

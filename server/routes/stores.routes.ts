@@ -1,7 +1,7 @@
 import { Router } from "express";
 import prisma from "../../db/index.js";
 import axios from "axios";
-import { getTimezoneOffsetStr } from "../utils.js";
+import { getTimezoneOffsetStr, mapOffsetToIana } from "../utils.js";
 
 const router = Router();
 const shoplineCache = new Map<string, { data: any; expiry: number }>();
@@ -57,10 +57,39 @@ async function detectStoreTimezone(
   domain: string,
   token: string,
   existingTimezone?: string | null
-): Promise<string> {
+): Promise<{ timezone: string; isFallback: boolean }> {
   const cleanDomain = domain.replace(/^https?:\/\//, "").replace(/\/$/, "").replace(/\/admin\/.*$/, "");
 
-  // 1. Try Platform Shop Info API
+  // 1. Shoplazza API
+  if (platform === "shoplazza") {
+    const candidateUrls = [
+      `https://${cleanDomain}/openapi/2022-01/shop`,
+      `https://${cleanDomain}/openapi/2020-01/shop`,
+      `https://${cleanDomain}/openapi/2022-01/shop.json`,
+      `https://${cleanDomain}/openapi/2020-01/shop.json`,
+    ];
+
+    for (const url of candidateUrls) {
+      try {
+        const response = await axios.get(url, {
+          headers: {
+            'Access-Token': token,
+            'Content-Type': 'application/json'
+          },
+          timeout: 5000
+        });
+        const shopTz = response.data?.shop?.timezone;
+        if (shopTz) {
+          console.log(`[Tz Detection] Found Shoplazza timezone: ${shopTz}`);
+          return { timezone: mapOffsetToIana(shopTz), isFallback: false };
+        }
+      } catch (e: any) {
+        // quiet continue
+      }
+    }
+  }
+
+  // 2. Shopify API
   if (platform === "shopify") {
     try {
       const response = await axios.get(`https://${cleanDomain}/admin/api/2024-01/shop.json`, {
@@ -71,20 +100,52 @@ async function detectStoreTimezone(
         timeout: 5000
       });
       const ianaTz = response.data?.shop?.iana_timezone;
-      if (ianaTz) {
-        return getOffsetByIana(ianaTz);
+      if (ianaTz && ianaTz.includes("/")) {
+        return { timezone: ianaTz, isFallback: false };
       }
       const tzExpr = response.data?.shop?.timezone;
       if (tzExpr) {
-        const match = tzExpr.match(/GMT([+-]\d+:\d+|[+-]\d+)/);
-        if (match) return `GMT${match[1]}`;
+        return { timezone: mapOffsetToIana(tzExpr), isFallback: false };
       }
     } catch (e: any) {
       console.warn(`[Tz Detection] Shopify Shop API failed:`, e.message);
     }
   }
 
-  // 2. Try Fetching Orders and inspecting the created_at/updated_at timestamp offset
+  // 3. Shopline API
+  if (platform === "shopline") {
+    try {
+      const response = await axios.get(`https://${cleanDomain}/admin/openapi/v20240301/shop.json`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 5000
+      });
+      const shopTz = response.data?.data?.timezone || response.data?.shop?.timezone;
+      if (shopTz) {
+        return { timezone: mapOffsetToIana(shopTz), isFallback: false };
+      }
+    } catch (e: any) {
+      try {
+        const response = await axios.get(`https://${cleanDomain}/admin/openapi/v20220101/shop.json`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          timeout: 5000
+        });
+        const shopTz = response.data?.data?.timezone || response.data?.shop?.timezone;
+        if (shopTz) {
+          return { timezone: mapOffsetToIana(shopTz), isFallback: false };
+        }
+      } catch (e2) {
+        console.warn(`[Tz Detection] Shopline Shop API failed:`, e.message);
+      }
+    }
+  }
+
+  // 4. Fallback: Try order matching logic
   try {
     let orders: any[] = [];
     if (platform === "shopify") {
@@ -111,54 +172,48 @@ async function detectStoreTimezone(
       const firstOrder = orders[0];
       const stamp = firstOrder.created_at || firstOrder.updated_at || firstOrder.processed_at;
       if (stamp && typeof stamp === "string") {
-        if (stamp.endsWith("Z")) {
-          return "UTC";
-        }
-        const match = stamp.match(/([+-])(\d{2}):?(\d{2})$/);
-        if (match) {
-          const sign = match[1];
-          const hrs = parseInt(match[2], 10);
-          const mins = parseInt(match[3], 10);
-          if (mins === 0) {
-            return `GMT${sign}${hrs}`;
-          } else {
-            return `GMT${sign}${hrs}:${mins}`;
-          }
-        }
+        console.log(`[Tz Detection] Found timezone from fallback orders inspect: ${stamp}`);
+        return { timezone: mapOffsetToIana(stamp), isFallback: false };
       }
     }
   } catch (e: any) {
     console.warn(`[Tz Detection] Orders inspect failed:`, e.message);
   }
 
-  // 3. Fallback to existing timezone
-  if (existingTimezone) {
-    return existingTimezone;
+  // 5. Fallback to existing timezone
+  if (existingTimezone && existingTimezone.includes("/")) {
+    return { timezone: existingTimezone, isFallback: true };
   }
 
-  // 4. Fallback to GMT+8
-  return "GMT+8";
+  // 6. Last resort default standard compliant
+  console.warn(`[Tz Detection] All methods failed. Defaulting with risk warning to America/Los_Angeles.`);
+  return { timezone: "America/Los_Angeles", isFallback: true };
 }
 
 router.post("/", async (req, res) => {
   const { id, name, platform, shopline_token, shopify_token, shoplazza_token, domain, visitors, timezone } = req.body;
   try {
-    let resolvedTimezone = "GMT+8";
+    let resolvedTimezone = "America/Los_Angeles";
+    let isFallback = false;
     const actualPlatform = platform || "shopline";
     const token = actualPlatform === "shopify" ? shopify_token : (actualPlatform === "shoplazza" ? shoplazza_token : shopline_token);
 
     if (token && domain) {
-      let existingTz = "GMT+8";
+      let existingTz = "America/Los_Angeles";
       if (id) {
         const existing = await prisma.store.findUnique({ where: { id: parseInt(id, 10) } });
-        existingTz = existing?.timezone || "GMT+8";
+        existingTz = existing?.timezone || "America/Los_Angeles";
       }
-      resolvedTimezone = await detectStoreTimezone(actualPlatform, domain, token, existingTz);
+      const tzResult = await detectStoreTimezone(actualPlatform, domain, token, existingTz);
+      resolvedTimezone = tzResult.timezone;
+      isFallback = tzResult.isFallback;
     } else if (timezone) {
-      resolvedTimezone = timezone;
+      resolvedTimezone = mapOffsetToIana(timezone);
+      isFallback = false;
     } else if (id) {
       const existing = await prisma.store.findUnique({ where: { id: parseInt(id, 10) } });
-      resolvedTimezone = existing?.timezone || "GMT+8";
+      resolvedTimezone = existing?.timezone || "America/Los_Angeles";
+      isFallback = existing?.timezone_fallback_warning || false;
     }
 
     if (id) {
@@ -172,6 +227,7 @@ router.post("/", async (req, res) => {
           shoplazza_token,
           domain,
           timezone: resolvedTimezone,
+          timezone_fallback_warning: isFallback,
           visitors: visitors !== undefined ? parseInt(visitors, 10) : undefined
         },
       });
@@ -186,6 +242,7 @@ router.post("/", async (req, res) => {
           shoplazza_token,
           domain,
           timezone: resolvedTimezone,
+          timezone_fallback_warning: isFallback,
           visitors: visitors !== undefined ? parseInt(visitors, 10) : 0
         },
       });
@@ -265,39 +322,60 @@ router.get("/all-dashboard-summary", async (req, res) => {
 
       let totalSales = 0;
       let ordersCount = 0;
-      const seenOrderIds = new Set();
-      
-      for (const o of ordersForSales) {
-        const uniqueKey = o.orderId || o.createdAt.toISOString();
-        if (!seenOrderIds.has(uniqueKey)) {
-          seenOrderIds.add(uniqueKey);
-          ordersCount++;
-          if (o.orderTotal != null && o.orderTotal > 0) {
-            totalSales += o.orderTotal;
-          } else {
-            totalSales += (o.revenue || 0);
-          }
-        } else {
-          if (o.orderTotal == null || o.orderTotal === 0) {
-            totalSales += (o.revenue || 0);
+      let totalRefunded = 0;
+
+      if (store.platform === "shoplazza") {
+        const seenOrderIds = new Set();
+        for (const o of ordersForSales) {
+          const uniqueKey = o.orderId || o.createdAt.toISOString();
+          if (!seenOrderIds.has(uniqueKey)) {
+            seenOrderIds.add(uniqueKey);
+            ordersCount++;
+            totalSales += (o.orderTotal != null && o.orderTotal > 0) ? o.orderTotal : (o.revenue || 0);
           }
         }
-      }
 
-      let totalRefunded = 0;
-      const seenRefundOrderIds = new Set();
-      for (const o of ordersForRefunds) {
-        const uniqueKey = o.orderId || o.createdAt.toISOString();
-        if (!seenRefundOrderIds.has(uniqueKey)) {
-          seenRefundOrderIds.add(uniqueKey);
-          if (o.orderTotal != null && o.orderTotal > 0) {
-            totalRefunded += o.orderTotal;
-          } else {
-            totalRefunded += (o.revenue || 0);
+        const seenRefundOrderIds = new Set();
+        for (const o of ordersForRefunds) {
+          const uniqueKey = o.orderId || o.createdAt.toISOString();
+          if (!seenRefundOrderIds.has(uniqueKey)) {
+            seenRefundOrderIds.add(uniqueKey);
+            totalRefunded += (o.orderTotal != null && o.orderTotal > 0) ? o.orderTotal : (o.revenue || 0);
           }
-        } else {
-          if (o.orderTotal == null || o.orderTotal === 0) {
-            totalRefunded += (o.revenue || 0);
+        }
+      } else {
+        const seenOrderIds = new Set();
+        for (const o of ordersForSales) {
+          const uniqueKey = o.orderId || o.createdAt.toISOString();
+          if (!seenOrderIds.has(uniqueKey)) {
+            seenOrderIds.add(uniqueKey);
+            ordersCount++;
+            if (o.orderTotal != null && o.orderTotal > 0) {
+              totalSales += o.orderTotal;
+            } else {
+              totalSales += (o.revenue || 0);
+            }
+          } else {
+            if (o.orderTotal == null || o.orderTotal === 0) {
+              totalSales += (o.revenue || 0);
+            }
+          }
+        }
+
+        const seenRefundOrderIds = new Set();
+        for (const o of ordersForRefunds) {
+          const uniqueKey = o.orderId || o.createdAt.toISOString();
+          if (!seenRefundOrderIds.has(uniqueKey)) {
+            seenRefundOrderIds.add(uniqueKey);
+            if (o.orderTotal != null && o.orderTotal > 0) {
+              totalRefunded += o.orderTotal;
+            } else {
+              totalRefunded += (o.revenue || 0);
+            }
+          } else {
+            if (o.orderTotal == null || o.orderTotal === 0) {
+              totalRefunded += (o.revenue || 0);
+            }
           }
         }
       }
@@ -380,21 +458,33 @@ router.get("/:id/dashboard-summary", async (req, res) => {
 
     let totalSales = 0;
     let totalOrders = 0;
-    const seenOrderIds = new Set();
     
-    for (const o of orders) {
-      const uniqueKey = o.orderId || o.createdAt.toISOString();
-      if (!seenOrderIds.has(uniqueKey)) {
-        seenOrderIds.add(uniqueKey);
-        totalOrders++;
-        if (o.orderTotal != null && o.orderTotal > 0) {
-          totalSales += o.orderTotal;
-        } else {
-          totalSales += (o.revenue || 0);
+    if (store.platform === "shoplazza") {
+      const seenOrderIds = new Set();
+      for (const o of orders) {
+        const uniqueKey = o.orderId || o.createdAt.toISOString();
+        if (!seenOrderIds.has(uniqueKey)) {
+          seenOrderIds.add(uniqueKey);
+          totalOrders++;
+          totalSales += (o.orderTotal != null && o.orderTotal > 0) ? o.orderTotal : (o.revenue || 0);
         }
-      } else {
-        if (o.orderTotal == null || o.orderTotal === 0) {
-          totalSales += (o.revenue || 0);
+      }
+    } else {
+      const seenOrderIds = new Set();
+      for (const o of orders) {
+        const uniqueKey = o.orderId || o.createdAt.toISOString();
+        if (!seenOrderIds.has(uniqueKey)) {
+          seenOrderIds.add(uniqueKey);
+          totalOrders++;
+          if (o.orderTotal != null && o.orderTotal > 0) {
+            totalSales += o.orderTotal;
+          } else {
+            totalSales += (o.revenue || 0);
+          }
+        } else {
+          if (o.orderTotal == null || o.orderTotal === 0) {
+            totalSales += (o.revenue || 0);
+          }
         }
       }
     }

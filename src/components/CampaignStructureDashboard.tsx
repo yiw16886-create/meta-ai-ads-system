@@ -440,12 +440,6 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
                         </TableCell>
                       </TableRow>
                     ) : sortedData.map((row) => {
-                       // Simple mock of AI warnings based on CPP / Spend
-                       let aiStatus = { type: 'ok', msg: '账户运行平稳' };
-                       if (row.spend > 100 && row.purchases === 0) aiStatus = { type: 'warn', msg: '只花不出警告' };
-                       else if (row.cpp > 50) aiStatus = { type: 'warn', msg: '高成本警告' };
-                       else if (row.status !== 'ACTIVE') aiStatus = { type: 'inactive', msg: '未投放' };
-
                        return (
                         <TableRow key={row.id} className="hover:bg-gray-50 border-b group">
                           <TableCell className="w-[50px] min-w-[50px] text-center sticky left-0 z-10 bg-white group-hover:bg-gray-50 shadow-[1px_0_0_#e5e7eb] px-3">

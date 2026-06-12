@@ -395,8 +395,8 @@ export function Dashboard({ onLogout }: DashboardProps) {
       }
       return {
         ...row,
-        抵达: item.reach,
-        印象: item.impressions,
+        覆盖人数: item.reach,
+        展示次数: item.impressions,
         点击: item.clicks,
         "CPC（全部）": `$${item.cpc.toFixed(2)}`,
         "点击率（全部）%": `${item.ctr.toFixed(2)}%`,
@@ -815,7 +815,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                       onClick={() => requestSort("reach")}
                     >
                       <div className="flex items-center gap-1">
-                        抵达 <ArrowUpDown className={`w-3 h-3 ${sortConfig?.key === 'reach' ? 'text-meta-blue' : 'text-gray-300'}`}/>
+                        覆盖人数 <ArrowUpDown className={`w-3 h-3 ${sortConfig?.key === 'reach' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                       </div>
                     </TableHead>
                     <TableHead 
@@ -823,7 +823,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                       onClick={() => requestSort("impressions")}
                     >
                       <div className="flex items-center gap-1">
-                        印象 <ArrowUpDown className={`w-3 h-3 ${sortConfig?.key === 'impressions' ? 'text-meta-blue' : 'text-gray-300'}`}/>
+                        展示次数 <ArrowUpDown className={`w-3 h-3 ${sortConfig?.key === 'impressions' ? 'text-meta-blue' : 'text-gray-300'}`}/>
                       </div>
                     </TableHead>
                     <TableHead 

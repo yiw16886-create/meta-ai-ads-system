@@ -50,13 +50,24 @@ export function CreativeIntelligenceDashboard({
   const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Mocked filtering options based on expected usage
-  const creativeTypes = [
-    { value: "all", label: "全部" },
-    { value: "image", label: "单图 (Image)" },
-    { value: "video", label: "视频 (Video)" },
-    { value: "carousel", label: "轮播 (Carousel)" }
-  ];
+  const [creativeTypes, setCreativeTypes] = useState<{value: string, label: string}[]>([{ value: "all", label: "全部" }]);
+
+  React.useEffect(() => {
+    if (data && data.length > 0) {
+      const types = new Set<string>();
+      data.forEach(item => {
+        if (item.material_type) types.add(item.material_type.toUpperCase());
+      });
+      const list = [{ value: "all", label: "全部" }];
+      Array.from(types).sort().forEach(t => {
+        if (t === 'IMAGE') list.push({ value: 'image', label: '单图 (Image)'});
+        else if (t === 'VIDEO') list.push({ value: 'video', label: '视频 (Video)'});
+        else if (t === 'CAROUSEL') list.push({ value: 'carousel', label: '轮播 (Carousel)'});
+        else list.push({ value: t.toLowerCase(), label: t });
+      });
+      setCreativeTypes(list);
+    }
+  }, [data]);
 
   const [storesList, setStoresList] = useState<{value: string, label: string}[]>([{ value: "all", label: "全部" }]);
   const [availableAccounts, setAvailableAccounts] = useState<{value: string, label: string, storeName: string}[]>([{ value: "all", label: "全部", storeName: "all" }]);

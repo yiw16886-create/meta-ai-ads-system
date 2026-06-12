@@ -79,6 +79,7 @@ model Store {
   domain          String?
   visitors        Int              @default(0)
   timezone        String?          @default("GMT+8")
+  timezone_fallback_warning Boolean? @default(false)
   accounts        AdAccount[]
   accountMappings AccountMapping[]
   createdAt       DateTime         @default(now())
@@ -184,6 +185,7 @@ model AdCreative {
   landingUrl      String?
   previewUrl      String?
   metaAssetId     String?
+  material_key    String?
   hookRate        Float                      @default(0)
   pageId          String?
   pageName        String?

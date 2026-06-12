@@ -12,16 +12,134 @@ export async function getMetaToken(): Promise<string | null> {
   return setting ? setting.value : null;
 }
 
+export function mapOffsetToIana(tzStr: string): string {
+  if (!tzStr) return "America/Los_Angeles";
+  
+  if (tzStr.includes("/")) {
+    return tzStr;
+  }
+
+  let normalizedStr = tzStr.trim();
+  normalizedStr = normalizedStr.replace(/^(GMT|UTC)/i, "");
+
+  let isNegative = false;
+  if (normalizedStr.startsWith("-")) {
+    isNegative = true;
+    normalizedStr = normalizedStr.substring(1);
+  } else if (normalizedStr.startsWith("+")) {
+    normalizedStr = normalizedStr.substring(1);
+  }
+
+  let hours = 0;
+  let minutes = 0;
+
+  const colonMatch = normalizedStr.match(/^(\d{1,2}):(\d{2})/);
+  if (colonMatch) {
+    hours = parseInt(colonMatch[1], 10);
+    minutes = parseInt(colonMatch[2], 10);
+  } else {
+    const digitsOnly = normalizedStr.replace(/\D/g, "");
+    if (digitsOnly.length >= 4) {
+      hours = parseInt(digitsOnly.substring(0, 2), 10);
+      minutes = parseInt(digitsOnly.substring(2, 4), 10);
+    } else if (digitsOnly.length > 0) {
+      hours = parseInt(digitsOnly, 10);
+    }
+  }
+
+  const offsetValueInMinutes = (isNegative ? -1 : 1) * (hours * 60 + minutes);
+
+  switch (offsetValueInMinutes) {
+    case 480:  // +08:00
+      return "Asia/Shanghai";
+    case -420: // -07:00
+      return "America/Los_Angeles";
+    case -480: // -08:00
+      return "America/Los_Angeles";
+    case -300: // -05:00
+      return "America/New_York";
+    case -240: // -04:00
+      return "America/New_York";
+    case -360: // -06:00
+      return "America/Chicago";
+    case 0:    // +00:00
+      return "UTC";
+    case 60:   // +01:00
+      return "Europe/Paris";
+    case 120:  // +02:00
+      return "Europe/Berlin";
+    case 180:  // +03:00
+      return "Europe/Moscow";
+    case 330:  // +05:30
+      return "Asia/Kolkata";
+    case 420:  // +07:00
+      return "Asia/Bangkok";
+    case 540:  // +09:00
+      return "Asia/Tokyo";
+    case 600:  // +10:00
+      return "Australia/Sydney";
+    case 660:  // +11:00
+      return "Pacific/Guadalcanal";
+    case 720:  // +12:00
+      return "Pacific/Auckland";
+    case -600: // -10:00
+      return "Pacific/Honolulu";
+    case -540: // -09:00
+      return "America/Anchorage";
+    case -180: // -03:00
+      return "America/Sao_Paulo";
+    default:
+      if (offsetValueInMinutes === -420 || offsetValueInMinutes === -480) {
+        return "America/Los_Angeles";
+      }
+      if (offsetValueInMinutes >= 420 && offsetValueInMinutes <= 540) {
+        return "Asia/Shanghai";
+      }
+      if (offsetValueInMinutes <= -240 && offsetValueInMinutes >= -300) {
+        return "America/New_York";
+      }
+      return "America/Los_Angeles";
+  }
+}
+
 export function getTimezoneOffsetStr(timezone: string | null | undefined): string {
-  if (!timezone) return "-08:00";
-  const match = timezone.match(/GMT([+-]?\d+)/i); // Handle GMT-8, GMT+8, GMT8 etc
+  if (!timezone) return "-07:00";
+
+  if (timezone.includes("/")) {
+    try {
+      const formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: timezone,
+        timeZoneName: 'longOffset'
+      });
+      const parts = formatter.formatToParts(new Date());
+      const offsetPart = parts.find(p => p.type === 'timeZoneName');
+      if (offsetPart) {
+        const val = offsetPart.value;
+        if (val === "GMT") return "+00:00";
+        if (val.startsWith("GMT")) {
+          let off = val.replace("GMT", "");
+          if (!off.includes(":")) {
+            const sign = off.startsWith("-") ? "-" : "+";
+            const digits = off.replace(/[+-]/g, "");
+            off = `${sign}${digits.padStart(2, '0')}:00`;
+          }
+          return off;
+        }
+      }
+    } catch (e: any) {
+      console.error(`[utils] Error getting offset for IANA timezone ${timezone}:`, e.message);
+    }
+  }
+
+  const match = timezone.match(/GMT([+-]?\d+)/i);
   if (match) {
     const val = parseInt(match[1], 10);
     const sign = val < 0 ? "-" : "+";
     const hrs = Math.abs(val);
     return `${sign}${String(hrs).padStart(2, '0')}:00`;
   }
-  return "-08:00";
+
+  return "-07:00";
 }
 
 export function extractMetaError(error: any): string {
