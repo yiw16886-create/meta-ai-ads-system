@@ -170,33 +170,27 @@ router.get("/accounts", async (req, res) => {
 
     monitoringData.forEach(item => {
       const cleanId = item.accountId;
-      const fbStatus = item.accountStatus;
-      
-      if (fbStatus === 2) {
-        item.activityStatus = 3; // Red: Disabled
-      } else if (fbStatus === 101 || fbStatus === 102 || fbStatus === 201) {
-        item.activityStatus = 4; // Gray: Dormant/Closed
-      } else {
-        const lastSpendDateStr = latestSpendMap.get(cleanId);
-        if (lastSpendDateStr) {
-          const d1 = new Date(lastSpendDateStr);
-          const d2 = new Date();
-          d1.setHours(0,0,0,0);
-          d2.setHours(0,0,0,0);
-          const diffDays = Math.round((d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24));
-          
-          if (diffDays <= 7) {
-            item.activityStatus = 1; // Green: Highly Active
-          } else if (diffDays <= 30) {
-            item.activityStatus = 2; // Blue: Active
-          } else if (diffDays <= 60) {
-            item.activityStatus = 5; // Orange: Warn (> 30 and <= 60 days of inactivity)
-          } else {
-            item.activityStatus = 4; // Gray: Dormant (> 60 days of inactivity)
-          }
+      item.status = item.accountStatus; // preserve fbStatus
+
+      const lastSpendDateStr = latestSpendMap.get(cleanId);
+      if (lastSpendDateStr) {
+        const d1 = new Date(lastSpendDateStr);
+        const d2 = new Date();
+        d1.setHours(0,0,0,0);
+        d2.setHours(0,0,0,0);
+        const diffDays = Math.round((d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24));
+        
+        if (diffDays <= 30) {
+          item.activityStatus = 1; // Green: Highly Active
+        } else if (diffDays <= 60) {
+          item.activityStatus = 2; // Blue: Active
+        } else if (diffDays <= 90) {
+          item.activityStatus = 3; // Orange: Warn
         } else {
-          item.activityStatus = 4; // Dormant/No Spend ever
+          item.activityStatus = 4; // Gray: Dormant
         }
+      } else {
+        item.activityStatus = 4; // Dormant/No Spend ever
       }
     });
 
@@ -212,7 +206,7 @@ router.get("/accounts", async (req, res) => {
             where: { accountId: item.accountId },
             data: { 
               activityStatus: item.activityStatus,
-              status: item.activityStatus
+              status: item.accountStatus // Put fbAccountStatus here
             }
           });
         } catch (e) {}

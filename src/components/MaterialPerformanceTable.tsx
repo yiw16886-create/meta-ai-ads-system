@@ -32,6 +32,8 @@ import {
 import { cn } from "@/lib/utils";
 import { useMaterialPerformance, MaterialPerformanceItem } from "../hooks/useMaterialPerformance";
 
+import { MaterialTrendSection } from "./MaterialTrendSection";
+
 export function MaterialPerformanceTable() {
   const [activeTab, setActiveTab] = useState<"metrics" | "preview" | "trends">("metrics");
   const [storeId, setStoreId] = useState<string>("all");
@@ -1505,17 +1507,13 @@ export function MaterialPerformanceTable() {
 
       {/* 走势图面板 */}
       {activeTab === "trends" && (
-        <div className="bg-white border border-slate-200 rounded-xl p-16 text-center shadow-sm">
-          <div className="max-w-md mx-auto space-y-3">
-            <div className="w-12 h-12 rounded-full bg-slate-50 flex items-center justify-center mx-auto text-slate-400 border border-slate-100">
-              <Activity className="w-5 h-5" />
-            </div>
-            <h4 className="text-sm font-bold text-slate-800 mt-4">素材表现走势分析图表</h4>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              支持按以上过滤器所限定的店铺「店铺 ID」进行跨时间维度及多维复合素材点击率变化曲线的绘制。
-            </p>
-          </div>
-        </div>
+        <MaterialTrendSection 
+          startDate={format(startDate, 'yyyy-MM-dd')}
+          endDate={format(endDate, 'yyyy-MM-dd')}
+          selectedShopId={storeId}
+          selectedAccountId={selectedAccounts.includes('all') ? 'all' : selectedAccounts.join(',')}
+          materialType={materialType}
+        />
       )}
 
     </div>

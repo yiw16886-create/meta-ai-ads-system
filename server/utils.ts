@@ -165,12 +165,13 @@ export async function evaluateActivityStatus(accountId: string, fbAccountStatus:
         where: { accountId: cleanAccountId },
         data: { 
           activityStatus: statusVal,
-          status: statusVal
+          status: fbAccountStatus
         }
       });
     } catch (e) {}
     
-    if (statusVal > 2) {
+    // Only delete data if it's truly dormant and we don't need it (status 4)
+    if (statusVal === 4) {
       try {
          await prisma.adInsight.deleteMany({ where: { accountId: cleanAccountId } });
          await prisma.campaign.deleteMany({ where: { accountId: cleanAccountId } });
@@ -180,7 +181,7 @@ export async function evaluateActivityStatus(accountId: string, fbAccountStatus:
                { fbAccountId: cleanAccountId },
                { fbAccountId: `act_${cleanAccountId}` }
              ]
-           } 
+           }
          });
          console.log(`[evaluateActivityStatus] Cleaned up dormant data for account: ${cleanAccountId}`);
       } catch (cleanErr) {
@@ -189,19 +190,9 @@ export async function evaluateActivityStatus(accountId: string, fbAccountStatus:
     }
   };
 
-  // Priority 1: Meta-level Disabled status (2) -> return 3 (Disabled/Red)
-  if (fbAccountStatus === 2) {
-    await saveActivityStatus(3);
-    return 3;
-  }
+  let diffDays = -1;
 
-  // Priority 2: Closed/Dormant statuses
-  if (fbAccountStatus === 101 || fbAccountStatus === 102 || fbAccountStatus === 201) {
-    await saveActivityStatus(4);
-    return 4;
-  }
-
-  // Priority 3: Evaluate based on database AdInsight spend records if available
+  // 1. Evaluate based on database AdInsight spend records if available
   try {
     const lastSpendRecord = await prisma.adInsight.findFirst({
       where: {
@@ -216,61 +207,64 @@ export async function evaluateActivityStatus(accountId: string, fbAccountStatus:
     if (lastSpendRecord) {
       const today = new Date();
       const lastSpendDate = new Date(lastSpendRecord.date);
-      
-      // Calculate diff in calendar days
       today.setHours(0,0,0,0);
       lastSpendDate.setHours(0,0,0,0);
-      const diffTime = today.getTime() - lastSpendDate.getTime();
-      const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
-
-      let resStatus = 2; // Default
-      if (diffDays <= 7) {
-        resStatus = 1; // Highly active (Green)
-      } else if (diffDays <= 30) {
-        resStatus = 2; // Normal active (Blue)
-      } else if (diffDays <= 60) {
-        resStatus = 5; // Inactive / Warning (Orange: exceeded 30 days)
-      } else {
-        resStatus = 4; // Dormant (Gray: exceeded 60 days)
-      }
-
-      await saveActivityStatus(resStatus);
-      return resStatus;
+      diffDays = Math.round((today.getTime() - lastSpendDate.getTime()) / (1000 * 60 * 60 * 24));
     }
   } catch (dbErr) {
     console.error(`[evaluateActivityStatus] DB Error:`, dbErr);
   }
 
-  // Fallback: Check Meta API for latest spend as a backup if token is provided
-  if (token) {
+  // 2. Fallback: Check Meta API for latest spend as a backup if token is provided and no DB record
+  if (diffDays === -1 && token) {
     try {
-      const today = new Date();
-      const startDate = format(subDays(today, 7), "yyyy-MM-dd");
-      const endDate = format(today, "yyyy-MM-dd");
-
-      const res = await axios.get(`https://graph.facebook.com/v19.0/act_${cleanAccountId}/insights`, {
+      // Check last 90 days
+      const res = await axios.get(`https://graph.facebook.com/v21.0/act_${cleanAccountId}/insights`, {
         params: {
           level: "account",
-          time_range: JSON.stringify({ since: startDate, until: endDate }),
-          fields: "spend",
+          date_preset: "last_90d",
+          time_increment: 1, // break down daily
+          fields: "date_start,spend",
           access_token: token,
         },
-        timeout: 5000
+        timeout: 8000
       });
 
       const insights = res.data?.data || [];
-      const totalSpend = insights.reduce((sum: number, item: any) => sum + parseFloat(item.spend || "0"), 0);
-
-      const resStatus = totalSpend > 0 ? 1 : 4;
-
-      await saveActivityStatus(resStatus);
-      return resStatus;
+      const validInsights = insights.filter((i: any) => parseFloat(i.spend || "0") > 0);
+      
+      if (validInsights.length > 0) {
+        validInsights.sort((a: any, b: any) => new Date(b.date_start).getTime() - new Date(a.date_start).getTime());
+        const lastSpendDateStr = validInsights[0].date_start;
+        const today = new Date();
+        const lastSpendDate = new Date(lastSpendDateStr);
+        today.setHours(0,0,0,0);
+        lastSpendDate.setHours(0,0,0,0);
+        diffDays = Math.round((today.getTime() - lastSpendDate.getTime()) / (1000 * 60 * 60 * 24));
+      }
     } catch (err: any) {
       if (err.response?.status === 403 || err.response?.status === 401) {
         await saveActivityStatus(3);
         return 3; // Red: unauthorized / locked
       }
     }
+  }
+
+  // 3. Priority based on Spend Days
+  if (diffDays !== -1) {
+    let resStatus = 4; // Default to dormant
+    if (diffDays <= 30) {
+      resStatus = 1; // Highly active (Green)
+    } else if (diffDays <= 60) {
+      resStatus = 2; // Normal active (Blue)
+    } else if (diffDays <= 90) {
+      resStatus = 3; // Warning (Orange)
+    } else {
+      resStatus = 4; // Dormant (Gray)
+    }
+
+    await saveActivityStatus(resStatus);
+    return resStatus;
   }
 
   // Default fallback/no-spend

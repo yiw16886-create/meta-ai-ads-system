@@ -16,7 +16,7 @@ router.get("/", async (req, res) => {
     });
     
     if (activeOnly === 'true') {
-      const activeIds = new Set(monitoringData.filter(d => (d.activityStatus || 0) <= 2).map(d => d.accountId));
+      const activeIds = new Set(monitoringData.filter(d => (d.activityStatus || 0) < 4).map(d => d.accountId));
       mappings = mappings.filter(m => {
         const cleanId = String(m.fbAccountId).replace("act_", "").trim();
         return activeIds.has(cleanId);

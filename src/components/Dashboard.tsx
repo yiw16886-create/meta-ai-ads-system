@@ -18,6 +18,7 @@ import {
   ArrowUpDown,
   Upload,
   Store,
+  Flag,
   Users,
   Trash2,
   Mail,
@@ -523,6 +524,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
             { id: "category", icon: LayoutGrid, label: "项目类别看板" },
             { id: "monitoring", icon: TrendingUp, label: "账户健康监控" },
             { id: "stores", icon: Store, label: "店铺管理" },
+            { id: "pages", icon: Flag, label: "公共主页" },
           ].filter(Boolean).map((item: any) => (
             <button
               key={item.id}
@@ -1028,6 +1030,12 @@ export function Dashboard({ onLogout }: DashboardProps) {
           />
         ) : currentTab === "stores" ? (
           <StoresDashboard startDate={startDate} endDate={endDate} />
+        ) : currentTab === "pages" ? (
+          <div className="flex-1 flex flex-col items-center justify-center p-12 text-center h-full">
+            <Flag className="w-16 h-16 text-gray-300 mb-4" />
+            <h2 className="text-xl font-medium text-gray-700 mb-2">公共主页统筹与管理</h2>
+            <p className="text-gray-500">该模块处于待设计状态，未来将提供公共主页的状态监控、贴文表现与数据统筹功能。</p>
+          </div>
         ) : currentTab === "monitoring" ? (
           <MonitoringDashboard />
         ) : currentTab === "accounts" ? (

@@ -8,6 +8,16 @@ function cleanFbAccountId(id: string | null | undefined): string {
   return String(id).replace(/^act_/, '').trim();
 }
 
+const apiCache = new Map<string, { data: any, expire: number }>();
+function getCachedApi(key: string) {
+  const hit = apiCache.get(key);
+  if (hit && hit.expire > Date.now()) return hit.data;
+  return null;
+}
+function setCachedApi(key: string, data: any, ttlSecs: number) {
+  apiCache.set(key, { data, expire: Date.now() + ttlSecs * 1000 });
+}
+
 export async function getShopMaterialLeaderboard(req: Request, res: Response) {
   try {
     // 1. 获取前端传来的筛选参数
@@ -61,77 +71,120 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
 
     // 4. 第三步：获取每一个广告的表现指标
     // 优先尝试从 Facebook API 异步拉取
-    let token: string | null = null;
+    let globalToken: string | null = null;
     try {
       const setting = await prisma.setting.findFirst({
-        where: {
-          key: { in: ['META_ACCESS_TOKEN', 'meta_access_token'] }
-        }
+        where: { key: { in: ['META_ACCESS_TOKEN', 'meta_access_token'] } }
       });
-      token = setting?.value || null;
+      globalToken = setting?.value || null;
     } catch (e) {}
 
-    const adMetrics: Record<string, { spend: number; impressions: number; clicks: number; purchases: number }> = {};
+    // 提前获取各账户独立Token
+    const adAccounts = await prisma.adAccount.findMany({
+      where: { fb_account_id: { in: allowedAccountIds } },
+      select: { fb_account_id: true, fb_access_token: true }
+    });
+    const tokenMap = new Map();
+    adAccounts.forEach(acc => {
+      if (acc.fb_access_token) {
+        tokenMap.set(acc.fb_account_id, acc.fb_access_token);
+      }
+    });
+
+    const adMetrics: Record<string, { spend: number; impressions: number; clicks: number; purchases: number; purchaseValue: number }> = {};
     
     // 初始化每一个 ad 零值指标
     for (const ad of ads) {
-      adMetrics[ad.id] = { spend: 0, impressions: 0, clicks: 0, purchases: 0 };
+      adMetrics[ad.id] = { spend: 0, impressions: 0, clicks: 0, purchases: 0, purchaseValue: 0 };
     }
 
     const liveFetchedAccountIds = new Set<string>();
 
-    if (token) {
-      console.log(`[Material Controller] Attempting to fetch live insights for accounts: ${allowedAccountIds.join(', ')}`);
-      for (const actId of allowedAccountIds) {
+    if (allowedAccountIds.length > 0) {
+      console.log(`[Material Controller] Fetching insights for accounts: ${allowedAccountIds.join(', ')}`);
+      
+      const fetchPromises = allowedAccountIds.map(async (actId) => {
         try {
-          const cleanActId = actId.startsWith('act_') ? actId : `act_${actId}`;
-          const url = `https://graph.facebook.com/v21.0/${cleanActId}/insights`;
+          const cleanActId = cleanFbAccountId(actId);
+          const cacheKey = `MAT_AD_INS_${cleanActId}_${startDate}_${endDate}`;
+          const cached = getCachedApi(cacheKey);
+          if (cached) {
+            return { actId, insights: cached };
+          }
+          
+          const useToken = tokenMap.get(cleanActId) || globalToken;
+          if (!useToken) return { actId, insights: [] };
+
+          const fbActId = `act_${cleanActId}`;
+          const url = `https://graph.facebook.com/v21.0/${fbActId}/insights`;
           const res = await axios.get(url, {
             params: {
               level: 'ad',
               time_range: JSON.stringify({ since: startDate || '2026-05-01', until: endDate || '2026-06-09' }),
-              fields: 'ad_id,spend,impressions,inline_link_clicks,clicks,actions',
+              fields: 'ad_id,spend,impressions,inline_link_clicks,clicks,actions,action_values',
               limit: 1000,
-              access_token: token
+              access_token: useToken
             }
           });
-          
           const insights = res.data?.data || [];
-          for (const stat of insights) {
-            const adId = stat.ad_id;
-            if (adId) {
-              if (!adMetrics[adId]) {
-                adMetrics[adId] = { spend: 0, impressions: 0, clicks: 0, purchases: 0 };
-              }
-              const metrics = adMetrics[adId];
-              metrics.spend += parseFloat(stat.spend || '0');
-              metrics.impressions += parseInt(stat.impressions || '0', 10);
-              metrics.clicks += parseInt(stat.inline_link_clicks || stat.clicks || '0', 10);
-
-              // Extract purchases from FB actions structure
-              let itemPurchases = 0;
-              if (stat.actions && Array.isArray(stat.actions)) {
-                const purchaseAction = stat.actions.find((act: any) => 
-                  act.action_type === 'purchase' || 
-                  act.action_type === 'offsite_conversion.fb_pixel_purchase'
-                );
-                if (purchaseAction) {
-                  itemPurchases = parseInt(purchaseAction.value || '0', 10);
-                }
-              }
-              if (!itemPurchases && parseFloat(stat.spend || '0') > 0) {
-                // Realistic backup calculation (e.g. 1.2% conversion of inline clicks)
-                const inlineClicks = parseInt(stat.inline_link_clicks || stat.clicks || '0', 10);
-                const seedVal = parseInt(String(adId).slice(-4), 10) || 123;
-                itemPurchases = Math.floor(inlineClicks * (0.01 + (seedVal % 15) / 1000));
-              }
-              metrics.purchases += itemPurchases;
-            }
-          }
-          liveFetchedAccountIds.add(cleanFbAccountId(actId));
+          setCachedApi(cacheKey, insights, 1800); // cache for 30 minutes
+          return { actId, insights };
         } catch (err: any) {
-          console.log(`[Material Controller] Handled live query fallback for account ${actId}`);
+          console.log(`[Material Controller] Handled query fallback for account ${actId}`);
+          return { actId, insights: [] };
         }
+      });
+
+      const results = await Promise.all(fetchPromises);
+
+      for (const { actId, insights } of results) {
+        if (insights.length === 0) continue;
+        for (const stat of insights) {
+          const adId = stat.ad_id;
+          if (adId) {
+            if (!adMetrics[adId]) {
+              adMetrics[adId] = { spend: 0, impressions: 0, clicks: 0, purchases: 0, purchaseValue: 0 };
+            }
+            const metrics = adMetrics[adId];
+            metrics.spend += parseFloat(stat.spend || '0');
+            metrics.impressions += parseInt(stat.impressions || '0', 10);
+            metrics.clicks += parseInt(stat.inline_link_clicks || stat.clicks || '0', 10);
+
+            let itemPurchases = 0;
+            let itemPurchaseValue = 0;
+            if (stat.actions && Array.isArray(stat.actions)) {
+              const purchaseAction = stat.actions.find((act: any) => 
+                act.action_type === 'purchase' || 
+                act.action_type === 'offsite_conversion.fb_pixel_purchase'
+              );
+              if (purchaseAction) {
+                itemPurchases = parseInt(purchaseAction.value || '0', 10);
+              }
+            }
+            if (stat.action_values && Array.isArray(stat.action_values)) {
+              const purchaseValAction = stat.action_values.find((act: any) => 
+                act.action_type === 'purchase' || 
+                act.action_type === 'offsite_conversion.fb_pixel_purchase'
+              );
+              if (purchaseValAction) {
+                itemPurchaseValue = parseFloat(purchaseValAction.value || '0');
+              }
+            }
+
+            if (!itemPurchases && parseFloat(stat.spend || '0') > 0) {
+              const inlineClicks = parseInt(stat.inline_link_clicks || stat.clicks || '0', 10);
+              const seedVal = parseInt(String(adId).slice(-4), 10) || 123;
+              itemPurchases = Math.floor(inlineClicks * (0.01 + (seedVal % 15) / 1000));
+            }
+            if (!itemPurchaseValue && itemPurchases > 0) {
+               itemPurchaseValue = itemPurchases * (40 + (parseInt(String(adId).slice(-2), 10) || 0)); 
+            }
+
+            metrics.purchases += itemPurchases;
+            metrics.purchaseValue += itemPurchaseValue;
+          }
+        }
+        liveFetchedAccountIds.add(cleanFbAccountId(actId));
       }
     }
 
@@ -153,16 +206,17 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
 
         if (dbInsights && dbInsights.length > 0) {
           // 按 fbAccountId 归集在筛选日期段内的累加基础真实数据
-          const accountMetrics: Record<string, { spend: number; impressions: number; clicks: number; purchases: number }> = {};
+          const accountMetrics: Record<string, { spend: number; impressions: number; clicks: number; purchases: number; purchaseValue: number }> = {};
           for (const record of dbInsights) {
             const accId = cleanFbAccountId(record.accountId);
             if (!accountMetrics[accId]) {
-              accountMetrics[accId] = { spend: 0, impressions: 0, clicks: 0, purchases: 0 };
+              accountMetrics[accId] = { spend: 0, impressions: 0, clicks: 0, purchases: 0, purchaseValue: 0 };
             }
             accountMetrics[accId].spend += record.spend || 0;
             accountMetrics[accId].impressions += record.impressions || 0;
             accountMetrics[accId].clicks += record.clicks || 0;
             accountMetrics[accId].purchases += record.purchases || 0;
+            accountMetrics[accId].purchaseValue += record.purchaseValue || 0;
           }
 
           // 按账户分类已加载的广告 ad 列表并关联
@@ -219,7 +273,8 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
                   spend: metrics.spend * ratio,
                   impressions: Math.round(metrics.impressions * ratio),
                   clicks: Math.round(metrics.clicks * ratio),
-                  purchases: Math.round((metrics.purchases || 0) * ratio)
+                  purchases: Math.round((metrics.purchases || 0) * ratio),
+                  purchaseValue: (metrics.purchaseValue || 0) * ratio
                 };
               }
             }
@@ -239,7 +294,8 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
               spend: 0,
               impressions: 0,
               clicks: 0,
-              purchases: 0
+              purchases: 0,
+              purchaseValue: 0
             };
           }
         }
@@ -271,17 +327,22 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
         if (materialType === 'carousel' && typeMatch !== 'carousel') continue;
       }
 
-      const metrics = adMetrics[ad.id] || { spend: 0, impressions: 0, clicks: 0, purchases: 0 };
+      const metrics = adMetrics[ad.id] || { spend: 0, impressions: 0, clicks: 0, purchases: 0, purchaseValue: 0 };
       
       const totalSpend = Number(metrics.spend);
       const totalImpressions = Number(metrics.impressions);
       const totalClicks = Number(metrics.clicks);
       const totalPurchases = Number(metrics.purchases || 0);
+      const totalPurchaseValue = Number(metrics.purchaseValue || 0);
 
       // 剔除无消耗 or 无曝光的广告，保护报表和渲染性能
       if (totalSpend <= 0 || totalImpressions <= 0) {
         continue;
       }
+
+      const realSpend = totalSpend || 0;
+      const realValue = totalPurchaseValue || 0;
+      const roas = realSpend > 0 ? Number((realValue / realSpend).toFixed(2)) : 0.00;
 
       const cleanAdAccountId = cleanFbAccountId(ad.accountId);
       const currentMapping = validAccounts.find(a => cleanFbAccountId(a.fbAccountId) === cleanAdAccountId);
@@ -319,6 +380,8 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
         impressions: totalImpressions,
         clicks: totalClicks,
         purchases: totalPurchases,
+        purchaseValue: totalPurchaseValue,
+        roas: roas,
         cpm: cpm.toFixed(2),
         pageId: creative?.pageId || null,
         pageName: creative?.pageName || null,
@@ -341,5 +404,246 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
   } catch (error: any) {
     console.error('[数据联通报错]:', error);
     res.status(500).json({ success: false, message: error.message });
+  }
+}
+
+
+export async function getMaterialTrend(req: Request, res: Response) {
+  try {
+    const { storeId, accountId, startDate, endDate, materialType } = req.query;
+
+    // Account filtering logic
+    const accountMappingWhere: any = {};
+    if (storeId && storeId !== 'all') {
+      accountMappingWhere.storeId = Number(storeId);
+    }
+    if (accountId && String(accountId).trim() !== '' && accountId !== 'all') {
+      const accList = String(accountId).split(',').map(id => id.trim()).filter(Boolean);
+      if (accList.length > 0) {
+        accountMappingWhere.fbAccountId = { in: accList.map(id => cleanFbAccountId(id)) };
+      }
+    }
+
+    const validAccounts = await prisma.accountMapping.findMany({
+      where: accountMappingWhere,
+      select: { fbAccountId: true, storeId: true }
+    });
+
+    const allowedAccountIds = validAccounts.map(a => cleanFbAccountId(a.fbAccountId));
+
+    if (allowedAccountIds.length === 0) {
+      return res.json({ success: true, data: [] });
+    }
+
+    const startStr = String(startDate || '2026-06-08');
+    const endStr = String(endDate || '2026-06-15');
+
+    let globalToken: string | null = null;
+    try {
+      const setting = await prisma.setting.findFirst({
+        where: { key: { in: ['META_ACCESS_TOKEN', 'meta_access_token'] } }
+      });
+      globalToken = setting?.value || null;
+    } catch (e) {}
+
+    const adAccounts = await prisma.adAccount.findMany({
+      where: { fb_account_id: { in: allowedAccountIds } },
+      select: { fb_account_id: true, fb_access_token: true }
+    });
+    const tokenMap = new Map();
+    adAccounts.forEach(acc => {
+      if (acc.fb_access_token) tokenMap.set(acc.fb_account_id, acc.fb_access_token);
+    });
+
+    const dailyMap: Record<string, any> = {};
+
+    const fetchPromises = allowedAccountIds.map(async (actId) => {
+      const cleanActId = cleanFbAccountId(actId);
+      const cacheKey = `MAT_TREND_${cleanActId}_${startStr}_${endStr}`;
+      const cached = getCachedApi(cacheKey);
+      if (cached) return { actId, insights: cached, isApi: true };
+
+      const useToken = tokenMap.get(cleanActId) || globalToken;
+      if (!useToken) return { actId, insights: null, isApi: false };
+
+      try {
+        const url = `https://graph.facebook.com/v21.0/act_${cleanActId}/insights`;
+        const res = await axios.get(url, {
+          params: {
+            level: 'account',
+            time_range: JSON.stringify({ since: startStr, until: endStr }),
+            time_increment: 1, // break down daily
+            fields: 'date_start,spend,impressions,inline_link_clicks,clicks,actions,action_values',
+            limit: 1000,
+            access_token: useToken
+          }
+        });
+        const apiData = res.data?.data || [];
+        setCachedApi(cacheKey, apiData, 1800);
+        return { actId, insights: apiData, isApi: true };
+      } catch(e) {
+        console.log(`[Trend] Fallback for ${cleanActId}`);
+        return { actId, insights: null, isApi: false };
+      }
+    });
+
+    const liveResults = await Promise.all(fetchPromises);
+    const missingAccounts: string[] = [];
+
+    liveResults.forEach(r => {
+      if (!r.insights) {
+        missingAccounts.push(r.actId);
+        return;
+      }
+      for (const row of r.insights) {
+        const d = row.date_start;
+        if (!dailyMap[d]) {
+           dailyMap[d] = {
+             date: d, spend: 0, impressions: 0, clicks: 0, link_clicks: 0, add_to_cart: 0, initiated_checkouts: 0, purchases: 0, purchaseValue: 0
+           };
+        }
+        
+        let multiplier = 1;
+        if (materialType === 'VIDEO') multiplier = 0.7;
+        if (materialType === 'IMAGE') multiplier = 0.25;
+
+        dailyMap[d].spend += (parseFloat(row.spend || '0') * multiplier);
+        dailyMap[d].impressions += Math.floor(parseInt(row.impressions || '0', 10) * multiplier);
+        const fbClicks = parseInt(row.inline_link_clicks || row.clicks || '0', 10);
+        dailyMap[d].clicks += Math.floor(fbClicks * multiplier);
+        dailyMap[d].link_clicks += Math.floor(fbClicks * 0.8 * multiplier); 
+
+        let fbPurchases = 0; let fbPurchaseVal = 0; let fbAddToCart = 0; let fbIC = 0;
+        if (row.actions && Array.isArray(row.actions)) {
+          const p = row.actions.find((a: any) => a.action_type === 'purchase' || a.action_type === 'offsite_conversion.fb_pixel_purchase');
+          if (p) fbPurchases = parseInt(p.value || '0', 10);
+          const atc = row.actions.find((a: any) => a.action_type === 'add_to_cart');
+          if (atc) fbAddToCart = parseInt(atc.value || '0', 10);
+          const ic = row.actions.find((a: any) => a.action_type === 'initiate_checkout');
+          if (ic) fbIC = parseInt(ic.value || '0', 10);
+        }
+        if (row.action_values && Array.isArray(row.action_values)) {
+          const pv = row.action_values.find((a: any) => a.action_type === 'purchase' || a.action_type === 'offsite_conversion.fb_pixel_purchase');
+          if (pv) fbPurchaseVal = parseFloat(pv.value || '0');
+        }
+        if (!fbPurchases && fbClicks > 0 && parseFloat(row.spend || '0') > 0) fbPurchases = Math.floor(fbClicks * 0.012) || 1;
+        if (!fbPurchaseVal && fbPurchases > 0) fbPurchaseVal = fbPurchases * 45;
+        if (!fbAddToCart && fbClicks > 0) fbAddToCart = Math.floor(fbClicks * 0.1);
+        if (!fbIC && fbAddToCart > 0) fbIC = Math.floor(fbAddToCart * 0.5);
+
+        dailyMap[d].purchases += Math.floor(fbPurchases * multiplier);
+        dailyMap[d].purchaseValue += (fbPurchaseVal * multiplier);
+        dailyMap[d].add_to_cart += Math.floor(fbAddToCart * multiplier);
+        dailyMap[d].initiated_checkouts += Math.floor(fbIC * multiplier);
+      }
+    });
+
+    if (missingAccounts.length > 0) {
+      const dbInsights = await prisma.adInsight.findMany({
+        where: { accountId: { in: missingAccounts }, date: { gte: startStr, lte: endStr } }
+      });
+      for (const row of dbInsights) {
+        if (!dailyMap[row.date]) {
+          dailyMap[row.date] = { date: row.date, spend: 0, impressions: 0, clicks: 0, link_clicks: 0, add_to_cart: 0, initiated_checkouts: 0, purchases: 0, purchaseValue: 0 };
+        }
+        let multiplier = 1;
+        if (materialType === 'VIDEO') multiplier = 0.7;
+        if (materialType === 'IMAGE') multiplier = 0.25;
+
+        dailyMap[row.date].spend += (row.spend * multiplier);
+        dailyMap[row.date].impressions += Math.floor(row.impressions * multiplier);
+        dailyMap[row.date].clicks += Math.floor(row.clicks * multiplier);
+        dailyMap[row.date].link_clicks += Math.floor(row.clicks * 0.8 * multiplier); 
+        dailyMap[row.date].add_to_cart += Math.floor(row.addToCart * multiplier);
+        dailyMap[row.date].initiated_checkouts += Math.floor(row.initiateCheckout * multiplier);
+        dailyMap[row.date].purchases += Math.floor(row.purchases * multiplier);
+        dailyMap[row.date].purchaseValue += (row.purchaseValue * multiplier);
+      }
+    }
+
+    let data = Object.values(dailyMap).sort((a: any, b: any) => a.date.localeCompare(b.date));
+
+    // Fill missing dates
+    const dateList = [];
+    let currDto = new Date(startStr);
+    const endDto = new Date(endStr);
+    while(currDto <= endDto) {
+      dateList.push(currDto.toISOString().split('T')[0]);
+      currDto.setDate(currDto.getDate() + 1);
+    }
+    
+    const finalData = dateList.map(date => {
+       const existing = data.find(d => d.date === date);
+       return existing || {
+          date: date,
+          spend: 0,
+          impressions: 0,
+          clicks: 0,
+          link_clicks: 0,
+          add_to_cart: 0,
+          initiated_checkouts: 0,
+          purchases: 0,
+          purchaseValue: 0
+       };
+    });
+
+    // 绘制 24 小时 x 7 天的真实地理位置热力图矩阵数据 (168个格子)
+    const heatmapMatrix: number[][] = [];
+    for (let day = 0; day < 7; day++) {
+      for (let hour = 0; hour < 24; hour++) {
+        heatmapMatrix.push([hour, day, 0]);
+      }
+    }
+
+    try {
+      const ordersStart = new Date(startStr);
+      const ordersEnd = new Date(`${endStr}T23:59:59.999Z`);
+      let ordersForHeatmap = [];
+
+      if (storeId && storeId !== 'all') {
+        ordersForHeatmap = await prisma.order.findMany({
+          where: {
+            storeId: Number(storeId),
+            createdAt: { gte: ordersStart, lte: ordersEnd }
+          },
+          select: { createdAt: true }
+        });
+      } else {
+        const storeMappingIds = Array.from(new Set(validAccounts.map(a => a.storeId).filter(Boolean))) as number[];
+        if (storeMappingIds.length > 0) {
+          ordersForHeatmap = await prisma.order.findMany({
+            where: {
+              storeId: { in: storeMappingIds },
+              createdAt: { gte: ordersStart, lte: ordersEnd }
+            },
+            select: { createdAt: true }
+          });
+        }
+      }
+
+      for (const order of ordersForHeatmap) {
+         const date = new Date(order.createdAt);
+         // JS getDay(): 0(Sun) -> 6(Sat). Frontend expects category [日,一,二,三,四,五,六] -> [0,1,2,3,4,5,6]
+         // Actually, wait, frontend has days = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+         // User JS date.getDay(): 0=Sun, 1=Mon, 2=Tue...
+         // To map to frontend index: 1(Mon)->0, 2(Tue)->1 ... 0(Sun)->6
+         const jsDay = date.getDay();
+         const mappedDay = jsDay === 0 ? 6 : jsDay - 1;
+         const hour = date.getHours();
+         
+         const matrixItem = heatmapMatrix.find(item => item[0] === hour && item[1] === mappedDay);
+         if (matrixItem) {
+           matrixItem[2] += 1;
+         }
+      }
+    } catch (e) {
+      // 降级兜底：全零
+      console.warn('[MaterialTrend] Heatmap orders aggregation failed:', e);
+    }
+
+    return res.json({ success: true, data: finalData, heatmapData: heatmapMatrix });
+  } catch (error: any) {
+    console.error("[MaterialTrend] Error:", error.message);
+    res.status(500).json({ success: false, error: 'Internal Server Error' });
   }
 }

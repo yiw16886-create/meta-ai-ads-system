@@ -10,7 +10,6 @@ import settingsRoutes from "./settings.routes.js";
 import mappingsRoutes from "./mappings.routes.js";
 import monitoringRoutes from "./monitoring.routes.js";
 import materialRoutes from "./material.routes.js";
-import diagnosticsRoutes from "./diagnostics.routes.js";
 
 const routes = Router();
 
@@ -25,6 +24,5 @@ routes.use("/insights", insightsRoutes);
 routes.use("/settings", settingsRoutes);
 routes.use("/mappings", mappingsRoutes);
 routes.use("/monitoring", monitoringRoutes);
-routes.use("/diagnostics", diagnosticsRoutes);
 
 export default routes;

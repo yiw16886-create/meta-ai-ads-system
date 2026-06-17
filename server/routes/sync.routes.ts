@@ -93,26 +93,46 @@ router.post("/sync", async (req, res) => {
       await Promise.all(
         chunk.map(async (account: any) => {
           const accountId = account.account_id || account.id;
-          try {
-            const activityStatus = await evaluateActivityStatus(accountId, account.account_status, token);
-            if (activityStatus <= 2) {
-                const count = await syncSingleAccountAdData(accountId, startDate, endDate, token);
-                totalSynced += count;
-            } else {
-                console.log(`[Manual API Sync] ⏭️ Skipped Ad-level sync for account ${accountId} (Activity Status: ${activityStatus})`);
-            }
-          } catch (err: any) {
-            lastError = extractMetaError(err);
-            const status = err.response?.status;
-            if (status === 403) {
-              console.warn(
-                `[Manual API Sync] ⚠️ Account ${accountId} access restricted (403): ${lastError}`,
-              );
-            } else {
-              console.error(
-                `[Manual API Sync] ❌ Error syncing account ${accountId}:`,
-                err.response?.data || err.message,
-              );
+          let retries = 3;
+          let success = false;
+          while (retries > 0 && !success) {
+            try {
+              const activityStatus = await evaluateActivityStatus(accountId, account.account_status, token);
+              if (activityStatus < 4) {
+                  const count = await syncSingleAccountAdData(accountId, startDate, endDate, token);
+                  totalSynced += count;
+              } else {
+                  console.log(`[Manual API Sync] ⏭️ Skipped Ad-level sync for account ${accountId} (Activity Status: ${activityStatus})`);
+              }
+              success = true;
+            } catch (err: any) {
+              lastError = extractMetaError(err);
+              const status = err.response?.status;
+              if (status >= 500) {
+                retries--;
+                if (retries > 0) {
+                  console.warn(
+                    `[Manual API Sync] ⚠️ Meta 账户 ${accountId} 服务端不可用 (${status}): ${lastError}. Retrying in 3 seconds... (${retries} retries left)`,
+                  );
+                  await new Promise((resolve) => setTimeout(resolve, 3000));
+                } else {
+                  console.warn(
+                    `[Manual API Sync] ⚠️ Meta 账户 ${accountId} 服务端不可用 (${status}): ${lastError}. Max retries reached.`,
+                  );
+                }
+              } else {
+                if (status === 403) {
+                  console.warn(
+                    `[Manual API Sync] ⚠️ Account ${accountId} access restricted (403): ${lastError}`,
+                  );
+                } else {
+                  console.error(
+                    `[Manual API Sync] ❌ Error syncing account ${accountId}:`,
+                    err.response?.data || err.message,
+                  );
+                }
+                success = true; // Stop retrying on non-500 errors
+              }
             }
           }
         }),
@@ -262,26 +282,46 @@ router.get("/cron/sync-monthly", async (req, res) => {
     for (const account of accounts) {
       if (stopSync) break;
       const accountId = account.account_id || account.id;
-      try {
-        const activityStatus = await evaluateActivityStatus(accountId, account.account_status, token);
-        if (activityStatus <= 2) {
-             const count = await syncSingleAccountAdData(accountId, startDate, endDate, token);
-             totalSynced += count;
-        } else {
-             console.log(`[Cron Sync] ⏭️ Skipped Ad-level sync for account ${accountId} (Activity Status: ${activityStatus})`);
-        }
-      } catch (accErr: any) {
-        lastError = extractMetaError(accErr);
-        const status = accErr.response?.status;
-        if (status === 403) {
-          console.warn(
-            `[Cron Sync] ⚠️ Account ${accountId} access restricted (403): ${lastError}`,
-          );
-        } else {
-          console.error(
-            `[Cron Sync] ❌ Failed for account ${accountId}:`,
-            accErr.response?.data || accErr.message,
-          );
+      let retries = 3;
+      let success = false;
+      while (retries > 0 && !success) {
+        try {
+          const activityStatus = await evaluateActivityStatus(accountId, account.account_status, token);
+          if (activityStatus < 4) {
+               const count = await syncSingleAccountAdData(accountId, startDate, endDate, token);
+               totalSynced += count;
+          } else {
+               console.log(`[Cron Sync] ⏭️ Skipped Ad-level sync for account ${accountId} (Activity Status: ${activityStatus})`);
+          }
+          success = true;
+        } catch (accErr: any) {
+          lastError = extractMetaError(accErr);
+          const status = accErr.response?.status;
+          if (status >= 500) {
+            retries--;
+            if (retries > 0) {
+              console.warn(
+                `[Cron Sync] ⚠️ Meta 账户 ${accountId} 服务端不可用 (${status}): ${lastError}. Retrying in 3 seconds... (${retries} retries left)`,
+              );
+              await new Promise((resolve) => setTimeout(resolve, 3000));
+            } else {
+              console.warn(
+                `[Cron Sync] ⚠️ Meta 账户 ${accountId} 服务端不可用 (${status}): ${lastError}. Max retries reached.`,
+              );
+            }
+          } else {
+            if (status === 403) {
+              console.warn(
+                `[Cron Sync] ⚠️ Account ${accountId} access restricted (403): ${lastError}`,
+              );
+            } else {
+              console.error(
+                `[Cron Sync] ❌ Failed for account ${accountId}:`,
+                accErr.response?.data || accErr.message,
+              );
+            }
+            success = true; // Stop retrying on non-500 errors
+          }
         }
       }
     }

@@ -54,7 +54,7 @@ export async function extractMetaAssetHash(creativeId: string, accessToken: stri
     const response = await axios.get(url);
     const data = response.data;
 
-    let landingUrl: string | null = data.object_url || data.template_url || null;
+    let landingUrl: string | null = null;
     let previewUrl: string | null = data.thumbnail_url || data.image_url || null;
     let metaAssetId: string | null = null;
     let videoHash: string | null = null;
@@ -66,27 +66,50 @@ export async function extractMetaAssetHash(creativeId: string, accessToken: stri
 
     const objStorySpec = data.object_story_spec;
     const assetFeedSpec = data.asset_feed_spec;
+    
+    // Attempt the requested strict extraction for video_id and link
+    if (objStorySpec && objStorySpec.link_data && objStorySpec.link_data.link) {
+      landingUrl = objStorySpec.link_data.link;
+    }
 
     if (objStorySpec) {
       if (objStorySpec.link_data) {
-        landingUrl = objStorySpec.link_data.link || landingUrl;
+        if (!landingUrl && objStorySpec.link_data.link) {
+            landingUrl = objStorySpec.link_data.link;
+        }
         if (objStorySpec.link_data.call_to_action?.value?.link) {
-          landingUrl = objStorySpec.link_data.call_to_action.value.link;
+          const ctaLink = objStorySpec.link_data.call_to_action.value.link;
+          const ctaIsDirty = ctaLink.includes("facebook.com/reel") || ctaLink.includes("instagram.com/reel") || ctaLink.includes("facebook.com/watch");
+          const landingIsDirty = landingUrl ? (landingUrl.includes("facebook.com/reel") || landingUrl.includes("instagram.com/reel") || landingUrl.includes("facebook.com/watch")) : true;
+          
+          if (!landingUrl || (landingIsDirty && !ctaIsDirty)) {
+              landingUrl = ctaLink;
+          }
         }
-        metaAssetId = objStorySpec.link_data.image_hash;
-        imageHash = objStorySpec.link_data.image_hash;
+        metaAssetId = objStorySpec.link_data.image_hash || metaAssetId;
+        imageHash = objStorySpec.link_data.image_hash || imageHash;
         if (!previewUrl) previewUrl = objStorySpec.link_data.picture || objStorySpec.link_data.image_url;
-      } else if (objStorySpec.video_data) {
-        if (objStorySpec.video_data.call_to_action && objStorySpec.video_data.call_to_action.value) {
-          landingUrl = objStorySpec.video_data.call_to_action.value.link;
+      } 
+      
+      if (objStorySpec.video_data) {
+        if (objStorySpec.video_data.call_to_action?.value?.link) {
+          const ctaLink = objStorySpec.video_data.call_to_action.value.link;
+          const ctaIsDirty = ctaLink.includes("facebook.com/reel") || ctaLink.includes("instagram.com/reel") || ctaLink.includes("facebook.com/watch");
+          const landingIsDirty = landingUrl ? (landingUrl.includes("facebook.com/reel") || landingUrl.includes("instagram.com/reel") || landingUrl.includes("facebook.com/watch")) : true;
+
+          if (!landingUrl || (landingIsDirty && !ctaIsDirty)) {
+             landingUrl = ctaLink;
+          }
         }
-        metaAssetId = objStorySpec.video_data.video_id;
-        videoId = objStorySpec.video_data.video_id;
-        videoHash = objStorySpec.video_data.video_hash || null;
+        metaAssetId = objStorySpec.video_data.video_id || metaAssetId;
+        videoId = objStorySpec.video_data.video_id || videoId;
+        videoHash = objStorySpec.video_data.video_hash || videoHash;
         if (!previewUrl) previewUrl = objStorySpec.video_data.image_url;
-      } else if (objStorySpec.photo_data) {
-        metaAssetId = objStorySpec.photo_data.image_hash;
-        imageHash = objStorySpec.photo_data.image_hash;
+      } 
+      
+      if (objStorySpec.photo_data) {
+        metaAssetId = objStorySpec.photo_data.image_hash || metaAssetId;
+        imageHash = objStorySpec.photo_data.image_hash || imageHash;
         landingUrl = objStorySpec.photo_data.url || landingUrl;
       }
     }
@@ -104,6 +127,10 @@ export async function extractMetaAssetHash(creativeId: string, accessToken: stri
           videoId = assetFeedSpec.videos[0].video_id;
         }
       }
+    }
+
+    if (!landingUrl) {
+       landingUrl = data.object_url || data.template_url || null;
     }
 
     // 针对主页帖子的有效帖子链接提取（强力穿透 l.facebook 重定向并还原真实独立站链接）
@@ -133,7 +160,10 @@ export async function extractMetaAssetHash(creativeId: string, accessToken: stri
                 }
               } catch (_) {}
             }
-            landingUrl = postTargetUrl;
+            // Only overwrite if we haven't found a valid landing page URL yet, or if our current one is just a facebook page reel url
+            if (!landingUrl || landingUrl.includes("facebook.com/reel") || landingUrl.includes("facebook.com/watch") || landingUrl.includes("instagram.com/reel")) {
+                 landingUrl = postTargetUrl;
+            }
           }
           if (!previewUrl && attachment.media?.image?.src) {
             previewUrl = attachment.media.image.src;
@@ -185,8 +215,8 @@ export const runMetaCreativeAutoPatch = async (accessToken: string) => {
   };
 
   for (const account of accounts) {
-    // Check if account activity status is 3 or above (dormant), skip entirely
-    if (account.activityStatus > 2) {
+    // Check if account activity status is 4 or above (dormant), skip entirely
+    if (account.activityStatus > 3) {
        console.log(`[Manual Creative Sync] Skipping account ${account.fb_account_id} due to low activity.`);
        continue;
     }

@@ -193,11 +193,10 @@ export function MonitoringDashboard() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">全部标签 (All)</SelectItem>
-              <SelectItem value="1">标签 1 (活跃)</SelectItem>
-              <SelectItem value="2">标签 2 (一般)</SelectItem>
-              <SelectItem value="3">标签 3 (停用/限制)</SelectItem>
-              <SelectItem value="4">标签 4 (休眠/无消耗)</SelectItem>
-              <SelectItem value="5">标签 5 (警告/断档)</SelectItem>
+              <SelectItem value="1">标签 1 (极度活跃)</SelectItem>
+              <SelectItem value="2">标签 2 (活跃)</SelectItem>
+              <SelectItem value="3">标签 3 (警告/将停用)</SelectItem>
+              <SelectItem value="4">标签 4 (停用或休眠)</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -295,7 +294,7 @@ export function MonitoringDashboard() {
                     key={acc.id} 
                     className={cn(
                       "group border-gray-50 transition-colors cursor-pointer",
-                      isDanger ? "bg-red-50/30 hover:bg-red-50/50" : "hover:bg-gray-50/80"
+                      isDanger ? "bg-red-50/10 hover:bg-red-50/30" : "hover:bg-gray-50/80"
                     )}
                     onClick={() => navigate(`/account/${acc.accountId}`)}
                   >
@@ -305,7 +304,10 @@ export function MonitoringDashboard() {
                           "w-2 h-2 rounded-full shrink-0",
                           acc.accountStatus === 1 ? "bg-green-500" : "bg-red-500"
                         )} />
-                        <span className="font-bold text-gray-900 group-hover:text-meta-blue transition-colors">
+                        <span className={cn(
+                          "font-bold transition-colors",
+                          acc.accountStatus !== 1 ? "text-red-500 hover:text-red-600" : "text-gray-900 group-hover:text-meta-blue"
+                        )}>
                           {acc.name}
                         </span>
                       </div>
@@ -315,12 +317,11 @@ export function MonitoringDashboard() {
                         "inline-flex items-center px-1.5 py-0.5 rounded text-[10px]",
                         acc.activityStatus === 1 ? "bg-green-100 text-green-700" :
                         acc.activityStatus === 2 ? "bg-blue-100 text-blue-700" :
-                        acc.activityStatus === 3 ? "bg-red-100 text-red-700" :
+                        acc.activityStatus === 3 ? "bg-orange-100 text-orange-700" :
                         acc.activityStatus === 4 ? "bg-gray-100 text-gray-700" :
-                        acc.activityStatus === 5 ? "bg-orange-100 text-orange-700" :
-                        "bg-gray-200 text-gray-500"
+                        "bg-gray-100 text-gray-500"
                       )}>
-                        标签 {acc.activityStatus || 2}
+                        标签 {acc.activityStatus || 4}
                       </div>
                     </TableCell>
                     <TableCell className="py-4 font-mono text-[11px] text-gray-400 font-bold uppercase tracking-wider">

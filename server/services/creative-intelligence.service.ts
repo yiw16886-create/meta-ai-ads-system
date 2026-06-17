@@ -24,7 +24,7 @@ export async function getCreativeIntelligence(startDate: string, endDate: string
   const hashAggregations: Record<string, any> = {};
 
   for (const acc of targetAccounts) {
-      if (acc.activityStatus > 2) continue;
+      if (acc.activityStatus > 3) continue;
 
       const fbAccountId = acc.fb_account_id.startsWith('act_') ? acc.fb_account_id : `act_${acc.fb_account_id}`;
       const url = `https://graph.facebook.com/v21.0/${fbAccountId}/insights`;

@@ -260,35 +260,51 @@ async function runBackgroundSync() {
       await Promise.all(
         chunk.map(async (account: any) => {
           const accountId = account.account_id || account.id;
-          try {
-            const activityStatus = await evaluateActivityStatus(accountId, account.account_status, token);
-            if (activityStatus <= 2) {
-               await syncSingleAccountAdData(accountId, startDate, endDate, token);
-            } else {
-               console.log(`[后台同步 | ${syncId}] ⏭️ 跳过账户 ${accountId} (活跃度: ${activityStatus})`);
-            }
-            syncedCount++;
-            if (syncedCount % 10 === 0 || syncedCount === totalAccounts) {
-              console.log(
-                `[后台同步 | ${syncId}] 📈 进度: ${syncedCount}/${totalAccounts} 账户`,
-              );
-            }
-          } catch (err: any) {
-            const status = err.response?.status;
-            const metaError = err.response?.data?.error?.message || err.message;
-            if (status === 403) {
-              console.warn(
-                `[后台同步 | ${syncId}] ⚠️ 账户 ${accountId} 无权限或被限制访问 (403): ${metaError}`,
-              );
-            } else if (status >= 500) {
-              console.warn(
-                `[后台同步 | ${syncId}] ⚠️ Meta 账户 ${accountId} 服务端不可用 (${status}): ${metaError}`,
-              );
-            } else {
-              console.error(
-                `[后台同步 | ${syncId}] ❌ 账户 ${accountId} 同步失败:`,
-                metaError,
-              );
+          let retries = 3;
+          let success = false;
+          while (retries > 0 && !success) {
+            try {
+              const activityStatus = await evaluateActivityStatus(accountId, account.account_status, token);
+              if (activityStatus < 4) {
+                 await syncSingleAccountAdData(accountId, startDate, endDate, token);
+              } else {
+                 console.log(`[后台同步 | ${syncId}] ⏭️ 跳过账户 ${accountId} (活跃度: ${activityStatus})`);
+              }
+              syncedCount++;
+              if (syncedCount % 10 === 0 || syncedCount === totalAccounts) {
+                console.log(
+                  `[后台同步 | ${syncId}] 📈 进度: ${syncedCount}/${totalAccounts} 账户`,
+                );
+              }
+              success = true;
+            } catch (err: any) {
+              const status = err.response?.status;
+              const metaError = err.response?.data?.error?.message || err.message;
+              if (status >= 500) {
+                retries--;
+                if (retries > 0) {
+                  console.warn(
+                    `[后台同步 | ${syncId}] ⚠️ Meta 账户 ${accountId} 服务端不可用 (${status}): ${metaError}. Retrying in 3 seconds... (${retries} retries left)`,
+                  );
+                  await new Promise((resolve) => setTimeout(resolve, 3000));
+                } else {
+                  console.warn(
+                    `[后台同步 | ${syncId}] ⚠️ Meta 账户 ${accountId} 服务端不可用 (${status}): ${metaError}. Max retries reached.`,
+                  );
+                }
+              } else {
+                if (status === 403) {
+                  console.warn(
+                    `[后台同步 | ${syncId}] ⚠️ 账户 ${accountId} 无权限或被限制访问 (403): ${metaError}`,
+                  );
+                } else {
+                  console.error(
+                    `[后台同步 | ${syncId}] ❌ 账户 ${accountId} 同步失败:`,
+                    metaError,
+                  );
+                }
+                success = true; // Stop retrying on non-500 errors
+              }
             }
           }
         }),
