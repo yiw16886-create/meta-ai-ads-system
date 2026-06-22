@@ -127,7 +127,7 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
           adset_id: item.adset_id,
           creative_id: item.creative_id || item.creative?.id || null
         }
-      });
+      }).filter((item: any) => item.spend > 0); // 底层最优先级逻辑：根据日期查询有消耗的账户数据。没有消耗的才需要隐藏
 
       setData(processed);
     } catch (err) {

@@ -170,7 +170,7 @@ router.get("/accounts", async (req, res) => {
 
     monitoringData.forEach(item => {
       const cleanId = item.accountId;
-      item.status = item.accountStatus; // preserve fbStatus
+      (item as any).status = item.accountStatus; // preserve fbStatus
 
       const lastSpendDateStr = latestSpendMap.get(cleanId);
       if (lastSpendDateStr) {

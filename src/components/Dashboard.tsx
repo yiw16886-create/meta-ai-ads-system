@@ -32,6 +32,7 @@ import {
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { StoresDashboard } from "./StoresDashboard";
+import { PageCommentManager } from "./PageCommentManager";
 import { MonitoringDashboard } from "./MonitoringDashboard";
 import { OverviewDashboard } from "./OverviewDashboard";
 import { CreativeIntelligenceDashboard } from "./CreativeIntelligenceDashboard";
@@ -110,10 +111,11 @@ export function Dashboard({ onLogout }: DashboardProps) {
     | "overview"
     | "product_intelligence"
     | "creative_intelligence"
+    | "pages"
     || "overview";
 
   const [currentTab, setCurrentTab] = useState<
-    "dashboard" | "campaign_structure" | "audience_analysis" | "creative_analysis" | "store_data" | "settings" | "category" | "accounts" | "stores" | "users" | "monitoring" | "overview" | "product_intelligence" | "creative_intelligence"
+    "dashboard" | "campaign_structure" | "audience_analysis" | "creative_analysis" | "store_data" | "settings" | "category" | "accounts" | "stores" | "users" | "monitoring" | "overview" | "product_intelligence" | "creative_intelligence" | "pages"
   >(initialTab);
 
   const currentUser = JSON.parse(localStorage.getItem("user") || "{}");
@@ -266,16 +268,11 @@ export function Dashboard({ onLogout }: DashboardProps) {
     setSyncing(true);
     const syncToast = toast.loading("正在同步 Meta 数据...");
     try {
-      const activeAccountIds = Array.isArray(sortedAggregatedData) 
-        ? sortedAggregatedData.map(d => d.accountId).filter(Boolean)
-        : [];
-
       const response = await axios.post("/api/sync", {
         startDate: format(startDate, "yyyy-MM-dd"),
         endDate: format(endDate, "yyyy-MM-dd"),
         syncProduct,
-        syncCreative,
-        accounts: activeAccountIds // Only pass the currently visible accounts
+        syncCreative
       });
       toast.success(`同步成功: ${response.data.count} 条记录`, {
         id: syncToast,
@@ -337,7 +334,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
       {} as Record<string, any>,
     );
 
-    return Object.values(grouped).map((item) => ({
+    const mappedData = Object.values(grouped).map((item) => ({
       ...item,
       cpc: item.clicks > 0 ? item.spend / item.clicks : 0,
       ctr: item.impressions > 0 ? (item.clicks / item.impressions) * 100 : 0,
@@ -347,6 +344,9 @@ export function Dashboard({ onLogout }: DashboardProps) {
       cpp: item.purchases > 0 ? item.spend / item.purchases : 0,
       roas: item.spend > 0 ? item.purchaseValue / item.spend : 0,
     }));
+    
+    // 底层最优先级逻辑：根据日期查询有消耗的账户数据。没有消耗的才需要隐藏
+    return mappedData.filter(item => item.spend > 0);
   }, [data, search, viewDimension]);
 
   const [sortConfig, setSortConfig] = useState<{ key: keyof AdInsight; direction: "asc" | "desc" } | null>(null);
@@ -524,7 +524,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
             { id: "category", icon: LayoutGrid, label: "项目类别看板" },
             { id: "monitoring", icon: TrendingUp, label: "账户健康监控" },
             { id: "stores", icon: Store, label: "店铺管理" },
-            { id: "pages", icon: Flag, label: "公共主页" },
+            { id: "pages", icon: Flag, label: "公共主页管理" },
           ].filter(Boolean).map((item: any) => (
             <button
               key={item.id}
@@ -1031,11 +1031,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
         ) : currentTab === "stores" ? (
           <StoresDashboard startDate={startDate} endDate={endDate} />
         ) : currentTab === "pages" ? (
-          <div className="flex-1 flex flex-col items-center justify-center p-12 text-center h-full">
-            <Flag className="w-16 h-16 text-gray-300 mb-4" />
-            <h2 className="text-xl font-medium text-gray-700 mb-2">公共主页统筹与管理</h2>
-            <p className="text-gray-500">该模块处于待设计状态，未来将提供公共主页的状态监控、贴文表现与数据统筹功能。</p>
-          </div>
+          <PageCommentManager />
         ) : currentTab === "monitoring" ? (
           <MonitoringDashboard />
         ) : currentTab === "accounts" ? (
@@ -2102,13 +2098,12 @@ function SettingsPage() {
     }
     setLoadingMeta(true);
     try {
-      await handleSaveSetting("META_ACCESS_TOKEN", metaToken);
-      const now = new Date().toISOString();
-      await handleSaveSetting("META_TOKEN_UPDATED_AT", now);
-      setMetaTokenUpdatedAt(now);
+      const res = await axios.post("/api/settings/meta-token", { token: metaToken });
+      
+      setMetaTokenUpdatedAt(res.data.timestamp);
       setHasMetaToken(true);
       setMetaToken(""); // clear it so it doesn't show
-      toast.success("Meta API 配置已保存");
+      toast.success(`Meta API 配置已保存${res.data.updatedAccountsCount ? `，并覆盖更新了 ${res.data.updatedAccountsCount} 个广告账户` : ''}`);
       setShowMetaModal(false);
     } catch (err: any) {
       toast.error(err.response?.data?.error || "保存 Meta API 配置失败");
@@ -2514,7 +2509,7 @@ function CategoryDashboard({ mappings, onManageAccounts }: { mappings: Record<st
         roas,
         hasMapping: !!mapping
       };
-    }).filter((item: any) => item.spend > 0 && item.hasMapping && item.store !== "未分配");
+    }).filter((item: any) => item.spend > 0);
   }, [rawInsights, mappings]);
 
   const projects = useMemo(() => {

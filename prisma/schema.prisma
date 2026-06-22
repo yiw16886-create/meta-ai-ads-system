@@ -224,3 +224,42 @@ model ProductPerformanceDaily {
 
   @@unique([storeId, productId, date])
 }
+
+// 1. 公共主页表
+model FacebookPage {
+  id           String           @id // Meta Page ID
+  page_name    String
+  access_token String           // 核心：该Page专属的 Page Access Token
+  shop_id      String           // 关联店铺ID
+  is_active    Boolean          @default(true)
+  created_at   DateTime         @default(now())
+  ads_posts    FacebookAdPost[]
+}
+
+// 2. 广告帖子/创意帖子表（包含隐藏的 Dark Post）
+model FacebookAdPost {
+  id           String          @id // Meta Post ID (格式通常为 pageId_adId)
+  page_id      String
+  ad_id        String?         // 对应的广告ID（可选，如果是创意自动生成的帖子）
+  post_title   String?         @db.Text
+  preview_url  String?         @db.Text // 帖子预览或素材图
+  created_time DateTime
+  page         FacebookPage    @relation(fields: [page_id], references: [id], onDelete: Cascade)
+  comments     AdPostComment[]
+
+  @@index([page_id])
+}
+
+// 3. 广告帖子评论表
+model AdPostComment {
+  id           String         @id // Meta Comment ID
+  post_id      String
+  from_name    String         // 评论者用户名
+  from_id      String         // 评论者用户ID
+  message      String         @db.Text // 评论具体文本
+  is_hidden    Boolean        @default(false) // 核心：是否已被隐藏
+  created_time DateTime
+  post         FacebookAdPost @relation(fields: [post_id], references: [id], onDelete: Cascade)
+
+  @@index([post_id])
+}

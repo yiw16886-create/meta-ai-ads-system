@@ -37,7 +37,11 @@ interface OverviewDashboardProps {
 }
 
 export function OverviewDashboard({ data = [], mappings = {}, storeSummaries = {} }: OverviewDashboardProps) {
-  const safeData = useMemo(() => Array.isArray(data) ? data : [], [data]);
+  const safeData = useMemo(() => {
+    const rawData = Array.isArray(data) ? data : [];
+    // 底层最优先级逻辑：根据日期查询有消耗的账户数据。没有消耗的才需要隐藏
+    return rawData.filter(d => (d.spend || 0) > 0);
+  }, [data]);
 
   // 1. Aggregate Data by Store FIRST so we can merge with Shopline stats
   const storeStats = useMemo(() => {

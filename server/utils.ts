@@ -373,25 +373,35 @@ export async function syncSingleAccountAdData(accountId: string, startDate: stri
       where: { fbAccountId: rawAccountId }
     });
 
-    if (mapping && mapping.storeId === null) {
-      if (dbAdAccount) {
-        try {
-          await prisma.adAccount.delete({
-            where: { fb_account_id: rawAccountId }
-          });
-        } catch (e) {}
-      }
-      return; // Skip syncing this ad account since it is explicitly unmapped
-    }
-
     let targetStoreId: number | null = mapping ? mapping.storeId : null;
 
     if (!dbAdAccount) {
-      // Fallback to defaultStore if no mapping or mapped store does not exist
+      // If there's no mapping or mapped store does not exist, use system-wide "未分配" store
       if (!targetStoreId) {
-        const defaultStore = await prisma.store.findFirst();
-        if (defaultStore) {
-          targetStoreId = defaultStore.id;
+        let unassignedStore = await prisma.store.findUnique({
+          where: { name: "未分配" }
+        });
+        if (!unassignedStore) {
+          unassignedStore = await prisma.store.create({
+            data: {
+              name: "未分配",
+              platform: "shopline",
+              timezone: "America/Los_Angeles"
+            }
+          });
+        }
+        targetStoreId = unassignedStore.id;
+        
+        // Also ensure mapping exists
+        if (!mapping) {
+          await prisma.accountMapping.create({
+            data: {
+              fbAccountId: rawAccountId,
+              storeId: targetStoreId,
+              project: "未分配",
+              owner: "未分配"
+            }
+          });
         }
       }
 

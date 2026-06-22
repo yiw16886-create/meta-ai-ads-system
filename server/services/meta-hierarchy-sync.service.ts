@@ -45,20 +45,47 @@ export async function ensureAdAccounts(token: string) {
           where: { fbAccountId: acc.account_id }
         });
 
-        // 严格检验：如果未在 AccountMapping 表显式绑定店铺（即映射不存在、或者 storeId 为 null/空），则该账户不属于任何有效工作组。
-        // 清理掉已存在的 AdAccount 避免数据污染，然后跳过
-        if (!mapping || !mapping.storeId) {
-          if (existingAdAccount) {
-            try {
-              await prisma.adAccount.delete({
-                where: { fb_account_id: acc.account_id }
-              });
-            } catch (e) {}
-          }
-          continue; // 跳过此账户以防数据污染
-        }
+        let targetStoreId: number;
 
-        let targetStoreId = mapping.storeId;
+        // 如果未在 AccountMapping 表显式绑定店铺（即映射不存在、或者 storeId 为 null/空），
+        // 自动绑定到系统默认的 "未分配" 店铺中显示，而不能直接跳过，以免导致有消耗却不显示
+        if (!mapping || !mapping.storeId) {
+          let unassignedStore = await prisma.store.findUnique({
+            where: { name: "未分配" }
+          });
+          if (!unassignedStore) {
+            unassignedStore = await prisma.store.create({
+              data: {
+                name: "未分配",
+                platform: "shopline",
+                timezone: "America/Los_Angeles"
+              }
+            });
+          }
+          targetStoreId = unassignedStore.id;
+
+          if (!mapping) {
+            await prisma.accountMapping.create({
+              data: {
+                fbAccountId: acc.account_id,
+                storeId: targetStoreId,
+                project: "未分配",
+                owner: "未分配"
+              }
+            });
+          } else {
+            await prisma.accountMapping.update({
+              where: { id: mapping.id },
+              data: {
+                storeId: targetStoreId,
+                project: mapping.project || "未分配",
+                owner: mapping.owner || "未分配"
+              }
+            });
+          }
+        } else {
+          targetStoreId = mapping.storeId;
+        }
 
         if (existingAdAccount) {
           // Keep name, token, and storeId up to date by adhering to the mapping table source of truth

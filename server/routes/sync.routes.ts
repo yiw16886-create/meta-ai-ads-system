@@ -67,7 +67,6 @@ router.post("/sync", async (req, res) => {
     const accounts = (accountsResponse.data.data || []).filter(
       (a: any) => {
         const rawId = (a.account_id || a.id || "").replace("act_", "");
-        if (!allowedAccountIds.has(rawId)) return false; // 必须是已配置的账户
         
         // 如果端上有特定选择，严格过滤非选中的
         if (Array.isArray(requestedAccounts) && requestedAccounts.length > 0) {
