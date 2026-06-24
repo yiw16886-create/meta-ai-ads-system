@@ -114,35 +114,35 @@ async function detectStoreTimezone(
 
   // 3. Shopline API
   if (platform === "shopline") {
-    try {
-      const response = await axios.get(`https://${cleanDomain}/admin/openapi/v20240301/shop.json`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        timeout: 5000
-      });
-      const shopTz = response.data?.data?.timezone || response.data?.shop?.timezone;
-      if (shopTz) {
-        return { timezone: mapOffsetToIana(shopTz), isFallback: false };
-      }
-    } catch (e: any) {
+    const shoplineCandidates = [
+      `https://${cleanDomain}/admin/openapi/v20240301/shop.json`,
+      `https://${cleanDomain}/admin/openapi/v20220301/shop.json`,
+      `https://${cleanDomain}/admin/openapi/v20201201/shop.json`,
+      `https://${cleanDomain}/admin/openapi/v20220101/shop.json`,
+      `https://${cleanDomain}/admin/openapi/shop.json`,
+      `https://${cleanDomain}/admin/api/v20200901/shop.json`,
+      `https://${cleanDomain}/admin/api/shop.json`
+    ];
+
+    let foundTz = false;
+    for (const url of shoplineCandidates) {
       try {
-        const response = await axios.get(`https://${cleanDomain}/admin/openapi/v20220101/shop.json`, {
+        const response = await axios.get(url, {
           headers: {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'
           },
-          timeout: 5000
+          timeout: 4000
         });
         const shopTz = response.data?.data?.timezone || response.data?.shop?.timezone;
         if (shopTz) {
           return { timezone: mapOffsetToIana(shopTz), isFallback: false };
         }
-      } catch (e2) {
-        console.warn(`[Tz Detection] Shopline Shop API failed:`, e.message);
+      } catch (err) {
+        // quiet continue
       }
     }
+    console.warn(`[Tz Detection] Shopline Shop API candidates all failed. Falling back to order inspection/other methods.`);
   }
 
   // 4. Fallback: Try order matching logic

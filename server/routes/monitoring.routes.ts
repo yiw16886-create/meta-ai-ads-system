@@ -18,7 +18,7 @@ router.get("/accounts", async (req, res) => {
     
     if (refresh === "true" || cachedAccounts.length === 0) {
       console.log("🔄 Refreshing Meta Account Monitoring data from API...");
-      const accountsRes = await axios.get(`https://graph.facebook.com/v22.0/me/adaccounts`, {
+      const accountsRes = await axios.get(`https://graph.facebook.com/v19.0/me/adaccounts`, {
         params: {
           fields: "name,account_id,account_status,spend_cap,amount_spent,balance,currency,timezone_name",
           limit: 500,
@@ -247,7 +247,7 @@ router.post("/accounts/:accountId/reset", async (req, res) => {
     if (!token) return res.status(400).json({ error: "Meta Token 未配置" });
 
     // Meta API: POST act_{id}?spend_cap_action=reset
-    await axios.post(`https://graph.facebook.com/v22.0/act_${accountId}`, null, {
+    await axios.post(`https://graph.facebook.com/v19.0/act_${accountId}`, null, {
       params: {
         spend_cap_action: "reset",
         access_token: token

@@ -96,13 +96,12 @@ router.post("/sync", async (req, res) => {
           let success = false;
           while (retries > 0 && !success) {
             try {
-              const activityStatus = await evaluateActivityStatus(accountId, account.account_status, token);
-              if (activityStatus < 4) {
-                  const count = await syncSingleAccountAdData(accountId, startDate, endDate, token);
-                  totalSynced += count;
-              } else {
-                  console.log(`[Manual API Sync] ⏭️ Skipped Ad-level sync for account ${accountId} (Activity Status: ${activityStatus})`);
-              }
+              // Always perform the ad-level sync first so we fetch and store latest daily insights in DB
+              const count = await syncSingleAccountAdData(accountId, startDate, endDate, token);
+              totalSynced += count;
+
+              // Re-evaluate activity status AFTER syncing so it correctly recognizes active spend in the database
+              await evaluateActivityStatus(accountId, account.account_status, token);
               success = true;
             } catch (err: any) {
               lastError = extractMetaError(err);
@@ -285,13 +284,12 @@ router.get("/cron/sync-monthly", async (req, res) => {
       let success = false;
       while (retries > 0 && !success) {
         try {
-          const activityStatus = await evaluateActivityStatus(accountId, account.account_status, token);
-          if (activityStatus < 4) {
-               const count = await syncSingleAccountAdData(accountId, startDate, endDate, token);
-               totalSynced += count;
-          } else {
-               console.log(`[Cron Sync] ⏭️ Skipped Ad-level sync for account ${accountId} (Activity Status: ${activityStatus})`);
-          }
+          // Always perform the ad-level sync first so we fetch and store latest daily insights in DB
+          const count = await syncSingleAccountAdData(accountId, startDate, endDate, token);
+          totalSynced += count;
+
+          // Re-evaluate activity status AFTER syncing so it correctly recognizes active spend in the database
+          await evaluateActivityStatus(accountId, account.account_status, token);
           success = true;
         } catch (accErr: any) {
           lastError = extractMetaError(accErr);

@@ -233,14 +233,16 @@ async function syncShoplineStoreData(store: any, startDate: string, endDate: str
           const orderId = o.id.toString();
           const orderTotal = parseFloat(o.total_price || o.current_total_price || o.total_amount || 0);
           
+          const lineItemDbId = `${store.platform}_${store.id}_${orderId}_${lineItem.id.toString()}`;
+
           const existingOrder = await prisma.order.findUnique({
-            where: { id: lineItem.id.toString() }
+            where: { id: lineItemDbId }
           });
 
           if (existingOrder) {
             if (existingOrder.revenue !== revenue || existingOrder.refunded !== refunded || existingOrder.orderId !== orderId || existingOrder.orderTotal !== orderTotal || existingOrder.storeId !== targetStoreId) {
               await prisma.order.update({
-                where: { id: lineItem.id.toString() },
+                where: { id: lineItemDbId },
                 data: {
                   revenue,
                   refunded,
@@ -254,7 +256,7 @@ async function syncShoplineStoreData(store: any, startDate: string, endDate: str
           } else {
             await prisma.order.create({
               data: {
-                id: lineItem.id.toString(),
+                id: lineItemDbId,
                 storeId: targetStoreId,
                 productId: productId,
                 revenue,
@@ -423,14 +425,16 @@ async function syncShopifyStoreData(store: any, startDate: string, endDate: stri
                 const orderId = o.id.toString();
                 const orderTotal = parseFloat(o.total_price || o.current_total_price || o.total_amount || 0);
 
+                const lineItemDbId = `${store.platform}_${store.id}_${orderId}_${lineItem.id.toString()}`;
+
                 const existingOrder = await prisma.order.findUnique({
-                  where: { id: lineItem.id.toString() }
+                  where: { id: lineItemDbId }
                 });
 
                 if (existingOrder) {
                   if (existingOrder.revenue !== revenue || existingOrder.refunded !== refunded || existingOrder.orderId !== orderId || existingOrder.orderTotal !== orderTotal || existingOrder.storeId !== targetStoreId) {
                      await prisma.order.update({
-                       where: { id: lineItem.id.toString() },
+                       where: { id: lineItemDbId },
                        data: {
                          revenue,
                          refunded,
@@ -444,7 +448,7 @@ async function syncShopifyStoreData(store: any, startDate: string, endDate: stri
                 } else {
                   await prisma.order.create({
                     data: {
-                      id: lineItem.id.toString(),
+                      id: lineItemDbId,
                       storeId: targetStoreId,
                       productId: productId,
                       revenue,
@@ -605,8 +609,10 @@ async function syncShoplazzaStoreData(store: any, startDate: string, endDate: st
             const orderId = o.id.toString();
             const orderTotal = parseFloat(o.total_price || o.current_total_price || o.total_amount || 0);
 
+            const lineItemDbId = `${store.platform}_${store.id}_${orderId}_${lineItem.id.toString()}`;
+
             await prisma.order.upsert({
-              where: { id: lineItem.id.toString() },
+              where: { id: lineItemDbId },
               update: {
                 storeId: targetStoreId,
                 productId: productId,
@@ -619,7 +625,7 @@ async function syncShoplazzaStoreData(store: any, startDate: string, endDate: st
                 createdAt: new Date(o.processed_at || o.created_at)
               },
               create: {
-                id: lineItem.id.toString(),
+                id: lineItemDbId,
                 storeId: targetStoreId,
                 productId: productId,
                 revenue,

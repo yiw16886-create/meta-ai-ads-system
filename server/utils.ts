@@ -170,23 +170,9 @@ export async function evaluateActivityStatus(accountId: string, fbAccountStatus:
       });
     } catch (e) {}
     
-    // Only delete data if it's truly dormant and we don't need it (status 4)
+    // Do not delete historical data for dormant accounts to prevent accidental loss
     if (statusVal === 4) {
-      try {
-         await prisma.adInsight.deleteMany({ where: { accountId: cleanAccountId } });
-         await prisma.campaign.deleteMany({ where: { accountId: cleanAccountId } });
-         await prisma.adCreative.deleteMany({ 
-           where: { 
-             OR: [
-               { fbAccountId: cleanAccountId },
-               { fbAccountId: `act_${cleanAccountId}` }
-             ]
-           }
-         });
-         console.log(`[evaluateActivityStatus] Cleaned up dormant data for account: ${cleanAccountId}`);
-      } catch (cleanErr) {
-         console.error(`[evaluateActivityStatus] Cleanup Error for ${cleanAccountId}:`, cleanErr);
-      }
+      console.log(`[evaluateActivityStatus] Account ${cleanAccountId} is classified as dormant (no deletion of history)`);
     }
   };
 
