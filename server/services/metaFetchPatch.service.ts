@@ -170,7 +170,7 @@ export async function extractMetaAssetHash(creativeId: string, accessToken: stri
           }
         }
       } catch (e: any) {
-        console.log(`info: skipped optional story details fetch for effectivePostId ${rawEffectivePostId}:`, e.message);
+        console.log(`info: skipped optional story details fetch for effectivePostId ${rawEffectivePostId} (unsupported format or private story)`);
       }
     }
 
@@ -192,7 +192,7 @@ export async function extractMetaAssetHash(creativeId: string, accessToken: stri
       data
     };
   } catch (error: any) {
-    console.error(`Error extracting asset hash for creative ${creativeId}:`, error?.response?.data?.error?.message || error.message);
+    console.log(`info: unable to extract asset hash for creative ${creativeId}:`, error?.response?.data?.error?.message || error.message);
     return null;
   }
 }
@@ -417,16 +417,29 @@ export const runMetaCreativeAutoPatch = async (accessToken: string) => {
                         }
                     }
                 } catch (adError: any) {
-                    console.error(`[Manual Creative Sync] Failed to process individual ad ${ad?.id || 'unknown'} in batch:`, adError.message);
+                    console.log(`info: skipped individual ad ${ad?.id || 'unknown'} in batch:`, adError.message);
                 }
             }
         } catch (batchErr: any) {
-            console.error(`[Manual Creative Sync] Failed to process batch for account ${fbAccountId}:`, batchErr.response?.data?.error?.message || batchErr.message);
+            console.log(`info: skipped batch for account ${fbAccountId}:`, batchErr.response?.data?.error?.message || batchErr.message);
         }
       }
       console.log(`Completed processing active ads for account ${fbAccountId}`);
     } catch (error: any) {
-      console.error(`Failed to process account ${account.fb_account_id}:`, error.response?.data?.error?.message || error.message);
+      // If the error is a permission/auth issue, update activityStatus to 4 (dormant) so we don't spam attempts
+      const isAuthError = error.message?.includes("授权失效") || error.message?.includes("无权限") || error.response?.status === 400 || error.response?.status === 403;
+      if (isAuthError) {
+        try {
+          await prisma.adAccount.update({
+            where: { id: account.id },
+            data: { activityStatus: 4 }
+          });
+          console.log(`info: Account ${account.fb_account_id} marked as dormant (activityStatus: 4) due to permission or authorization failure.`);
+        } catch (dbErr: any) {
+          console.log(`info: Failed to update status for account ${account.fb_account_id}:`, dbErr.message);
+        }
+      }
+      console.log(`info: skipped account ${account.fb_account_id} processing:`, error.response?.data?.error?.message || error.message);
     }
   }
 
