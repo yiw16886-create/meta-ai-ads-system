@@ -11,6 +11,7 @@ import mappingsRoutes from "./mappings.routes.js";
 import monitoringRoutes from "./monitoring.routes.js";
 import materialRoutes from "./material.routes.js";
 import pageManageRoutes from "./pageManage.routes.js";
+import bmsRoutes from "./bms.routes.js";
 
 const routes = Router();
 
@@ -20,6 +21,7 @@ routes.use("/stores", storesRoutes);
 routes.use("/intelligence", intelligenceRoutes);
 routes.use("/accounts", accountsRoutes);
 routes.use("/materials", materialRoutes);
+routes.use("/bms", bmsRoutes);
 routes.use("/", syncRoutes);
 routes.use("/insights", insightsRoutes);
 routes.use("/settings", settingsRoutes);

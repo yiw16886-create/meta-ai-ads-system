@@ -15,6 +15,7 @@ import { syncMetaHierarchy, ensureAdAccounts } from "./services/meta-hierarchy-s
 import { aggregateData } from "./services/aggregation.service.js";
 import { attributePurchases } from "./services/attribution.service.js";
 import { getMetaToken, evaluateActivityStatus, syncSingleAccountAdData } from "./utils.js";
+import { syncBmStatusAndHealth } from "./routes/bms.routes.js";
 
 
 
@@ -32,6 +33,31 @@ cron.schedule("0 2 * * *", async () => {
     await aggregateData(dateStr, dateStr);
   } catch (error) {
     console.error("Daily aggregation job failed:", error);
+  }
+});
+
+// 定时任务：每 12 小时（如每天凌晨 3 点和下午 15 点）自动更新大盘 BM 的健康状态，杜绝高频并发
+cron.schedule("0 3,15 * * *", async () => {
+  console.log("⏰ [Cron Sync] Starting background BM health status sync...");
+  try {
+    const bms = await prisma.facebookBusinessManager.findMany();
+    console.log(`⏰ [Cron Sync] Found ${bms.length} Business Managers to sync. Using queue mechanism with 1.5s delay...`);
+    
+    for (const bm of bms) {
+      try {
+        console.log(`⏰ [Cron Sync] Syncing BM ${bm.name} (${bm.bmId})...`);
+        await syncBmStatusAndHealth(bm);
+        console.log(`⏰ [Cron Sync] BM ${bm.bmId} sync successful.`);
+      } catch (err: any) {
+        console.error(`⏰ [Cron Sync] Failed to sync BM ${bm.bmId}:`, err.message || err);
+      }
+      
+      // 👈 核心：在请求下一个 BM 之间强行暂停 1.5 秒，给 Meta API 喘息时间
+      await new Promise(resolve => setTimeout(resolve, 1500));
+    }
+    console.log("⏰ [Cron Sync] All Business Managers synced successfully.");
+  } catch (error: any) {
+    console.error("⏰ [Cron Sync] Global background BM sync error:", error);
   }
 });
 
@@ -98,6 +124,7 @@ process.on("unhandledRejection", (reason, promise) => {
 
 const app = express();
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 import routes from "./routes/index.js";
 app.use("/api", routes);

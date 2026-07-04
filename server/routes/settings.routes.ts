@@ -11,6 +11,13 @@ router.get("/", async (req, res) => {
     settings.forEach((s) => {
       config[s.key] = s.value;
     });
+    
+    // Safely supply Facebook Client configuration
+    config["FACEBOOK_CLIENT_ID"] = config["FACEBOOK_CLIENT_ID"] || process.env.FACEBOOK_CLIENT_ID || "";
+    config["FACEBOOK_CONFIG_ID"] = config["FACEBOOK_CONFIG_ID"] || process.env.FACEBOOK_CONFIG_ID || "";
+    config["hasFbClientSecret"] = String(!!(config["FACEBOOK_CLIENT_SECRET"] || process.env.FACEBOOK_CLIENT_SECRET));
+    config["FB_AUTHORIZED_USER_ID"] = config["FB_AUTHORIZED_USER_ID"] || "";
+    
     res.json(config);
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch settings" });

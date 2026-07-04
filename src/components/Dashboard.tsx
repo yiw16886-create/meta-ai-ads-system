@@ -27,7 +27,8 @@ import {
   AlertTriangle,
   ShoppingCart,
   Image as ImageIcon,
-  ChevronDown
+  ChevronDown,
+  Building2
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
@@ -40,6 +41,7 @@ import { AudienceAnalysisDashboard } from "./AudienceAnalysisDashboard";
 import { CampaignStructureDashboard } from "./CampaignStructureDashboard";
 import { StoreDataDashboard } from "./StoreDataDashboard";
 import { MaterialPerformanceTable } from "./MaterialPerformanceTable";
+import { BusinessManagerDashboard } from "./BusinessManagerDashboard";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -112,10 +114,11 @@ export function Dashboard({ onLogout }: DashboardProps) {
     | "product_intelligence"
     | "creative_intelligence"
     | "pages"
+    | "bms"
     || "overview";
 
   const [currentTab, setCurrentTab] = useState<
-    "dashboard" | "campaign_structure" | "audience_analysis" | "creative_analysis" | "store_data" | "settings" | "category" | "accounts" | "stores" | "users" | "monitoring" | "overview" | "product_intelligence" | "creative_intelligence" | "pages"
+    "dashboard" | "campaign_structure" | "audience_analysis" | "creative_analysis" | "store_data" | "settings" | "category" | "accounts" | "stores" | "users" | "monitoring" | "overview" | "product_intelligence" | "creative_intelligence" | "pages" | "bms"
   >(initialTab);
 
   const currentUser = JSON.parse(localStorage.getItem("user") || "{}");
@@ -523,6 +526,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
           {[
             { id: "category", icon: LayoutGrid, label: "项目类别看板" },
             { id: "monitoring", icon: TrendingUp, label: "账户健康监控" },
+            { id: "bms", icon: Building2, label: "BM 批量管理" },
             { id: "stores", icon: Store, label: "店铺管理" },
             { id: "pages", icon: Flag, label: "公共主页管理" },
           ].filter(Boolean).map((item: any) => (
@@ -1030,6 +1034,8 @@ export function Dashboard({ onLogout }: DashboardProps) {
           />
         ) : currentTab === "stores" ? (
           <StoresDashboard startDate={startDate} endDate={endDate} />
+        ) : currentTab === "bms" ? (
+          <BusinessManagerDashboard />
         ) : currentTab === "pages" ? (
           <PageCommentManager />
         ) : currentTab === "monitoring" ? (
@@ -2038,10 +2044,59 @@ function SettingsPage() {
   const [loadingMeta, setLoadingMeta] = useState(false);
   const [fetching, setFetching] = useState(true);
 
+  // Facebook App Config & OAuth States
+  const [fbClientId, setFbClientId] = useState("");
+  const [fbClientSecret, setFbClientSecret] = useState("");
+  const [fbConfigId, setFbConfigId] = useState("");
+  const [hasFbClientSecret, setHasFbClientSecret] = useState(false);
+  const [fbUserId, setFbUserId] = useState("");
+  const [loadingFbSave, setLoadingFbSave] = useState(false);
+  const [loadingFbDisconnect, setLoadingFbDisconnect] = useState(false);
+  const [loadingFbDeleteLocal, setLoadingFbDeleteLocal] = useState(false);
+  const [showFbModal, setShowFbModal] = useState(false);
+
   // Modal states
   const [showAIModal, setShowAIModal] = useState(false);
   const [showMetaModal, setShowMetaModal] = useState(false);
   const [showMetaHelpModal, setShowMetaHelpModal] = useState(false);
+
+  const reloadSettings = async () => {
+    try {
+      const settingsRes = await axios.get("/api/settings");
+      if (settingsRes.data.META_ACCESS_TOKEN) {
+        setHasMetaToken(true);
+      } else {
+        setHasMetaToken(false);
+      }
+      if (settingsRes.data.META_TOKEN_UPDATED_AT) {
+        setMetaTokenUpdatedAt(settingsRes.data.META_TOKEN_UPDATED_AT);
+      } else {
+        setMetaTokenUpdatedAt(null);
+      }
+      if (settingsRes.data.FACEBOOK_CLIENT_ID) {
+        setFbClientId(settingsRes.data.FACEBOOK_CLIENT_ID);
+      } else {
+        setFbClientId("");
+      }
+      if (settingsRes.data.FACEBOOK_CONFIG_ID) {
+        setFbConfigId(settingsRes.data.FACEBOOK_CONFIG_ID);
+      } else {
+        setFbConfigId("");
+      }
+      if (settingsRes.data.hasFbClientSecret === "true") {
+        setHasFbClientSecret(true);
+      } else {
+        setHasFbClientSecret(false);
+      }
+      if (settingsRes.data.FB_AUTHORIZED_USER_ID) {
+        setFbUserId(settingsRes.data.FB_AUTHORIZED_USER_ID);
+      } else {
+        setFbUserId("");
+      }
+    } catch (err) {
+      console.error("Failed to reload settings", err);
+    }
+  };
 
   useEffect(() => {
     const init = async () => {
@@ -2059,6 +2114,18 @@ function SettingsPage() {
         if (settingsRes.data.GEMINI_MODEL) {
           setGeminiModel(settingsRes.data.GEMINI_MODEL);
         }
+        if (settingsRes.data.FACEBOOK_CLIENT_ID) {
+          setFbClientId(settingsRes.data.FACEBOOK_CLIENT_ID);
+        }
+        if (settingsRes.data.FACEBOOK_CONFIG_ID) {
+          setFbConfigId(settingsRes.data.FACEBOOK_CONFIG_ID);
+        }
+        if (settingsRes.data.hasFbClientSecret === "true") {
+          setHasFbClientSecret(true);
+        }
+        if (settingsRes.data.FB_AUTHORIZED_USER_ID) {
+          setFbUserId(settingsRes.data.FB_AUTHORIZED_USER_ID);
+        }
       } catch (err) {
         toast.error("加载设置失败");
       } finally {
@@ -2066,6 +2133,39 @@ function SettingsPage() {
       }
     };
     init();
+  }, []);
+
+  // Listen for popup postMessage events to handle popup auth flow seamlessly
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      const origin = event.origin;
+      if (!origin.endsWith(".run.app") && !origin.includes("localhost") && !origin.includes("vercel.app")) {
+        return;
+      }
+      if (event.data?.type === "OAUTH_AUTH_SUCCESS" || event.data?.type === "FB_AUTH_SUCCESS") {
+        toast.success("Facebook 账户绑定成功！已拉取 60 天长效访问令牌。");
+        reloadSettings();
+      } else if (event.data?.type === "FB_AUTH_ERROR") {
+        toast.error(event.data.message || "Facebook 授权失败，请检查开发者配置！");
+      }
+    };
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, []);
+
+  // Listen for URL query params on mount to capture full-page redirect status
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const status = params.get("status");
+    const message = params.get("message");
+    if (status === "success") {
+      toast.success("Facebook 账户绑定成功！已拉取 60 天长效访问令牌。");
+      window.history.replaceState({}, document.title, window.location.pathname + "?tab=settings");
+      reloadSettings();
+    } else if (status === "error") {
+      toast.error(message || "Facebook 绑定失败，请检查开发者应用配置！");
+      window.history.replaceState({}, document.title, window.location.pathname + "?tab=settings");
+    }
   }, []);
 
   const handleSaveSetting = async (key: string, value: string) => {
@@ -2109,6 +2209,97 @@ function SettingsPage() {
       toast.error(err.response?.data?.error || "保存 Meta API 配置失败");
     } finally {
       setLoadingMeta(false);
+    }
+  };
+
+  const handleSaveFbConfig = async () => {
+    if (!fbClientId) {
+      toast.error("请输入 Facebook App ID");
+      return;
+    }
+    if (!fbConfigId) {
+      toast.error("请输入 Meta 登录配置 ID (config_id)");
+      return;
+    }
+    setLoadingFbSave(true);
+    try {
+      await handleSaveSetting("FACEBOOK_CLIENT_ID", fbClientId);
+      await handleSaveSetting("FACEBOOK_CONFIG_ID", fbConfigId);
+      if (fbClientSecret) {
+        await handleSaveSetting("FACEBOOK_CLIENT_SECRET", fbClientSecret);
+        setHasFbClientSecret(true);
+        setFbClientSecret(""); // clear it
+      }
+      toast.success("Facebook 开发者应用配置已保存");
+      setShowFbModal(false);
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || "保存 Facebook 配置失败");
+    } finally {
+      setLoadingFbSave(false);
+    }
+  };
+
+  const handleFbConnect = () => {
+    if (!fbClientId) {
+      toast.error("请先点击【配置开发者应用】输入 Facebook App ID！");
+      return;
+    }
+    if (!fbConfigId) {
+      toast.error("请先点击【配置开发者应用】输入 Meta 登录配置 ID (config_id)！");
+      return;
+    }
+    // Open OAuth provider directly in popup window
+    const redirectUri = "https://1-eight-azure.vercel.app/api/auth/facebook/callback";
+    const authUrl = `https://www.facebook.com/v20.0/dialog/oauth?client_id=${fbClientId}&config_id=${fbConfigId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code`;
+
+    const popup = window.open(
+      authUrl,
+      "facebook_oauth_popup",
+      "width=650,height=700,status=no,resizable=yes,scrollbars=yes"
+    );
+
+    if (!popup) {
+      // Fallback to full-page redirect if popup is blocked
+      toast.warning("弹出窗口已被浏览器拦截，已为您切换为当前页面跳转...");
+      setTimeout(() => {
+        window.location.href = authUrl;
+      }, 1000);
+    }
+  };
+
+  const handleFbDisconnect = async () => {
+    if (!confirm("确认要解除与 Facebook 账户的绑定吗？系统将移除存储在数据库中的长效访问令牌，且无法再自动同步广告账户。")) {
+      return;
+    }
+    setLoadingFbDisconnect(true);
+    try {
+      await axios.post("/api/auth/facebook/disconnect");
+      toast.success("已成功解除 Facebook 账户绑定并清空相关令牌");
+      setFbUserId("");
+      setHasMetaToken(false);
+      setMetaTokenUpdatedAt(null);
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || "解除绑定失败");
+    } finally {
+      setLoadingFbDisconnect(false);
+    }
+  };
+
+  const handleFbDeleteLocal = async () => {
+    if (!confirm("确认要本地解绑并登出 Facebook 账户吗？这将会清空系统内缓存的令牌、广告账户及 BM 同步数据。")) {
+      return;
+    }
+    setLoadingFbDeleteLocal(true);
+    try {
+      await axios.post("/api/auth/facebook/delete-local", { fbUserId });
+      toast.success("本地解绑成功，如需彻底清除 Meta 缓存，请前往 Facebook 个人后台设置");
+      setFbUserId("");
+      setHasMetaToken(false);
+      setMetaTokenUpdatedAt(null);
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || "解绑/登出失败");
+    } finally {
+      setLoadingFbDeleteLocal(false);
     }
   };
 
@@ -2303,6 +2494,183 @@ function SettingsPage() {
                   className="w-[88px] h-9 text-[13px] font-normal bg-[#3B82F6] hover:bg-blue-600 text-white shadow-sm"
                 >
                   {loadingMeta ? <RefreshCcw className="w-4 h-4 animate-spin" /> : "确定"}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+        </div>
+
+        {/* Facebook Login Config Card */}
+        <div className="bg-white rounded-lg shadow-[0_2px_8px_rgba(0,0,0,0.04)] border border-gray-100 p-8 flex flex-col items-center text-center">
+          <div className="w-16 h-16 rounded-full bg-blue-600 flex items-center justify-center mb-4 text-white">
+            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="currentColor"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+          </div>
+          <h3 className="text-[15px] font-medium text-gray-800 mb-2">Facebook 账户绑定 (OAuth 2.0)</h3>
+          <p className="text-[12px] text-gray-500 mb-4 flex-1">
+            集成标准 Facebook OAuth 2.0 授权流程，安全拉取 60 天长效用户访问令牌，并解锁广告账户管理及 BM 健康同步。
+          </p>
+
+          {/* Binding Status Info */}
+          <div className="mb-6 w-full text-left text-[12px] bg-blue-50/50 p-3 rounded-md border border-blue-100">
+            <div className="flex justify-between items-center mb-1.5">
+              <span className="text-gray-500 font-medium">绑定状态</span>
+              <div className="flex items-center gap-1.5">
+                {hasMetaToken && fbUserId ? (
+                  <>
+                    <span className="text-blue-600 font-bold bg-blue-50 px-2 py-0.5 rounded-sm">OAuth 已绑定</span>
+                    <button 
+                      onClick={handleFbDeleteLocal} 
+                      disabled={loadingFbDeleteLocal}
+                      className="text-red-500 hover:text-red-700 text-[10px] font-medium underline ml-1 cursor-pointer disabled:opacity-50"
+                      title="本地解绑并清除缓存"
+                    >
+                      {loadingFbDeleteLocal ? "处理中..." : "解绑/登出"}
+                    </button>
+                  </>
+                ) : hasMetaToken ? (
+                  <span className="text-emerald-600 font-bold bg-emerald-50 px-2 py-0.5 rounded-sm">手动 Token 已配置</span>
+                ) : (
+                  <span className="text-gray-400 font-bold bg-gray-50 px-2 py-0.5 rounded-sm">未绑定</span>
+                )}
+              </div>
+            </div>
+            
+            {fbUserId && (
+              <div className="flex justify-between items-center mb-1.5">
+                <span className="text-gray-500">Facebook 用户 ID</span>
+                <span className="text-gray-700 font-mono">{fbUserId}</span>
+              </div>
+            )}
+
+            <div className="flex justify-between items-center mb-1.5">
+              <span className="text-gray-500">开发者应用 ID</span>
+              <span className="text-gray-700 font-mono">{fbClientId ? `${fbClientId.slice(0, 4)}***${fbClientId.slice(-4)}` : "未配置"}</span>
+            </div>
+
+            <div className="flex justify-between items-center mb-1.5">
+              <span className="text-gray-500">登录配置 ID (config_id)</span>
+              <span className="text-gray-700 font-mono">{fbConfigId ? fbConfigId : "未配置"}</span>
+            </div>
+
+            {metaTokenUpdatedAt && (
+              <div className="flex justify-between items-center">
+                <span className="text-gray-500">最近授权</span>
+                <span className="text-gray-700 font-mono">{format(new Date(metaTokenUpdatedAt), 'yyyy-MM-dd HH:mm')}</span>
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-2 w-full mt-auto">
+            {hasMetaToken && fbUserId ? (
+              <div className="flex flex-col gap-1.5 w-full">
+                <Button 
+                  variant="destructive"
+                  className="w-full font-normal rounded-[4px] h-9 text-[13px]"
+                  disabled={loadingFbDisconnect}
+                  onClick={handleFbDisconnect}
+                >
+                  {loadingFbDisconnect ? <RefreshCcw className="w-4 h-4 animate-spin" /> : "解除 Facebook 绑定"}
+                </Button>
+                <Button 
+                  variant="outline"
+                  className="w-full font-normal rounded-[4px] h-9 text-[13px] border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+                  disabled={loadingFbDeleteLocal}
+                  onClick={handleFbDeleteLocal}
+                >
+                  {loadingFbDeleteLocal ? <RefreshCcw className="w-4 h-4 animate-spin" /> : "解绑并登出 Facebook"}
+                </Button>
+              </div>
+            ) : (
+              <Button 
+                className="w-full bg-[#1877F2] hover:bg-blue-700 text-white font-semibold rounded-[4px] h-9 text-[13px] flex items-center justify-center gap-1.5 shadow-sm"
+                onClick={handleFbConnect}
+              >
+                绑定 Facebook 账户
+              </Button>
+            )}
+            
+            <Button 
+              variant="outline"
+              className="w-full font-normal rounded-[4px] h-9 text-[13px] text-gray-600 border-gray-200 hover:bg-gray-50"
+              onClick={() => setShowFbModal(true)}
+            >
+              配置开发者应用
+            </Button>
+          </div>
+
+          {/* Facebook App Config Modal */}
+          <Dialog open={showFbModal} onOpenChange={setShowFbModal}>
+            <DialogContent className="max-w-[450px] p-0 overflow-hidden bg-white rounded-lg border-0 shadow-2xl">
+              <div className="flex justify-between items-center px-6 py-4 border-b border-gray-100">
+                <h3 className="text-[16px] font-medium text-gray-800">配置 Facebook 开发者应用</h3>
+                <button onClick={() => setShowFbModal(false)} className="text-gray-400 hover:text-gray-600 transition-colors">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="px-8 py-6 space-y-5">
+                <div className="text-[11px] text-gray-400 space-y-2 text-left leading-relaxed">
+                  <p>
+                    在进行 OAuth 绑定前，请在 Facebook 开发者平台创建应用，并配置企业版登录。
+                  </p>
+                  <p className="bg-amber-50 text-amber-800 p-2 rounded border border-amber-100 font-medium">
+                    提示：请确保在应用后台的【用户数据删除类型】中，切换为“数据删除说明网址”，并填入下面的隐私政策链接：<br />
+                    <code className="bg-white px-1 py-0.5 rounded font-mono text-[10px] select-all border border-amber-200 break-all">https://1-eight-azure.vercel.app/privacy</code>
+                  </p>
+                  <p>
+                    回调重定向 URI 固定为：<code className="bg-gray-100 px-1 py-0.5 rounded font-mono text-[10px] break-all">https://1-eight-azure.vercel.app/api/auth/facebook/callback</code>
+                  </p>
+                </div>
+                <div className="space-y-4">
+                  <div className="flex items-center gap-4">
+                    <label className="text-[13px] text-gray-600 w-24 text-right shrink-0">
+                      * App ID:
+                    </label>
+                    <Input
+                      placeholder="输入 Facebook Client ID"
+                      value={fbClientId}
+                      onChange={(e) => setFbClientId(e.target.value)}
+                      className="flex-1 h-9 rounded-[4px] border border-gray-200 text-[13px] focus-visible:ring-0 focus-visible:border-blue-500"
+                    />
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <label className="text-[13px] text-gray-600 w-24 text-right shrink-0">
+                      * Config ID:
+                    </label>
+                    <Input
+                      placeholder="输入 Meta 登录配置 ID (config_id)"
+                      value={fbConfigId}
+                      onChange={(e) => setFbConfigId(e.target.value)}
+                      className="flex-1 h-9 rounded-[4px] border border-gray-200 text-[13px] focus-visible:ring-0 focus-visible:border-blue-500"
+                    />
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <label className="text-[13px] text-gray-600 w-24 text-right shrink-0">
+                      App Secret:
+                    </label>
+                    <Input
+                      type="password"
+                      placeholder={hasFbClientSecret ? "•••••••••••• (已保存)" : "输入 App Client Secret"}
+                      value={fbClientSecret}
+                      onChange={(e) => setFbClientSecret(e.target.value)}
+                      className="flex-1 h-9 rounded-[4px] border border-gray-200 text-[13px] focus-visible:ring-0 focus-visible:border-blue-500"
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="flex justify-center gap-3 px-6 py-5 border-t border-gray-100 bg-gray-50/50">
+                <Button 
+                  variant="outline" 
+                  onClick={() => setShowFbModal(false)}
+                  className="w-[88px] h-9 text-[13px] font-normal border-gray-200 shadow-sm"
+                >
+                  取消
+                </Button>
+                <Button 
+                  onClick={handleSaveFbConfig}
+                  disabled={loadingFbSave}
+                  className="w-[88px] h-9 text-[13px] font-normal bg-[#3B82F6] hover:bg-blue-600 text-white shadow-sm"
+                >
+                  {loadingFbSave ? <RefreshCcw className="w-4 h-4 animate-spin" /> : "确定"}
                 </Button>
               </div>
             </DialogContent>

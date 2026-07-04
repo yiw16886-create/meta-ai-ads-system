@@ -263,3 +263,20 @@ model AdPostComment {
 
   @@index([post_id])
 }
+
+// 4. 企业商务管理平台 (Business Manager) 表
+model FacebookBusinessManager {
+  id              Int      @id @default(autoincrement())
+  bmId            String   @unique // Meta Business Manager ID
+  name            String
+  systemToken     String   // 系统用户 Token (System User Token)
+  status          String   @default("ACTIVE") // ACTIVE / RESTRICTED / DISABLED / UNKNOWN
+  verification    String   @default("UNVERIFIED") // VERIFIED / UNVERIFIED / IN_PROGRESS / UNKNOWN
+  dailySpendLimit String   @default("UNKNOWN") // e.g. "$50", "$250", "UNLIMITED", "UNKNOWN"
+  adAccountLimit  Int      @default(1)
+  role            String   @default("ADMIN") // ADMIN (完全权限) / EMPLOYEE (部分权限) / UNKNOWN
+  healthDetails   String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
