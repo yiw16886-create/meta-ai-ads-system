@@ -115,4 +115,58 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
+// 重新发送邀请邮件
+router.post("/:id/resend", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const origin = req.headers.origin;
+    const host = req.get('host');
+    const protocol = req.protocol;
+    const baseUrl = origin || `${protocol}://${host}`;
+
+    let invId = parseInt(id, 10);
+    if (id && String(id).startsWith("inv_")) {
+      const invIdStr = String(id).replace("inv_", "");
+      invId = parseInt(invIdStr, 10);
+    }
+
+    if (isNaN(invId)) {
+      return res.status(400).json({ success: false, error: "无效的邀请ID格式" });
+    }
+
+    const invitation = await prisma.invitation.findUnique({
+      where: { id: invId }
+    });
+
+    if (!invitation) {
+      return res.status(404).json({ success: false, error: "未找到等候激活的邀请记录" });
+    }
+
+    // 更新 token 和过期时间
+    const token = crypto.randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24h
+
+    const updated = await prisma.invitation.update({
+      where: { id: invId },
+      data: { token, expiresAt }
+    });
+
+    // 发送邮件
+    const emailResult = await sendInvitationEmail(updated.email, updated.token, updated.role, baseUrl);
+
+    if (emailResult.success) {
+      res.json({ success: true, message: `已成功向 ${updated.email} 重新发送邀请邮件！` });
+    } else {
+      res.json({ 
+        success: false, 
+        error: `邮件发送失败: ${emailResult.error || "请检查 SMTP 设置"}`,
+        recommendation: emailResult.recommendation 
+      });
+    }
+  } catch (err: any) {
+    console.error("Resend invite error:", err);
+    res.status(500).json({ success: false, error: "重新发送邀请邮件失败，请稍后重试" });
+  }
+});
+
 export default router;

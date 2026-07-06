@@ -16,7 +16,7 @@ async function getSmtpConfig() {
   return {
     host: configMap.SMTP_HOST,
     port: parseInt(configMap.SMTP_PORT, 10),
-    secure: configMap.SMTP_SECURE === "true",
+    secure: configMap.SMTP_SECURE ? configMap.SMTP_SECURE === "true" : parseInt(configMap.SMTP_PORT, 10) === 465,
     auth: {
       user: configMap.SMTP_USER,
       pass: configMap.SMTP_PASS
@@ -36,7 +36,10 @@ export async function sendInvitationEmail(email: string, token: string, role: st
     host: config.host,
     port: config.port,
     secure: config.secure,
-    auth: config.auth
+    auth: config.auth,
+    tls: {
+      rejectUnauthorized: false
+    }
   });
   
   const baseUrl = baseUrlInput || process.env.APP_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '');

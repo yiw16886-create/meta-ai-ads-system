@@ -17,9 +17,18 @@ export default function App() {
   useEffect(() => {
     console.log("🚀 App component mounted");
     try {
-      const auth = localStorage.getItem("isAuthenticated");
-      if (auth === "true") {
-        setIsAuthenticated(true);
+      const urlParams = new URLSearchParams(window.location.search);
+      const token = urlParams.get("token");
+      if (token) {
+        console.log("Found invitation token, forcing unauthenticated state so user can register.");
+        localStorage.removeItem("isAuthenticated");
+        localStorage.removeItem("user");
+        setIsAuthenticated(false);
+      } else {
+        const auth = localStorage.getItem("isAuthenticated");
+        if (auth === "true") {
+          setIsAuthenticated(true);
+        }
       }
     } catch (e) {
       console.warn("Storage access failed");

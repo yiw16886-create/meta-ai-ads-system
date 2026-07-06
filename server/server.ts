@@ -36,28 +36,118 @@ cron.schedule("0 2 * * *", async () => {
   }
 });
 
-// 定时任务：每 12 小时（如每天凌晨 3 点和下午 15 点）自动更新大盘 BM 的健康状态，杜绝高频并发
-cron.schedule("0 3,15 * * *", async () => {
-  console.log("⏰ [Cron Sync] Starting background BM health status sync...");
+// 定时任务：夜间低峰期轻量、错峰同步大盘 BM 基础数据与风控健康状态，彻底杜绝高频并发与 API 额度浪费
+
+// =================================================================
+// 任务 A：凌晨 02:00 触发 —— 轻量同步所有 BM 基础数据
+// =================================================================
+cron.schedule("0 2 * * *", async () => {
+  console.log("⏱️ [夜间任务 A] 凌晨 02:00，开始轻量同步所有 BM 基础数据...");
+  
   try {
-    const bms = await prisma.facebookBusinessManager.findMany();
-    console.log(`⏰ [Cron Sync] Found ${bms.length} Business Managers to sync. Using queue mechanism with 1.5s delay...`);
+    const allBMs = await prisma.facebookBusinessManager.findMany(); 
+    console.log(`⏱️ [夜间任务 A] 发现 ${allBMs.length} 个 Business Managers. 开始轻量拉取...`);
     
-    for (const bm of bms) {
+    for (const bm of allBMs) {
       try {
-        console.log(`⏰ [Cron Sync] Syncing BM ${bm.name} (${bm.bmId})...`);
-        await syncBmStatusAndHealth(bm);
-        console.log(`⏰ [Cron Sync] BM ${bm.bmId} sync successful.`);
+        console.log(`-> 正在拉取 BM 基础: ${bm.bmId}`);
+        const res = await axios.get(`https://graph.facebook.com/v20.0/${bm.bmId}`, {
+          params: { 
+            fields: 'id,name,verification_status',
+            access_token: bm.systemToken
+          },
+          timeout: 10000
+        });
+        
+        let verification = "UNVERIFIED";
+        const rawVerification = res.data.verification_status;
+        if (rawVerification === "verified" || rawVerification === "VERIFIED") {
+          verification = "VERIFIED";
+        } else if (rawVerification === "not_verified" || rawVerification === "UNVERIFIED") {
+          verification = "UNVERIFIED";
+        } else if (rawVerification) {
+          verification = String(rawVerification).toUpperCase();
+        }
+
+        await prisma.facebookBusinessManager.update({
+          where: { id: bm.id },
+          data: { 
+            name: res.data.name || bm.name, 
+            verification: verification 
+          }
+        });
+        console.log(`✅ BM ${bm.bmId} 基础更新成功: ${res.data.name} | ${verification}`);
       } catch (err: any) {
-        console.error(`⏰ [Cron Sync] Failed to sync BM ${bm.bmId}:`, err.message || err);
+        console.error(`❌ BM ${bm.bmId} 基础拉取失败:`, err.message);
       }
       
-      // 👈 核心：在请求下一个 BM 之间强行暂停 1.5 秒，给 Meta API 喘息时间
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      // 🌟 严格控速：每个 BM 之间雷打不动强制睡眠 3 秒，优雅消耗额度
+      await new Promise(resolve => setTimeout(resolve, 3000));
     }
-    console.log("⏰ [Cron Sync] All Business Managers synced successfully.");
-  } catch (error: any) {
-    console.error("⏰ [Cron Sync] Global background BM sync error:", error);
+    console.log("🏁 [夜间任务 A] 所有 BM 基础数据同步完毕！");
+  } catch (globalErr: any) {
+    console.error("🚨 任务 A 全局崩溃:", globalErr.message);
+  }
+});
+
+// =================================================================
+// 任务 B：凌晨 04:00 触发 —— 专攻风控健康状态排查（Active/Restricted/Disabled）
+// =================================================================
+cron.schedule("0 4 * * *", async () => {
+  console.log("⏱️ [夜间任务 B] 凌晨 04:00，开始进行 BM 风控状态深度排查...");
+  
+  try {
+    const allBMs = await prisma.facebookBusinessManager.findMany();
+    console.log(`⏱️ [夜间任务 B] 发现 ${allBMs.length} 个 Business Managers. 开始健康度深度排查...`);
+    
+    for (const bm of allBMs) {
+      try {
+        console.log(`-> 正在排查 BM 健康度: ${bm.bmId}`);
+        
+        // 尝试拉取一个稍微深入、但极度风控敏感的字段，或者通过错误捕获反推
+        const res = await axios.get(`https://graph.facebook.com/v20.0/${bm.bmId}`, {
+          params: { 
+            fields: 'id,sharing_eligibility_status',
+            access_token: bm.systemToken
+          },
+          timeout: 10000
+        });
+        
+        let healthStatus = 'ACTIVE';
+        const status = res.data.sharing_eligibility_status;
+        
+        if (status === 'INTEGRITY_RESTRICTED') {
+          healthStatus = 'RESTRICTED'; // 资产受限
+        } else if (status === 'DISABLED') {
+          healthStatus = 'DISABLED'; // 已封禁
+        }
+        
+        await prisma.facebookBusinessManager.update({
+          where: { id: bm.id },
+          data: { status: healthStatus }
+        });
+        console.log(`🟢 BM ${bm.bmId} 状态检测完毕: ${healthStatus}`);
+      } catch (err: any) {
+        // 🌟 核心：捕获被彻底封禁时 Meta 弹出的 400 权限或停用报错
+        const errMsg = err.response?.data?.error?.message || err.message;
+        console.log(`⚠️ BM ${bm.bmId} 请求抛错，正在反向判定状态. 错误信息: ${errMsg}`);
+        
+        if (errMsg.includes('disabled') || errMsg.includes('Permissions error') || err.response?.status === 400 || errMsg.includes('permission')) {
+          // 如果被封、或者无权限（通常是因为封号导致解绑），直接标记为封禁/受限
+          await prisma.facebookBusinessManager.update({
+            where: { id: bm.id },
+            data: { status: 'DISABLED' }
+          });
+          console.log(`🔴 已成功反向将 BM ${bm.bmId} 标记为 DISABLED (已封禁)`);
+        }
+      }
+      
+      // 🌟 同样保持 3 秒的安全睡眠间隔
+      await new Promise(resolve => setTimeout(resolve, 3000));
+    }
+    console.log("🏁 [夜间任务 B] 所有 BM 健康风控排查完毕！");
+  } catch (globalErr: any) {
+    console.error("🚨 任务 B 全局崩溃:", globalErr.message);
   }
 });
 

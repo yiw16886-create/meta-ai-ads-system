@@ -1734,6 +1734,22 @@ function UsersManagementPage() {
     }
   };
 
+  const handleResendInvite = async (userId: string | number) => {
+    const toastId = toast.loading("正在重新发送邀请邮件...");
+    try {
+      const res = await axios.post(`/api/users/${userId}/resend`);
+      if (res.data.success) {
+        toast.success(res.data.message || "已成功重新发送邀请邮件", { id: toastId });
+        fetchUsers();
+      } else {
+        const detail = res.data.recommendation || res.data.error || "请检查 SMTP 设置";
+        toast.error(`发送失败: ${detail}`, { id: toastId, duration: 6000 });
+      }
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || "重新发送邀请邮件异常，请稍后重试", { id: toastId });
+    }
+  };
+
   const handleDeleteUser = async (userId: string | number) => {
     // Kept for backward compatibility if needed, but we prefer handleConfirmDelete
     console.warn("handleDeleteUser called directly, expected handleConfirmDelete flow");
@@ -1853,20 +1869,33 @@ function UsersManagementPage() {
                       {new Date(u.createdAt).toLocaleDateString()}
                     </TableCell>
                     <TableCell className="text-right pr-6">
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        className={cn(
-                          "border-none px-4 font-medium",
-                          u.status === 'pending' 
-                            ? "bg-amber-50 text-amber-600 hover:bg-amber-100 hover:text-amber-700"
-                            : "bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700"
+                      <div className="flex items-center justify-end gap-2">
+                        {u.status === 'pending' && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 px-3 border-gray-200 text-gray-700 bg-white hover:bg-gray-50 flex items-center gap-1 font-medium text-xs rounded-md shadow-sm transition-colors cursor-pointer"
+                            onClick={() => handleResendInvite(u.id)}
+                          >
+                            <Mail className="w-3.5 h-3.5 text-gray-500" />
+                            重新发送
+                          </Button>
                         )}
-                        onClick={() => handleDeleteClick(u)}
-                        disabled={u.email === currentUser.email}
-                      >
-                        {u.status === 'pending' ? "撤回邀请" : "移除"}
-                      </Button>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          className={cn(
+                            "border-none px-4 font-medium h-8 text-xs cursor-pointer",
+                            u.status === 'pending' 
+                              ? "bg-amber-50 text-amber-600 hover:bg-amber-100 hover:text-amber-700"
+                              : "bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700"
+                          )}
+                          onClick={() => handleDeleteClick(u)}
+                          disabled={u.email === currentUser.email}
+                        >
+                          {u.status === 'pending' ? "撤回邀请" : "移除"}
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -2327,7 +2356,13 @@ function SettingsPage() {
     }
     // Open OAuth provider directly in popup window
     const redirectUri = "https://1-eight-azure.vercel.app/api/auth/facebook/callback";
-    const authUrl = `https://www.facebook.com/v20.0/dialog/oauth?client_id=${fbClientId}&config_id=${fbConfigId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code`;
+    const scope = "public_profile,email,business_management,ads_management";
+    const extras = JSON.stringify({
+      setup: {
+        asset_types: ["business_account", "ad_account", "page"]
+      }
+    });
+    const authUrl = `https://www.facebook.com/v20.0/dialog/oauth?client_id=${fbClientId}&config_id=${fbConfigId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}&extras=${encodeURIComponent(extras)}`;
 
     const popup = window.open(
       authUrl,
