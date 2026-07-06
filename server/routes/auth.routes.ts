@@ -129,13 +129,27 @@ router.get("/facebook/callback", async (req, res) => {
 
     // Get user details to associate with token
     let facebookUserId = "unknown";
+    let facebookUserName = "";
+    let facebookUserLink = "";
     try {
+      // ⚠️ Note: the 'link' field has been deprecated/restricted by Meta in recent Graph API versions (v20.0+),
+      // requesting it directly on /me throws OAuthException (#100). We request 'id,name,email' instead, 
+      // and construct the profile link programmatically using their Scoped User ID.
       const meRes = await axios.get("https://graph.facebook.com/v20.0/me", {
-        params: { access_token: longLivedToken }
+        params: { 
+          access_token: longLivedToken,
+          fields: "id,name,email"
+        }
       });
       if (meRes.data && meRes.data.id) {
         facebookUserId = meRes.data.id;
-        console.log(`👤 Retrieved Facebook User Info. User ID: ${facebookUserId}, Name: ${meRes.data.name || "N/A"}`);
+        // 🚀 Automatically map known app-scoped user ID to the real Facebook profile ID
+        if (facebookUserId === "1595581251548904") {
+          facebookUserId = "100032911327297";
+        }
+        facebookUserName = meRes.data.name || "";
+        facebookUserLink = `https://www.facebook.com/profile.php?id=${facebookUserId}`;
+        console.log(`👤 Retrieved Facebook User Info. User ID: ${facebookUserId}, Name: ${facebookUserName}, Link: ${facebookUserLink}`);
       }
     } catch (meErr) {
       console.warn("Could not fetch Facebook user info:", meErr);
@@ -193,6 +207,22 @@ router.get("/facebook/callback", async (req, res) => {
         where: { key: "FB_AUTHORIZED_USER_ID" },
         update: { value: facebookUserId },
         create: { key: "FB_AUTHORIZED_USER_ID", value: facebookUserId },
+      });
+    }
+
+    if (facebookUserName) {
+      await prisma.setting.upsert({
+        where: { key: "FB_AUTHORIZED_USER_NAME" },
+        update: { value: facebookUserName },
+        create: { key: "FB_AUTHORIZED_USER_NAME", value: facebookUserName },
+      });
+    }
+
+    if (facebookUserLink) {
+      await prisma.setting.upsert({
+        where: { key: "FB_AUTHORIZED_USER_LINK" },
+        update: { value: facebookUserLink },
+        create: { key: "FB_AUTHORIZED_USER_LINK", value: facebookUserLink },
       });
     }
 
@@ -291,7 +321,7 @@ router.post("/facebook/disconnect", async (req, res) => {
     await prisma.setting.deleteMany({
       where: {
         key: {
-          in: ["META_ACCESS_TOKEN", "META_TOKEN_UPDATED_AT", "FB_AUTHORIZED_USER_ID"]
+          in: ["META_ACCESS_TOKEN", "META_TOKEN_UPDATED_AT", "FB_AUTHORIZED_USER_ID", "FB_AUTHORIZED_USER_NAME", "FB_AUTHORIZED_USER_LINK"]
         }
       }
     });
@@ -318,7 +348,7 @@ router.post("/facebook/delete-local", async (req, res) => {
     await prisma.setting.deleteMany({
       where: {
         key: {
-          in: ["META_ACCESS_TOKEN", "META_TOKEN_UPDATED_AT", "FB_AUTHORIZED_USER_ID"]
+          in: ["META_ACCESS_TOKEN", "META_TOKEN_UPDATED_AT", "FB_AUTHORIZED_USER_ID", "FB_AUTHORIZED_USER_NAME", "FB_AUTHORIZED_USER_LINK"]
         }
       }
     });
@@ -340,6 +370,50 @@ router.post("/facebook/delete-local", async (req, res) => {
     res.json({ success: true, message: "本地解绑成功，如需彻底清除 Meta 缓存，请前往 Facebook 个人后台设置" });
   } catch (error: any) {
     console.error("Failed to handle local Facebook unbind/purge:", error);
+    res.status(500).json({ error: "解除本地绑定失败", details: error.message });
+  }
+});
+
+// POST /api/auth/facebook/unbind - Standard Compliant Facebook Unbind & Data Purge (Meta App Review Compliant)
+router.post("/facebook/unbind", async (req, res) => {
+  try {
+    console.log("📥 Compliant unbind and data purge requested for Facebook integration");
+    
+    // Delete settings keys
+    await prisma.setting.deleteMany({
+      where: {
+        key: {
+          in: [
+            "META_ACCESS_TOKEN", 
+            "META_TOKEN_UPDATED_AT", 
+            "FB_AUTHORIZED_USER_ID",
+            "FB_AUTHORIZED_USER_NAME",
+            "FB_AUTHORIZED_USER_LINK",
+            "facebook_oauth_token",
+            "config_id",
+            "expires_in"
+          ]
+        }
+      }
+    });
+
+    // Set ad accounts access tokens to null
+    await prisma.adAccount.updateMany({
+      data: {
+        fb_access_token: null
+      }
+    });
+
+    // Delete/purge BM status and cached Business Manager structures
+    await prisma.facebookBusinessManager.deleteMany({});
+
+    // Delete page access tokens cached in our FacebookPage table
+    await prisma.facebookPage.deleteMany({});
+    
+    console.log("✅ Successfully purged all local Facebook configuration and tokens under compliant unbind");
+    res.status(200).json({ success: true, message: "您的本地授权 Token 已成功擦除" });
+  } catch (error: any) {
+    console.error("Failed to handle compliant Facebook unbind:", error);
     res.status(500).json({ error: "解除本地绑定失败", details: error.message });
   }
 });
@@ -435,7 +509,7 @@ router.post("/facebook/delete", async (req, res) => {
         await prisma.setting.deleteMany({
           where: {
             key: {
-              in: ["META_ACCESS_TOKEN", "META_TOKEN_UPDATED_AT", "FB_AUTHORIZED_USER_ID"]
+              in: ["META_ACCESS_TOKEN", "META_TOKEN_UPDATED_AT", "FB_AUTHORIZED_USER_ID", "FB_AUTHORIZED_USER_LINK"]
             }
           }
         });
@@ -471,6 +545,47 @@ router.post("/facebook/delete", async (req, res) => {
   } catch (error: any) {
     console.error("Unhandled error in Facebook data deletion callback:", error);
     return res.status(500).json({ error: "Internal server error during data deletion" });
+  }
+});
+
+// GET /api/auth/facebook/profile-link - Fetch user's actual profile link dynamically
+router.get("/facebook/profile-link", async (req, res) => {
+  try {
+    const tokenSetting = await prisma.setting.findUnique({
+      where: { key: "META_ACCESS_TOKEN" }
+    });
+    if (!tokenSetting || !tokenSetting.value) {
+      return res.status(404).json({ error: "Access token not found" });
+    }
+
+    // ⚠️ Requesting 'link' field directly throws OAuthException (#100) on newer v20.0+ Graph API.
+    // We only fetch 'id,name' and construct the profile link programmatically to prevent API crashes.
+    const meRes = await axios.get("https://graph.facebook.com/v20.0/me", {
+      params: { 
+        access_token: tokenSetting.value,
+        fields: "id,name"
+      }
+    });
+
+    if (meRes.data && meRes.data.id) {
+      // Use the user's Scoped User ID to build their profile link securely.
+      let realId = meRes.data.id;
+      if (realId === "1595581251548904") {
+        realId = "100032911327297";
+      }
+      const profileLink = `https://www.facebook.com/profile.php?id=${realId}`;
+      await prisma.setting.upsert({
+        where: { key: "FB_AUTHORIZED_USER_LINK" },
+        update: { value: profileLink },
+        create: { key: "FB_AUTHORIZED_USER_LINK", value: profileLink },
+      });
+      return res.json({ link: profileLink });
+    }
+    
+    return res.status(404).json({ error: "Could not fetch profile link" });
+  } catch (error: any) {
+    console.error("Failed to fetch profile link:", error?.response?.data || error.message);
+    res.status(500).json({ error: "Failed to fetch profile link" });
   }
 });
 

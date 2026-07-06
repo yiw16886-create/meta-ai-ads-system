@@ -17,6 +17,8 @@ router.get("/", async (req, res) => {
     config["FACEBOOK_CONFIG_ID"] = config["FACEBOOK_CONFIG_ID"] || process.env.FACEBOOK_CONFIG_ID || "";
     config["hasFbClientSecret"] = String(!!(config["FACEBOOK_CLIENT_SECRET"] || process.env.FACEBOOK_CLIENT_SECRET));
     config["FB_AUTHORIZED_USER_ID"] = config["FB_AUTHORIZED_USER_ID"] || "";
+    config["FB_AUTHORIZED_USER_NAME"] = config["FB_AUTHORIZED_USER_NAME"] || "";
+    config["FB_AUTHORIZED_USER_LINK"] = config["FB_AUTHORIZED_USER_LINK"] || "";
     
     res.json(config);
   } catch (err) {

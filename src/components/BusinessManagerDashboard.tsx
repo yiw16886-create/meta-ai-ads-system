@@ -71,6 +71,9 @@ export function BusinessManagerDashboard() {
 
   // 个人 Token 批量获取并导入状态
   const [importMode, setImportMode] = useState<"single" | "personal_token">("single");
+  const [tokenSource, setTokenSource] = useState<"enterprise" | "personal">("enterprise");
+  const [hasEnterpriseToken, setHasEnterpriseToken] = useState(false);
+  const [loadingConfig, setLoadingConfig] = useState(false);
   const [personalToken, setPersonalToken] = useState("");
   const [fetchedBms, setFetchedBms] = useState<any[]>([]);
   const [isFetchingFromToken, setIsFetchingFromToken] = useState(false);
@@ -136,8 +139,21 @@ export function BusinessManagerDashboard() {
     }
   };
 
+  const fetchConfig = async () => {
+    setLoadingConfig(true);
+    try {
+      const res = await axios.get("/api/settings");
+      setHasEnterpriseToken(!!res.data.META_ACCESS_TOKEN);
+    } catch (e) {
+      console.error("加载系统配置失败:", e);
+    } finally {
+      setLoadingConfig(false);
+    }
+  };
+
   useEffect(() => {
     fetchBms();
+    fetchConfig();
   }, []);
 
   // 2. 批量刷新/同步所有 BM 状态
@@ -280,18 +296,24 @@ export function BusinessManagerDashboard() {
     }
   };
 
-  // 5.5 个人 Token 批量获取 BM 逻辑
+  // 5.5 批量获取 BM 逻辑 (支持企业 Token 与个人 Token)
   const handleFetchFromPersonalToken = async () => {
-    if (!personalToken.trim()) {
+    if (tokenSource === "personal" && !personalToken.trim()) {
       toast.error("请输入 Meta 个人 Access Token");
       return;
     }
     setIsFetchingFromToken(true);
     setFetchedBms([]);
     setSelectedImportBmIds([]);
-    const fetchToast = toast.loading("正在获取该个人 Token 权限下的所有商务管理平台(BM)...");
+    const fetchToast = toast.loading(
+      tokenSource === "enterprise" 
+        ? "正在使用已绑定的 Facebook 企业版授权 Token 获取所有商务管理平台(BM)..."
+        : "正在获取该个人 Token 权限下的所有商务管理平台(BM)..."
+    );
     try {
-      const res = await axios.post("/api/bms/fetch-by-personal-token", { personalToken: personalToken.trim() });
+      const res = await axios.post("/api/bms/fetch-by-personal-token", { 
+        personalToken: tokenSource === "personal" ? personalToken.trim() : "" 
+      });
       if (res.data.success) {
         setFetchedBms(res.data.bms);
         setSelectedImportBmIds(res.data.bms.map((b: any) => b.bmId)); // 默认全选
@@ -317,7 +339,7 @@ export function BusinessManagerDashboard() {
       .map((b) => ({
         bmId: b.bmId,
         name: b.name,
-        systemToken: customSystemTokenForBatch.trim() || personalToken.trim(), // 默认使用个人 Token 作为同步/操作凭证
+        systemToken: customSystemTokenForBatch.trim() || (tokenSource === "personal" ? personalToken.trim() : ""), 
       }));
 
     setIsBatchImporting(true);
@@ -629,36 +651,102 @@ export function BusinessManagerDashboard() {
               </form>
             ) : (
               <div className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
-                  <div className="md:col-span-9">
-                    <label className="block text-xs font-bold text-gray-500 mb-1.5">
-                      Meta 个人 Access Token (User Access Token)
-                    </label>
-                    <Input
-                      placeholder="输入以 EAA... 开头的 Meta 个人用户/开发者 Token，需具备 business_management 权限"
-                      type="password"
-                      value={personalToken}
-                      onChange={(e) => setPersonalToken(e.target.value)}
-                      className="h-10 border-gray-200 font-mono text-xs"
-                    />
-                  </div>
-                  <div className="md:col-span-3">
-                    <Button
-                      type="button"
-                      onClick={handleFetchFromPersonalToken}
-                      disabled={isFetchingFromToken || !personalToken}
-                      className="w-full h-10 bg-meta-blue hover:bg-blue-600 text-white font-bold gap-2"
-                    >
-                      <RefreshCw className={cn("w-4 h-4", isFetchingFromToken && "animate-spin")} />
-                      获取个人权限下 BM
-                    </Button>
-                  </div>
+                {/* 批量拉取凭证来源选择 */}
+                <div className="flex gap-2 p-1 bg-gray-50 border rounded-lg w-fit">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTokenSource("enterprise");
+                      setFetchedBms([]);
+                    }}
+                    className={cn(
+                      "px-3.5 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-1.5",
+                      tokenSource === "enterprise"
+                        ? "bg-meta-blue text-white shadow-sm"
+                        : "text-gray-500 hover:text-gray-800"
+                    )}
+                  >
+                    <Building2 className="w-3.5 h-3.5" />
+                    企业级 Facebook 授权 Token
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTokenSource("personal");
+                      setFetchedBms([]);
+                    }}
+                    className={cn(
+                      "px-3.5 py-1.5 text-xs font-bold rounded-md transition-all flex items-center gap-1.5",
+                      tokenSource === "personal"
+                        ? "bg-meta-blue text-white shadow-sm"
+                        : "text-gray-500 hover:text-gray-800"
+                    )}
+                  >
+                    <Key className="w-3.5 h-3.5" />
+                    手动输入个人 Token
+                  </button>
                 </div>
+
+                {tokenSource === "enterprise" ? (
+                  <div className="bg-blue-50/50 border border-blue-100 p-4 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <div className="text-xs font-bold text-blue-900 flex items-center gap-1.5">
+                        <CheckCircle2 className="w-4 h-4 text-blue-600" />
+                        {hasEnterpriseToken ? "已检测到您绑定的 Facebook 企业版授权" : "尚未绑定企业版授权 Token"}
+                      </div>
+                      <p className="text-[11px] text-blue-700 max-w-xl">
+                        {hasEnterpriseToken 
+                          ? "系统已安全存储了您的企业长效 Token，可直接一键批量拉取您名下的所有 BM 列表进行批量同步，无需手动复制粘贴。"
+                          : "您可以在“系统设置”页面中使用 Facebook 登录一键绑定企业授权。如果现在不想绑定，可以切换至“手动输入个人 Token”模式临时导入。"}
+                      </p>
+                    </div>
+                    <div>
+                      <Button
+                        type="button"
+                        onClick={handleFetchFromPersonalToken}
+                        disabled={isFetchingFromToken || !hasEnterpriseToken}
+                        className={cn(
+                          "h-10 px-5 font-bold gap-2",
+                          hasEnterpriseToken ? "bg-blue-600 hover:bg-blue-700 text-white" : "bg-gray-200 text-gray-500"
+                        )}
+                      >
+                        <RefreshCw className={cn("w-4 h-4", isFetchingFromToken && "animate-spin")} />
+                        一键拉取企业 BM 列表
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
+                    <div className="md:col-span-9">
+                      <label className="block text-xs font-bold text-gray-500 mb-1.5">
+                        Meta 个人 Access Token (User Access Token)
+                      </label>
+                      <Input
+                        placeholder="输入以 EAA... 开头的 Meta 个人用户/开发者 Token，需具备 business_management 权限"
+                        type="password"
+                        value={personalToken}
+                        onChange={(e) => setPersonalToken(e.target.value)}
+                        className="h-10 border-gray-200 font-mono text-xs"
+                      />
+                    </div>
+                    <div className="md:col-span-3">
+                      <Button
+                        type="button"
+                        onClick={handleFetchFromPersonalToken}
+                        disabled={isFetchingFromToken || !personalToken}
+                        className="w-full h-10 bg-meta-blue hover:bg-blue-600 text-white font-bold gap-2"
+                      >
+                        <RefreshCw className={cn("w-4 h-4", isFetchingFromToken && "animate-spin")} />
+                        获取个人权限下 BM
+                      </Button>
+                    </div>
+                  </div>
+                )}
 
                 <div className="flex items-center gap-2 bg-purple-50 text-purple-900 p-3 rounded-lg text-xs leading-relaxed">
                   <Info className="w-4 h-4 flex-shrink-0 text-purple-600" />
                   <span>
-                    <strong>批量获取原理：</strong>通过请求 Meta 官方 <code>/me/businesses</code> 端点，一键提取该个人 Token 拥有管理/协作者权限的所有商务管理平台(BM)，并可勾选进行一键批量导入，极大提升多账号中控绑定效率。
+                    <strong>批量获取原理：</strong>通过请求 Meta 官方最新 <code>v20.0</code> 版本的 <code>/me/businesses</code> 接口，自动检索当前授权 Token 具备管理权限的所有商务管理平台，支持按需一键勾选，彻底告别单体手动添加。
                   </span>
                 </div>
 

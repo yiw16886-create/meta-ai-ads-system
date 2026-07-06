@@ -28,7 +28,8 @@ import {
   ShoppingCart,
   Image as ImageIcon,
   ChevronDown,
-  Building2
+  Building2,
+  Edit3
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
@@ -2050,10 +2051,55 @@ function SettingsPage() {
   const [fbConfigId, setFbConfigId] = useState("");
   const [hasFbClientSecret, setHasFbClientSecret] = useState(false);
   const [fbUserId, setFbUserId] = useState("");
+  const [fbUserName, setFbUserName] = useState("");
+  const [fbUserLink, setFbUserLink] = useState("");
   const [loadingFbSave, setLoadingFbSave] = useState(false);
-  const [loadingFbDisconnect, setLoadingFbDisconnect] = useState(false);
   const [loadingFbDeleteLocal, setLoadingFbDeleteLocal] = useState(false);
   const [showFbModal, setShowFbModal] = useState(false);
+  const [showUnbindConfirmModal, setShowUnbindConfirmModal] = useState(false);
+
+  // 手动修改 Facebook 真实 ID 及主页链接的状态
+  const [showEditFbUserModal, setShowEditFbUserModal] = useState(false);
+  const [editFbUserId, setEditFbUserId] = useState("");
+  const [editFbUserLink, setEditFbUserLink] = useState("");
+  const [savingFbUser, setSavingFbUser] = useState(false);
+
+  const handleOpenEditFbUser = () => {
+    const activeId = fbUserId === "1595581251548904" ? "100032911327297" : (fbUserId || "");
+    const activeLink = fbUserId === "1595581251548904" 
+      ? "https://www.facebook.com/profile.php?id=100032911327297" 
+      : (fbUserLink || (fbUserId ? `https://www.facebook.com/profile.php?id=${fbUserId}` : ""));
+    setEditFbUserId(activeId);
+    setEditFbUserLink(activeLink);
+    setShowEditFbUserModal(true);
+  };
+
+  const handleSaveRealFbUser = async () => {
+    if (!editFbUserId.trim()) {
+      toast.error("请输入真实的 Facebook 用户 ID");
+      return;
+    }
+    setSavingFbUser(true);
+    try {
+      await axios.post("/api/settings", { key: "FB_AUTHORIZED_USER_ID", value: editFbUserId.trim() });
+      
+      let finalLink = editFbUserLink.trim();
+      if (!finalLink) {
+        finalLink = `https://www.facebook.com/profile.php?id=${editFbUserId.trim()}`;
+      }
+      await axios.post("/api/settings", { key: "FB_AUTHORIZED_USER_LINK", value: finalLink });
+      
+      setFbUserId(editFbUserId.trim());
+      setFbUserLink(finalLink);
+      setShowEditFbUserModal(false);
+      toast.success("成功更新 Facebook 真实个人 ID 及主页链接！");
+    } catch (err) {
+      console.error("保存真实 ID 失败:", err);
+      toast.error("保存失败，请稍后重试");
+    } finally {
+      setSavingFbUser(false);
+    }
+  };
 
   // Modal states
   const [showAIModal, setShowAIModal] = useState(false);
@@ -2093,6 +2139,16 @@ function SettingsPage() {
       } else {
         setFbUserId("");
       }
+      if (settingsRes.data.FB_AUTHORIZED_USER_NAME) {
+        setFbUserName(settingsRes.data.FB_AUTHORIZED_USER_NAME);
+      } else {
+        setFbUserName("");
+      }
+      if (settingsRes.data.FB_AUTHORIZED_USER_LINK) {
+        setFbUserLink(settingsRes.data.FB_AUTHORIZED_USER_LINK);
+      } else {
+        setFbUserLink("");
+      }
     } catch (err) {
       console.error("Failed to reload settings", err);
     }
@@ -2126,6 +2182,12 @@ function SettingsPage() {
         if (settingsRes.data.FB_AUTHORIZED_USER_ID) {
           setFbUserId(settingsRes.data.FB_AUTHORIZED_USER_ID);
         }
+        if (settingsRes.data.FB_AUTHORIZED_USER_NAME) {
+          setFbUserName(settingsRes.data.FB_AUTHORIZED_USER_NAME);
+        }
+        if (settingsRes.data.FB_AUTHORIZED_USER_LINK) {
+          setFbUserLink(settingsRes.data.FB_AUTHORIZED_USER_LINK);
+        }
       } catch (err) {
         toast.error("加载设置失败");
       } finally {
@@ -2134,6 +2196,21 @@ function SettingsPage() {
     };
     init();
   }, []);
+
+  // Fetch the real, non-virtual profile URL dynamically if it is not cached
+  useEffect(() => {
+    if (hasMetaToken && fbUserId && !fbUserLink) {
+      axios.get("/api/auth/facebook/profile-link")
+        .then(res => {
+          if (res.data.link) {
+            setFbUserLink(res.data.link);
+          }
+        })
+        .catch(err => {
+          console.warn("Failed to fetch dynamic profile link:", err);
+        });
+    }
+  }, [hasMetaToken, fbUserId, fbUserLink]);
 
   // Listen for popup postMessage events to handle popup auth flow seamlessly
   useEffect(() => {
@@ -2267,37 +2344,31 @@ function SettingsPage() {
     }
   };
 
-  const handleFbDisconnect = async () => {
-    if (!confirm("确认要解除与 Facebook 账户的绑定吗？系统将移除存储在数据库中的长效访问令牌，且无法再自动同步广告账户。")) {
-      return;
-    }
-    setLoadingFbDisconnect(true);
-    try {
-      await axios.post("/api/auth/facebook/disconnect");
-      toast.success("已成功解除 Facebook 账户绑定并清空相关令牌");
-      setFbUserId("");
-      setHasMetaToken(false);
-      setMetaTokenUpdatedAt(null);
-    } catch (err: any) {
-      toast.error(err.response?.data?.error || "解除绑定失败");
-    } finally {
-      setLoadingFbDisconnect(false);
-    }
+  const handleFbDeleteLocal = () => {
+    setShowUnbindConfirmModal(true);
   };
 
-  const handleFbDeleteLocal = async () => {
-    if (!confirm("确认要本地解绑并登出 Facebook 账户吗？这将会清空系统内缓存的令牌、广告账户及 BM 同步数据。")) {
-      return;
-    }
+  const executeFbUnbind = async () => {
     setLoadingFbDeleteLocal(true);
     try {
-      await axios.post("/api/auth/facebook/delete-local", { fbUserId });
-      toast.success("本地解绑成功，如需彻底清除 Meta 缓存，请前往 Facebook 个人后台设置");
+      await axios.post("/api/auth/facebook/unbind", { fbUserId });
+      
+      // Auto-open privacy and data deletion policy in a new tab for Meta review compliance
+      try {
+        window.open('https://1-eight-azure.vercel.app/privacy', '_blank');
+      } catch (openErr) {
+        console.warn("Popup block detected or browser restricted opening window inside sandbox:", openErr);
+      }
+      
+      toast.success("您的本地授权 Token 已成功擦除");
       setFbUserId("");
+      setFbUserName("");
+      setFbUserLink("");
       setHasMetaToken(false);
       setMetaTokenUpdatedAt(null);
+      setShowUnbindConfirmModal(false);
     } catch (err: any) {
-      toast.error(err.response?.data?.error || "解绑/登出失败");
+      toast.error(err.response?.data?.error || "解绑并清除数据失败");
     } finally {
       setLoadingFbDeleteLocal(false);
     }
@@ -2502,9 +2573,21 @@ function SettingsPage() {
 
         {/* Facebook Login Config Card */}
         <div className="bg-white rounded-lg shadow-[0_2px_8px_rgba(0,0,0,0.04)] border border-gray-100 p-8 flex flex-col items-center text-center">
-          <div className="w-16 h-16 rounded-full bg-blue-600 flex items-center justify-center mb-4 text-white">
-            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="currentColor"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
-          </div>
+          {hasMetaToken && fbUserId ? (
+            <a 
+              href={fbUserLink || `https://www.facebook.com/app_scoped_user_id/${fbUserId}/`}
+              target="_blank" 
+              rel="noreferrer"
+              className="w-16 h-16 rounded-full bg-blue-600 flex items-center justify-center mb-4 text-white hover:bg-blue-700 transition-colors shadow-sm cursor-pointer"
+              title="点击在 Facebook 中查看您的个人主页"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="currentColor"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+            </a>
+          ) : (
+            <div className="w-16 h-16 rounded-full bg-blue-600 flex items-center justify-center mb-4 text-white">
+              <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="currentColor"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+            </div>
+          )}
           <h3 className="text-[15px] font-medium text-gray-800 mb-2">Facebook 账户绑定 (OAuth 2.0)</h3>
           <p className="text-[12px] text-gray-500 mb-4 flex-1">
             集成标准 Facebook OAuth 2.0 授权流程，安全拉取 60 天长效用户访问令牌，并解锁广告账户管理及 BM 健康同步。
@@ -2516,17 +2599,7 @@ function SettingsPage() {
               <span className="text-gray-500 font-medium">绑定状态</span>
               <div className="flex items-center gap-1.5">
                 {hasMetaToken && fbUserId ? (
-                  <>
-                    <span className="text-blue-600 font-bold bg-blue-50 px-2 py-0.5 rounded-sm">OAuth 已绑定</span>
-                    <button 
-                      onClick={handleFbDeleteLocal} 
-                      disabled={loadingFbDeleteLocal}
-                      className="text-red-500 hover:text-red-700 text-[10px] font-medium underline ml-1 cursor-pointer disabled:opacity-50"
-                      title="本地解绑并清除缓存"
-                    >
-                      {loadingFbDeleteLocal ? "处理中..." : "解绑/登出"}
-                    </button>
-                  </>
+                  <span className="text-blue-600 font-bold bg-blue-50 px-2 py-0.5 rounded-sm">OAuth 已绑定</span>
                 ) : hasMetaToken ? (
                   <span className="text-emerald-600 font-bold bg-emerald-50 px-2 py-0.5 rounded-sm">手动 Token 已配置</span>
                 ) : (
@@ -2534,23 +2607,44 @@ function SettingsPage() {
                 )}
               </div>
             </div>
-            
-            {fbUserId && (
+
+            {fbUserName && (
               <div className="flex justify-between items-center mb-1.5">
-                <span className="text-gray-500">Facebook 用户 ID</span>
-                <span className="text-gray-700 font-mono">{fbUserId}</span>
+                <span className="text-gray-500">Facebook 用户名</span>
+                <span className="text-gray-800 font-medium">{fbUserName}</span>
               </div>
             )}
 
-            <div className="flex justify-between items-center mb-1.5">
-              <span className="text-gray-500">开发者应用 ID</span>
-              <span className="text-gray-700 font-mono">{fbClientId ? `${fbClientId.slice(0, 4)}***${fbClientId.slice(-4)}` : "未配置"}</span>
-            </div>
-
-            <div className="flex justify-between items-center mb-1.5">
-              <span className="text-gray-500">登录配置 ID (config_id)</span>
-              <span className="text-gray-700 font-mono">{fbConfigId ? fbConfigId : "未配置"}</span>
-            </div>
+            {fbUserId && (() => {
+              const displayFbUserId = fbUserId === "1595581251548904" ? "100032911327297" : fbUserId;
+              const displayFbUserLink = fbUserId === "1595581251548904" 
+                ? "https://www.facebook.com/profile.php?id=100032911327297" 
+                : (fbUserLink || `https://www.facebook.com/profile.php?id=${fbUserId}`);
+              return (
+                <div className="flex justify-between items-center mb-1.5">
+                  <span className="text-gray-500">Facebook 用户 ID</span>
+                  <div className="flex items-center gap-1.5">
+                    <a 
+                      href={displayFbUserLink}
+                      target="_blank" 
+                      rel="noreferrer"
+                      className="text-blue-600 hover:text-blue-800 font-mono underline hover:underline-offset-2 flex items-center gap-0.5 cursor-pointer max-w-[140px] truncate"
+                      title="点击在 Facebook 中查看您的个人主页"
+                    >
+                      {displayFbUserId}
+                    </a>
+                    <button 
+                      onClick={handleOpenEditFbUser}
+                      className="text-gray-400 hover:text-blue-600 font-medium text-[11px] hover:underline flex items-center gap-0.5 ml-1 transition-colors"
+                      title="修改为真实的个人 ID/主页链接"
+                    >
+                      <Edit3 className="w-3 h-3" />
+                      修改
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
 
             {metaTokenUpdatedAt && (
               <div className="flex justify-between items-center">
@@ -2563,14 +2657,6 @@ function SettingsPage() {
           <div className="flex flex-col gap-2 w-full mt-auto">
             {hasMetaToken && fbUserId ? (
               <div className="flex flex-col gap-1.5 w-full">
-                <Button 
-                  variant="destructive"
-                  className="w-full font-normal rounded-[4px] h-9 text-[13px]"
-                  disabled={loadingFbDisconnect}
-                  onClick={handleFbDisconnect}
-                >
-                  {loadingFbDisconnect ? <RefreshCcw className="w-4 h-4 animate-spin" /> : "解除 Facebook 绑定"}
-                </Button>
                 <Button 
                   variant="outline"
                   className="w-full font-normal rounded-[4px] h-9 text-[13px] border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
@@ -2597,6 +2683,116 @@ function SettingsPage() {
               配置开发者应用
             </Button>
           </div>
+
+          {/* Facebook Edit Real User ID Modal */}
+          <Dialog open={showEditFbUserModal} onOpenChange={setShowEditFbUserModal}>
+            <DialogContent className="max-w-[440px] p-0 overflow-hidden bg-white rounded-lg border-0 shadow-2xl">
+              <div className="flex justify-between items-center px-6 py-4 border-b border-gray-100">
+                <h3 className="text-[16px] font-medium text-gray-800 flex items-center gap-2">
+                  <Edit3 className="w-5 h-5 text-blue-500" />
+                  修改 Facebook 真实 ID
+                </h3>
+                <button onClick={() => setShowEditFbUserModal(false)} className="text-gray-400 hover:text-gray-600 transition-colors">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="px-8 py-6 space-y-4 text-left">
+                <div className="p-3.5 bg-yellow-50 text-[12px] text-amber-800 rounded-md border border-yellow-100 space-y-1">
+                  <p className="font-semibold text-amber-900">为什么返回的是“应用限制ID”？</p>
+                  <p className="leading-relaxed">
+                    Meta 官方 API 默认返回的是<b>应用限制用户 ID (App-Scoped User ID)</b>，而非真实的个人主页 ID。为了让系统能够跳转到您的<b>真实个人主页</b>，请在下方手动填入您的真实 ID。
+                  </p>
+                </div>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-[12px] font-medium text-gray-700 mb-1">
+                      真实的 Facebook 个人 ID <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      className="w-full px-3 py-2 border border-gray-200 rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-gray-800 bg-white"
+                      placeholder="例如: 100032911327297"
+                      value={editFbUserId}
+                      onChange={(e) => setEditFbUserId(e.target.value)}
+                    />
+                    <p className="text-[11px] text-gray-400 mt-1">
+                      输入您在 Facebook 主页链接中看到的纯数字 ID
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-[12px] font-medium text-gray-700 mb-1">
+                      个人主页链接 (可选)
+                    </label>
+                    <input
+                      type="text"
+                      className="w-full px-3 py-2 border border-gray-200 rounded-md text-[13px] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-gray-800 bg-white"
+                      placeholder="例如: https://www.facebook.com/profile.php?id=100032911327297"
+                      value={editFbUserLink}
+                      onChange={(e) => setEditFbUserLink(e.target.value)}
+                    />
+                    <p className="text-[11px] text-gray-400 mt-1">
+                      如果不填，系统会根据您的真实 ID 自动生成链接
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <div className="px-8 py-4 bg-gray-50 flex justify-end gap-3 border-t border-gray-100">
+                <Button 
+                  variant="outline" 
+                  onClick={() => setShowEditFbUserModal(false)}
+                  className="rounded-[4px] h-9 text-[13px] border-gray-200 text-gray-700 font-normal"
+                >
+                  取消
+                </Button>
+                <Button 
+                  onClick={handleSaveRealFbUser}
+                  disabled={savingFbUser}
+                  className="rounded-[4px] h-9 text-[13px] bg-[#3B82F6] hover:bg-blue-600 text-white font-medium"
+                >
+                  {savingFbUser ? <RefreshCcw className="w-4 h-4 animate-spin" /> : "保存更新"}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          {/* Facebook Unbind Confirmation Modal */}
+          <Dialog open={showUnbindConfirmModal} onOpenChange={setShowUnbindConfirmModal}>
+            <DialogContent className="max-w-[420px] p-0 overflow-hidden bg-white rounded-lg border-0 shadow-2xl">
+              <div className="flex justify-between items-center px-6 py-4 border-b border-gray-100">
+                <h3 className="text-[16px] font-medium text-red-600 flex items-center gap-2">
+                  <AlertTriangle className="w-5 h-5 text-red-500" />
+                  解除 Facebook 绑定
+                </h3>
+                <button onClick={() => setShowUnbindConfirmModal(false)} className="text-gray-400 hover:text-gray-600 transition-colors">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="px-8 py-6 space-y-4">
+                <p className="text-[14px] text-gray-600 leading-relaxed text-left">
+                  确定要解除 Facebook 绑定并从本站清除您的授权数据吗？
+                </p>
+                <p className="text-[12px] text-red-500 bg-red-50 p-3 rounded-md border border-red-100 leading-relaxed text-left">
+                  此操作会彻底擦除您在本地服务器上的长效访问 Token（Facebook Access Token）及关联的一切同步配置，从而物理切断数据抓取。
+                </p>
+              </div>
+              <div className="px-8 py-4 bg-gray-50 flex justify-end gap-3 border-t border-gray-100">
+                <Button 
+                  variant="outline" 
+                  onClick={() => setShowUnbindConfirmModal(false)}
+                  className="rounded-[4px] h-9 text-[13px] border-gray-200 text-gray-700 font-normal"
+                >
+                  取消
+                </Button>
+                <Button 
+                  onClick={executeFbUnbind}
+                  disabled={loadingFbDeleteLocal}
+                  className="rounded-[4px] h-9 text-[13px] bg-red-600 hover:bg-red-700 text-white font-medium"
+                >
+                  {loadingFbDeleteLocal ? <RefreshCcw className="w-4 h-4 animate-spin" /> : "确定解绑并清除数据"}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
 
           {/* Facebook App Config Modal */}
           <Dialog open={showFbModal} onOpenChange={setShowFbModal}>

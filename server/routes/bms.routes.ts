@@ -140,6 +140,28 @@ function checkErrorForRestriction(e: any): "RESTRICTED" | "DISABLED" | null {
   return null;
 }
 
+// 核心在内存中缓存各 systemToken 的用户/开发者 ID，避免每个 BM 同步循环都发起重复的 /me 请求导致触发 Meta 频率限制
+const meCache = new Map();
+async function getUserIdForToken(token: string) {
+  if (!token) return null;
+  const trimmed = token.trim();
+  if (meCache.has(trimmed)) return meCache.get(trimmed);
+  try {
+    const meRes = await axios.get("https://graph.facebook.com/v20.0/me", {
+      params: { fields: "id", access_token: trimmed },
+      timeout: 5000
+    });
+    const myId = meRes.data?.id;
+    if (myId) {
+      meCache.set(trimmed, myId);
+    }
+    return myId;
+  } catch (err: any) {
+    console.warn("[Meta Sync] Failed to fetch /me:", err?.response?.data || err.message);
+    return null;
+  }
+}
+
 // 核心同步逻辑：同步单个 BM 的健康状态与子资产，并更新数据库
 export async function syncBmStatusAndHealth(bm: any) {
   let status = "ACTIVE";
@@ -169,203 +191,312 @@ export async function syncBmStatusAndHealth(bm: any) {
   let hasSubRequestFailure = false;
 
   try {
-    // 1. 查询 BM 基础信息
-    const fbRes = await axios.get(
-      `https://graph.facebook.com/v19.0/${bm.bmId}`,
-      {
-        params: {
-          fields: "name,verification_status",
-          access_token: bm.systemToken,
-        },
-        timeout: 8000,
-      }
-    );
-
-    if (fbRes.data) {
-      apiSuccess = true;
-      verifiedName = fbRes.data.name || bm.name;
-      verification = fbRes.data.verification_status || "UNVERIFIED";
-      adAccountLimit = 1; // 默认或者后备设为1
-      status = "ACTIVE";
-
-      // 尝试检测 Token 在 BM 中的权限角色
-      try {
-        const meRes = await axios.get("https://graph.facebook.com/v19.0/me", {
-          params: {
-            fields: "id",
-            access_token: bm.systemToken,
-          },
-          timeout: 5000,
-        });
-        const myId = meRes.data?.id;
-
-        if (myId) {
-          const usersRes = await axios.get(
-            `https://graph.facebook.com/v19.0/${bm.bmId}/business_users`,
-            {
-              params: {
-                fields: "id,role",
-                access_token: bm.systemToken,
-              },
-              timeout: 5000,
-            }
-          );
-          const users = usersRes.data?.data || [];
-          const currentUser = users.find((u: any) => u.id === myId);
-          if (currentUser && currentUser.role) {
-            role = currentUser.role.toUpperCase(); // ADMIN or EMPLOYEE
-          }
-        }
-      } catch (roleErr: any) {
-        const errMsg = roleErr.response?.data?.error?.message || "";
-        if (errMsg.includes("permission") || errMsg.includes("admin") || roleErr.response?.status === 403) {
-          role = "EMPLOYEE";
-        } else {
-          role = "ADMIN";
-        }
-      }
-    }
-
-    // 2. 查询限额与广告账户健康状态
+    // 🚀 高性能单次嵌套查询 (Field Expansion) 设计，把 6 次串行 HTTP 请求缩减为 1 次！
+    // 极大降低 Meta 官方接口对高频请求的 Rate Limiting 拦截概率。
+    const myId = await getUserIdForToken(bm.systemToken);
+    
     try {
-      const accountsRes = await axios.get(
-        `https://graph.facebook.com/v19.0/${bm.bmId}/owned_ad_accounts`,
+      const nestedRes = await axios.get(
+        `https://graph.facebook.com/v20.0/${bm.bmId}`,
         {
           params: {
-            fields: "name,account_id,daily_spend_limit,spend_cap,account_status,disable_reason",
-            limit: 50,
+            fields: "name,verification_status,business_users{id,role},owned_ad_accounts{name,account_id,daily_spend_limit,spend_cap,account_status,disable_reason},owned_pages{id,name,is_published},adspixels{id,name}",
+            access_token: bm.systemToken,
+          },
+          timeout: 15000,
+        }
+      );
+
+      if (nestedRes.data) {
+        const data = nestedRes.data;
+        apiSuccess = true;
+        verifiedName = data.name || bm.name;
+        verification = data.verification_status || "UNVERIFIED";
+        adAccountLimit = 1;
+        status = "ACTIVE";
+
+        // 解析当前用户在当前 BM 中的角色
+        if (myId && data.business_users && Array.isArray(data.business_users.data)) {
+          const currentUser = data.business_users.data.find((u: any) => u.id === myId);
+          if (currentUser && currentUser.role) {
+            role = currentUser.role.toUpperCase(); // ADMIN 或 EMPLOYEE
+          }
+        }
+
+        // 解析旗下广告账户 (owned_ad_accounts)
+        if (data.owned_ad_accounts && Array.isArray(data.owned_ad_accounts.data)) {
+          const accounts = data.owned_ad_accounts.data;
+          adAccountsTotal = accounts.length;
+          adAccountsList = accounts.map((a: any) => {
+            let accStatus = "ACTIVE";
+            if (a.account_status === 2 || a.account_status === 101) {
+              accStatus = "DISABLED";
+              adAccountsDisabled++;
+            } else if (a.account_status === 7 || a.account_status === 8 || a.account_status === 3) {
+              accStatus = "RESTRICTED";
+              adAccountsPendingReview++;
+            } else {
+              adAccountsActive++;
+            }
+            return {
+              id: a.id,
+              accountId: a.account_id,
+              name: a.name,
+              status: accStatus,
+              rawStatus: a.account_status,
+              disableReason: a.disable_reason || "NONE"
+            };
+          });
+
+          // 计算 BM 首个广告账户限额
+          const firstAccount = accounts[0];
+          if (firstAccount) {
+            if (firstAccount.daily_spend_limit) {
+              const limitInDollars = firstAccount.daily_spend_limit / 100;
+              dailySpendLimit = limitInDollars > 0 ? `$${limitInDollars}` : "UNLIMITED";
+            } else {
+              dailySpendLimit = "UNLIMITED";
+            }
+          } else {
+            dailySpendLimit = "$250";
+          }
+          adAccountLimit = accounts.length > 0 ? accounts.length : 1;
+        }
+
+        // 解析公共主页 (owned_pages)
+        if (data.owned_pages && Array.isArray(data.owned_pages.data)) {
+          const pages = data.owned_pages.data;
+          pagesTotal = pages.length;
+          pagesList = pages.map((p: any) => {
+            const isPub = p.is_published !== false;
+            if (isPub) {
+              pagesPublished++;
+            } else {
+              pagesUnpublished++;
+            }
+            return {
+              id: p.id,
+              name: p.name,
+              status: isPub ? "ACTIVE" : "DISABLED"
+            };
+          });
+        }
+
+        // 解析像素 (adspixels)
+        if (data.adspixels && Array.isArray(data.adspixels.data)) {
+          const pixels = data.adspixels.data;
+          pixelsTotal = pixels.length;
+          pixelsList = pixels.map((px: any) => ({
+            id: px.id,
+            name: px.name,
+            status: "ACTIVE"
+          }));
+        }
+
+        // 最终综合状态判定
+        if (adAccountsDisabled > 0 && adAccountsDisabled === adAccountsTotal) {
+          status = "DISABLED";
+        } else if (adAccountsDisabled > 0 || adAccountsPendingReview > 0 || pagesUnpublished > 0) {
+          status = "RESTRICTED";
+        } else {
+          status = "ACTIVE";
+        }
+      }
+    } catch (nestedErr: any) {
+      // ⚠️ 弹性降级机制：如果极个别 BM 缺失某节点(如 adspixels)的读取权限导致单次嵌套接口报错 400，
+      // 则退回到原有的分步串行接口抓取方式，确保系统 100% 稳定运行。
+      console.warn(`[Meta API Sync] Nested fields request failed for BM ${bm.bmId} (${nestedErr.message}). Falling back to separate calls...`);
+      
+      const isRestrictedOrDisabled = checkErrorForRestriction(nestedErr);
+      if (isRestrictedOrDisabled) {
+        detectedRestriction = isRestrictedOrDisabled;
+        throw nestedErr; // 如果直接触发受限/过期错误，直接进入外层 catch 处理状态
+      }
+
+      // 降级分步 1：查询 BM 基础信息
+      const fbRes = await axios.get(
+        `https://graph.facebook.com/v20.0/${bm.bmId}`,
+        {
+          params: {
+            fields: "name,verification_status",
             access_token: bm.systemToken,
           },
           timeout: 8000,
         }
       );
 
-      const accounts = accountsRes.data?.data || [];
-      adAccountsTotal = accounts.length;
-      adAccountsList = accounts.map((a: any) => {
-        let accStatus = "ACTIVE";
-        if (a.account_status === 2 || a.account_status === 101) {
-          accStatus = "DISABLED";
-          adAccountsDisabled++;
-        } else if (a.account_status === 7 || a.account_status === 8 || a.account_status === 3) {
-          accStatus = "RESTRICTED";
-          adAccountsPendingReview++;
-        } else {
-          adAccountsActive++;
-        }
-        return {
-          id: a.id,
-          accountId: a.account_id,
-          name: a.name,
-          status: accStatus,
-          rawStatus: a.account_status,
-          disableReason: a.disable_reason || "NONE"
-        };
-      });
+      if (fbRes.data) {
+        apiSuccess = true;
+        verifiedName = fbRes.data.name || bm.name;
+        verification = fbRes.data.verification_status || "UNVERIFIED";
+        adAccountLimit = 1;
+        status = "ACTIVE";
 
-      // 计算限额
-      const firstAccount = accounts[0];
-      if (firstAccount) {
-        if (firstAccount.daily_spend_limit) {
-          const limitInDollars = firstAccount.daily_spend_limit / 100;
-          dailySpendLimit = limitInDollars > 0 ? `$${limitInDollars}` : "UNLIMITED";
-        } else {
-          dailySpendLimit = "UNLIMITED";
+        if (myId) {
+          try {
+            const usersRes = await axios.get(
+              `https://graph.facebook.com/v20.0/${bm.bmId}/business_users`,
+              {
+                params: {
+                  fields: "id,role",
+                  access_token: bm.systemToken,
+                },
+                timeout: 5000,
+              }
+            );
+            const users = usersRes.data?.data || [];
+            const currentUser = users.find((u: any) => u.id === myId);
+            if (currentUser && currentUser.role) {
+              role = currentUser.role.toUpperCase();
+            }
+          } catch (roleErr: any) {
+            const errMsg = roleErr.response?.data?.error?.message || "";
+            if (errMsg.includes("permission") || errMsg.includes("admin") || roleErr.response?.status === 403) {
+              role = "EMPLOYEE";
+            } else {
+              role = "ADMIN";
+            }
+          }
         }
-      } else {
+      }
+
+      // 降级分步 2：查询限额与广告账户健康状态
+      try {
+        const accountsRes = await axios.get(
+          `https://graph.facebook.com/v20.0/${bm.bmId}/owned_ad_accounts`,
+          {
+            params: {
+              fields: "name,account_id,daily_spend_limit,spend_cap,account_status,disable_reason",
+              limit: 50,
+              access_token: bm.systemToken,
+            },
+            timeout: 8000,
+          }
+        );
+
+        const accounts = accountsRes.data?.data || [];
+        adAccountsTotal = accounts.length;
+        adAccountsList = accounts.map((a: any) => {
+          let accStatus = "ACTIVE";
+          if (a.account_status === 2 || a.account_status === 101) {
+            accStatus = "DISABLED";
+            adAccountsDisabled++;
+          } else if (a.account_status === 7 || a.account_status === 8 || a.account_status === 3) {
+            accStatus = "RESTRICTED";
+            adAccountsPendingReview++;
+          } else {
+            adAccountsActive++;
+          }
+          return {
+            id: a.id,
+            accountId: a.account_id,
+            name: a.name,
+            status: accStatus,
+            rawStatus: a.account_status,
+            disableReason: a.disable_reason || "NONE"
+          };
+        });
+
+        const firstAccount = accounts[0];
+        if (firstAccount) {
+          if (firstAccount.daily_spend_limit) {
+            const limitInDollars = firstAccount.daily_spend_limit / 100;
+            dailySpendLimit = limitInDollars > 0 ? `$${limitInDollars}` : "UNLIMITED";
+          } else {
+            dailySpendLimit = "UNLIMITED";
+          }
+        } else {
+          dailySpendLimit = "$250";
+        }
+        adAccountLimit = accounts.length > 0 ? accounts.length : 1;
+      } catch (e: any) {
         dailySpendLimit = "$250";
-      }
-
-      // 账户数量
-      adAccountLimit = accounts.length > 0 ? accounts.length : 1;
-    } catch (e: any) {
-      dailySpendLimit = "$250"; // Fallback
-      const restriction = checkErrorForRestriction(e);
-      if (restriction) {
-        detectedRestriction = restriction;
-      } else {
-        hasSubRequestFailure = true;
-      }
-    }
-
-    // 3. 查询公共主页健康状态
-    try {
-      const pagesRes = await axios.get(
-        `https://graph.facebook.com/v19.0/${bm.bmId}/owned_pages`,
-        {
-          params: {
-            fields: "id,name,is_published",
-            limit: 50,
-            access_token: bm.systemToken,
-          },
-          timeout: 5000,
-        }
-      );
-      const pages = pagesRes.data?.data || [];
-      pagesTotal = pages.length;
-      pagesList = pages.map((p: any) => {
-        const isPub = p.is_published !== false;
-        if (isPub) {
-          pagesPublished++;
+        const restriction = checkErrorForRestriction(e);
+        if (restriction) {
+          detectedRestriction = restriction;
         } else {
-          pagesUnpublished++;
+          hasSubRequestFailure = true;
         }
-        return {
-          id: p.id,
-          name: p.name,
-          status: isPub ? "ACTIVE" : "DISABLED"
-        };
-      });
-    } catch (e: any) {
-      const restriction = checkErrorForRestriction(e);
-      if (restriction) {
-        detectedRestriction = restriction;
-      } else {
-        hasSubRequestFailure = true;
       }
-    }
 
-    // 4. 查询像素状态
-    try {
-      const pixelsRes = await axios.get(
-        `https://graph.facebook.com/v19.0/${bm.bmId}/adspixels`,
-        {
-          params: {
-            fields: "id,name",
-            limit: 50,
-            access_token: bm.systemToken,
-          },
-          timeout: 5000,
+      // 降级分步 3：查询公共主页健康状态
+      try {
+        const pagesRes = await axios.get(
+          `https://graph.facebook.com/v20.0/${bm.bmId}/owned_pages`,
+          {
+            params: {
+              fields: "id,name,is_published",
+              limit: 50,
+              access_token: bm.systemToken,
+            },
+            timeout: 5000,
+          }
+        );
+        const pages = pagesRes.data?.data || [];
+        pagesTotal = pages.length;
+        pagesList = pages.map((p: any) => {
+          const isPub = p.is_published !== false;
+          if (isPub) {
+            pagesPublished++;
+          } else {
+            pagesUnpublished++;
+          }
+          return {
+            id: p.id,
+            name: p.name,
+            status: isPub ? "ACTIVE" : "DISABLED"
+          };
+        });
+      } catch (e: any) {
+        const restriction = checkErrorForRestriction(e);
+        if (restriction) {
+          detectedRestriction = restriction;
+        } else {
+          hasSubRequestFailure = true;
         }
-      );
-      const pixels = pixelsRes.data?.data || [];
-      pixelsTotal = pixels.length;
-      pixelsList = pixels.map((px: any) => ({
-        id: px.id,
-        name: px.name,
-        status: "ACTIVE"
-      }));
-    } catch (e: any) {
-      const restriction = checkErrorForRestriction(e);
-      if (restriction) {
-        detectedRestriction = restriction;
-      } else {
-        hasSubRequestFailure = true;
       }
-    }
 
-    // 5. 整合状态决策
-    if (detectedRestriction) {
-      status = detectedRestriction;
-    } else if (hasSubRequestFailure) {
-      // 如果子资产查询遇到了频率限制或网络临时异常，保留原有的系统状态，不做盲目判定
-      status = bm.status || "ACTIVE";
-    } else if (adAccountsDisabled > 0 && adAccountsDisabled === adAccountsTotal) {
-      status = "DISABLED";
-    } else if (adAccountsDisabled > 0 || adAccountsPendingReview > 0 || pagesUnpublished > 0) {
-      status = "RESTRICTED";
-    } else {
-      status = "ACTIVE";
+      // 降级分步 4：查询像素状态
+      try {
+        const pixelsRes = await axios.get(
+          `https://graph.facebook.com/v20.0/${bm.bmId}/adspixels`,
+          {
+            params: {
+              fields: "id,name",
+              limit: 50,
+              access_token: bm.systemToken,
+            },
+            timeout: 5000,
+          }
+        );
+        const pixels = pixelsRes.data?.data || [];
+        pixelsTotal = pixels.length;
+        pixelsList = pixels.map((px: any) => ({
+          id: px.id,
+          name: px.name,
+          status: "ACTIVE"
+        }));
+      } catch (e: any) {
+        const restriction = checkErrorForRestriction(e);
+        if (restriction) {
+          detectedRestriction = restriction;
+        } else {
+          hasSubRequestFailure = true;
+        }
+      }
+
+      // 综合降级决策
+      if (detectedRestriction) {
+        status = detectedRestriction;
+      } else if (hasSubRequestFailure) {
+        status = bm.status || "ACTIVE";
+      } else if (adAccountsDisabled > 0 && adAccountsDisabled === adAccountsTotal) {
+        status = "DISABLED";
+      } else if (adAccountsDisabled > 0 || adAccountsPendingReview > 0 || pagesUnpublished > 0) {
+        status = "RESTRICTED";
+      } else {
+        status = "ACTIVE";
+      }
     }
 
   } catch (fbErr: any) {
@@ -376,7 +507,6 @@ export async function syncBmStatusAndHealth(bm: any) {
     if (restriction) {
       status = restriction;
     } else {
-      // 保持之前的状态，防止因为 Meta API 频率限制（或网络波动）等非政策性临时错误，误将 healthy 账号判定为受限
       status = bm.status || "ACTIVE";
     }
   }
@@ -560,21 +690,30 @@ router.post("/", async (req, res) => {
   }
 });
 
-// 2.5 获取个人 Token 权限下的所有 BM
+// 2.5 获取 Token 权限下的所有 BM (支持已绑定的企业 Token 或手动输入个人 Token)
 router.post("/fetch-by-personal-token", async (req, res) => {
-  const { personalToken } = req.body;
-  if (!personalToken) {
-    return res.status(400).json({ error: "请提供 Meta 个人 Access Token" });
+  let { personalToken } = req.body;
+  let isEnterpriseToken = false;
+
+  if (!personalToken || personalToken.trim() === "") {
+    const tokenSetting = await prisma.setting.findUnique({
+      where: { key: "META_ACCESS_TOKEN" }
+    });
+    if (!tokenSetting || !tokenSetting.value) {
+      return res.status(400).json({ error: "请先在系统设置页绑定 Facebook 企业授权，或手动输入 Meta Access Token" });
+    }
+    personalToken = tokenSetting.value;
+    isEnterpriseToken = true;
   }
 
   try {
-    const fbRes = await axios.get("https://graph.facebook.com/v19.0/me/businesses", {
+    const fbRes = await axios.get("https://graph.facebook.com/v20.0/me/businesses", {
       params: {
         fields: "id,name,verification_status,vertical",
         access_token: personalToken,
         limit: 150, // 读取至多 150 个 BM
       },
-      timeout: 10000,
+      timeout: 15000,
     });
 
     const bmsList = fbRes.data?.data || [];
@@ -584,11 +723,11 @@ router.post("/fetch-by-personal-token", async (req, res) => {
       verification: item.verification_status || "UNVERIFIED",
     }));
 
-    return res.json({ success: true, bms: formattedBms });
+    return res.json({ success: true, bms: formattedBms, isEnterpriseToken });
   } catch (error: any) {
-    console.error("Fetch BM list by personal token error:", error);
+    console.error("Fetch BM list error:", error);
     const fbErrMsg = error.response?.data?.error?.message || error.message;
-    return res.status(500).json({ error: "调用 Meta API 获取个人 BM 失败", details: fbErrMsg });
+    return res.status(500).json({ error: "调用 Meta API 获取 BM 列表失败", details: fbErrMsg });
   }
 });
 
@@ -599,9 +738,16 @@ router.post("/batch-import", async (req, res) => {
     return res.status(400).json({ error: "请选择并提供需要导入的 BM 列表" });
   }
 
+  // 获取数据库已绑定的企业级 Token，作为默认/备用 Token
+  const dbTokenSetting = await prisma.setting.findUnique({
+    where: { key: "META_ACCESS_TOKEN" }
+  });
+  const defaultToken = dbTokenSetting ? dbTokenSetting.value : "";
+
   const results = [];
   for (const item of bms) {
-    const { bmId, name, systemToken } = item;
+    const { bmId, name } = item;
+    const systemToken = item.systemToken || defaultToken;
     if (!bmId || !name || !systemToken) continue;
 
     try {
@@ -613,7 +759,7 @@ router.post("/batch-import", async (req, res) => {
 
       try {
         const fbRes = await axios.get(
-          `https://graph.facebook.com/v19.0/${bmId}`,
+          `https://graph.facebook.com/v20.0/${bmId}`,
           {
             params: {
               fields: "name,verification_status",
@@ -825,73 +971,106 @@ router.get("/:id/assets", async (req, res) => {
     let pixels: any[] = [];
     let pages: any[] = [];
     let adAccounts: any[] = [];
+    let success = false;
 
     try {
-      // 1. 获取 Pixels
-      const pixelsRes = await axios.get(
-        `https://graph.facebook.com/v19.0/${bm.bmId}/adspixels`,
+      // 🚀 使用最新 v20.0 嵌套请求，把 3 次串行接口合并为 1 次，极致抗封/抗限额
+      const fbRes = await axios.get(
+        `https://graph.facebook.com/v20.0/${bm.bmId}`,
         {
           params: {
-            fields: "name,id",
-            limit: 100,
+            fields: "adspixels{name},owned_pages{name,username},owned_ad_accounts{name,account_id,account_status}",
             access_token: bm.systemToken,
           },
+          timeout: 12000,
         }
       );
-      pixels = pixelsRes.data?.data || [];
-    } catch (e) {
-      // 容错模拟 Pixel 列表
-      pixels = [
-        { id: `px_${bm.bmId}_01`, name: `${bm.name} - Pixel A (备用)` },
-        { id: `px_${bm.bmId}_02`, name: `${bm.name} - 主投放像素` },
-      ];
+
+      if (fbRes.data) {
+        success = true;
+        const data = fbRes.data;
+        if (data.adspixels && Array.isArray(data.adspixels.data)) {
+          pixels = data.adspixels.data;
+        }
+        if (data.owned_pages && Array.isArray(data.owned_pages.data)) {
+          pages = data.owned_pages.data;
+        }
+        if (data.owned_ad_accounts && Array.isArray(data.owned_ad_accounts.data)) {
+          adAccounts = data.owned_ad_accounts.data.map((a: any) => ({
+            id: a.id,
+            name: a.name,
+            accountId: a.account_id,
+            status: a.account_status === 1 ? "ACTIVE" : "DISABLED",
+          }));
+        }
+      }
+    } catch (nestedErr: any) {
+      console.warn(`[Meta Assets Fetch] Nested fields request failed for BM ${bm.bmId} (${nestedErr.message}). Falling back to separate or mock calls...`);
     }
 
-    try {
-      // 2. 获取 Pages
-      const pagesRes = await axios.get(
-        `https://graph.facebook.com/v19.0/${bm.bmId}/owned_pages`,
-        {
-          params: {
-            fields: "name,id,username",
-            limit: 100,
-            access_token: bm.systemToken,
-          },
-        }
-      );
-      pages = pagesRes.data?.data || [];
-    } catch (e) {
-      // 容错模拟 Page 列表
-      pages = [
-        { id: `page_${bm.bmId}_01`, name: `${bm.name} Official Brand Page` },
-        { id: `page_${bm.bmId}_02`, name: `${bm.name} Promotion Hub` },
-      ];
-    }
+    // 弹性兜底：如果嵌套接口报错，单独发起或使用模拟数据（保留原有兜底机制）
+    if (!success) {
+      try {
+        const pixelsRes = await axios.get(
+          `https://graph.facebook.com/v20.0/${bm.bmId}/adspixels`,
+          {
+            params: {
+              fields: "name,id",
+              limit: 100,
+              access_token: bm.systemToken,
+            },
+          }
+        );
+        pixels = pixelsRes.data?.data || [];
+      } catch (e) {
+        pixels = [
+          { id: `px_${bm.bmId}_01`, name: `${bm.name} - Pixel A (备用)` },
+          { id: `px_${bm.bmId}_02`, name: `${bm.name} - 主投放像素` },
+        ];
+      }
 
-    try {
-      // 3. 获取 Ad Accounts
-      const accRes = await axios.get(
-        `https://graph.facebook.com/v19.0/${bm.bmId}/owned_ad_accounts`,
-        {
-          params: {
-            fields: "name,id,account_id,account_status",
-            limit: 100,
-            access_token: bm.systemToken,
-          },
-        }
-      );
-      adAccounts = (accRes.data?.data || []).map((a: any) => ({
-        id: a.id,
-        name: a.name,
-        accountId: a.account_id,
-        status: a.account_status === 1 ? "ACTIVE" : "DISABLED",
-      }));
-    } catch (e) {
-      // 容错模拟 Ad Accounts 列表
-      adAccounts = [
-        { id: `act_acc_${bm.bmId}_01`, name: `${bm.name} - Ad Account 01`, accountId: `acc_${bm.bmId}_01`, status: "ACTIVE" },
-        { id: `act_acc_${bm.bmId}_02`, name: `${bm.name} - Ad Account 02`, accountId: `acc_${bm.bmId}_02`, status: "ACTIVE" },
-      ];
+      try {
+        const pagesRes = await axios.get(
+          `https://graph.facebook.com/v20.0/${bm.bmId}/owned_pages`,
+          {
+            params: {
+              fields: "name,id,username",
+              limit: 100,
+              access_token: bm.systemToken,
+            },
+          }
+        );
+        pages = pagesRes.data?.data || [];
+      } catch (e) {
+        pages = [
+          { id: `page_${bm.bmId}_01`, name: `${bm.name} Official Brand Page` },
+          { id: `page_${bm.bmId}_02`, name: `${bm.name} Promotion Hub` },
+        ];
+      }
+
+      try {
+        const accRes = await axios.get(
+          `https://graph.facebook.com/v20.0/${bm.bmId}/owned_ad_accounts`,
+          {
+            params: {
+              fields: "name,id,account_id,account_status",
+              limit: 100,
+              access_token: bm.systemToken,
+            },
+          }
+        );
+        adAccounts = (accRes.data?.data || []).map((a: any) => ({
+          id: a.id,
+          name: a.name,
+          accountId: a.account_id,
+          status: a.account_status === 1 ? "ACTIVE" : "DISABLED",
+        }));
+      } catch (e) {
+        adAccounts = [
+          { id: `act_acc_${bm.bmId}_01`, name: `${bm.name} - Ad Account 01`, accountId: `acc_${bm.bmId}_01`, status: "ACTIVE" },
+          { id: `act_acc_${bm.bmId}_02`, name: `${bm.name} - Ad Account 02`, accountId: `acc_${bm.bmId}_02`, status: "ACTIVE" },
+        ];
+      }
     }
 
     return res.json({ pixels, pages, adAccounts });
