@@ -5,7 +5,13 @@ import { format, subDays } from "date-fns";
 // CACHE map for utils
 const queryCache = new Map();
 
-export async function getMetaToken(): Promise<string | null> {
+export async function getMetaToken(userId?: number): Promise<string | null> {
+  if (userId) {
+    const acc = await prisma.facebookAccount.findUnique({
+      where: { userId }
+    });
+    if (acc) return acc.accessToken;
+  }
   const setting = await prisma.setting.findUnique({
     where: { key: "META_ACCESS_TOKEN" }
   });

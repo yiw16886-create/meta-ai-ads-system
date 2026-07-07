@@ -12,6 +12,8 @@ import monitoringRoutes from "./monitoring.routes.js";
 import materialRoutes from "./material.routes.js";
 import pageManageRoutes from "./pageManage.routes.js";
 import bmsRoutes from "./bms.routes.js";
+import facebookRoutes from "./facebook.routes.js";
+import adminSettingsRoutes from "./adminSettings.routes.js";
 
 const routes = Router();
 
@@ -28,5 +30,7 @@ routes.use("/settings", settingsRoutes);
 routes.use("/mappings", mappingsRoutes);
 routes.use("/monitoring", monitoringRoutes);
 routes.use("/pages", pageManageRoutes);
+routes.use("/facebook", facebookRoutes);
+routes.use("/admin/settings", adminSettingsRoutes);
 
 export default routes;

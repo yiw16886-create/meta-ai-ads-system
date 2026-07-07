@@ -250,9 +250,14 @@ export async function syncBmStatusAndHealth(bm: any) {
 }
 
 // 1. 获取所有 BM 列表（直接从数据库读取，极速响应）
-router.get("/", async (req, res) => {
+router.get("/", async (req: any, res) => {
   try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.json([]);
+    }
     const bms = await prisma.facebookBusinessManager.findMany({
+      where: { userId },
       orderBy: { createdAt: "desc" },
     });
     return res.json(bms);
@@ -263,8 +268,13 @@ router.get("/", async (req, res) => {
 });
 
 // 2. 添加/导入一个 BM (同样优化为轻量表面抓取)
-router.post("/", async (req, res) => {
+router.post("/", async (req: any, res) => {
   const { bmId, name, systemToken } = req.body;
+  const userId = req.user?.id;
+
+  if (!userId) {
+    return res.status(401).json({ error: "用户未登录或会话已过期" });
+  }
 
   if (!bmId || !name || !systemToken) {
     return res.status(400).json({ error: "请填写完整的 BM ID、名称和系统用户 Token" });
@@ -312,7 +322,12 @@ router.post("/", async (req, res) => {
 
     // 写入数据库
     let newBm = await prisma.facebookBusinessManager.upsert({
-      where: { bmId },
+      where: {
+        userId_bmId: {
+          userId,
+          bmId
+        }
+      },
       update: {
         name: verifiedName,
         systemToken,
@@ -324,6 +339,7 @@ router.post("/", async (req, res) => {
         healthDetails,
       },
       create: {
+        userId,
         bmId,
         name: verifiedName,
         systemToken,
@@ -392,8 +408,14 @@ router.post("/fetch-by-personal-token", async (req, res) => {
 });
 
 // 2.6 批量导入 BM
-router.post("/batch-import", async (req, res) => {
+router.post("/batch-import", async (req: any, res) => {
   const { bms } = req.body; // { bmId, name, systemToken }[]
+  const userId = req.user?.id;
+
+  if (!userId) {
+    return res.status(401).json({ error: "用户未登录或会话已过期" });
+  }
+
   if (!bms || !Array.isArray(bms) || bms.length === 0) {
     return res.status(400).json({ error: "请选择并提供需要导入的 BM 列表" });
   }
@@ -439,7 +461,12 @@ router.post("/batch-import", async (req, res) => {
       const healthDetails = generateMockHealthDetails(status, name, bmId);
 
       let imported = await prisma.facebookBusinessManager.upsert({
-        where: { bmId },
+        where: {
+          userId_bmId: {
+            userId,
+            bmId
+          }
+        },
         update: {
           name,
           systemToken,
@@ -451,6 +478,7 @@ router.post("/batch-import", async (req, res) => {
           healthDetails,
         },
         create: {
+          userId,
           bmId,
           name,
           systemToken,
@@ -483,11 +511,21 @@ router.post("/batch-import", async (req, res) => {
 });
 
 // 3. 删除一个 BM
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", async (req: any, res) => {
   const { id } = req.params;
+  const userId = req.user?.id;
+  if (!userId) {
+    return res.status(401).json({ error: "用户未登录或会话已过期" });
+  }
   try {
+    const bm = await prisma.facebookBusinessManager.findFirst({
+      where: { id: parseInt(id), userId }
+    });
+    if (!bm) {
+      return res.status(404).json({ error: "未找到指定的 BM 或无权操作" });
+    }
     await prisma.facebookBusinessManager.delete({
-      where: { id: parseInt(id) },
+      where: { id: bm.id },
     });
     return res.json({ success: true, message: "BM 已删除" });
   } catch (error: any) {
@@ -497,12 +535,16 @@ router.delete("/:id", async (req, res) => {
 });
 
 // 4. 单个 BM 实时同步/刷新状态
-router.post("/:id/sync", async (req, res) => {
+router.post("/:id/sync", async (req: any, res) => {
   const { id } = req.params;
+  const userId = req.user?.id;
+  if (!userId) {
+    return res.status(401).json({ error: "用户未登录或会话已过期" });
+  }
 
   try {
-    const bm = await prisma.facebookBusinessManager.findUnique({
-      where: { id: parseInt(id) },
+    const bm = await prisma.facebookBusinessManager.findFirst({
+      where: { id: parseInt(id), userId },
     });
 
     if (!bm) {
@@ -518,11 +560,15 @@ router.post("/:id/sync", async (req, res) => {
 });
 
 // 4.5. 单个 BM 诊断测试
-router.get("/:id/diagnose", async (req, res) => {
+router.get("/:id/diagnose", async (req: any, res) => {
   const { id } = req.params;
+  const userId = req.user?.id;
+  if (!userId) {
+    return res.status(401).json({ error: "用户未登录或会话已过期" });
+  }
   try {
-    const bm = await prisma.facebookBusinessManager.findUnique({
-      where: { id: parseInt(id) },
+    const bm = await prisma.facebookBusinessManager.findFirst({
+      where: { id: parseInt(id), userId },
     });
 
     if (!bm) {
@@ -587,15 +633,28 @@ router.get("/:id/diagnose", async (req, res) => {
 });
 
 // 4.6. 手动强制更新/修改 BM 状态（为防 Meta 临时异常、网络受限提供合规数据纠正）
-router.post("/:id/manual-update", async (req, res) => {
+router.post("/:id/manual-update", async (req: any, res) => {
   const { id } = req.params;
   const { name, status, verification, dailySpendLimit, adAccountLimit, systemToken, role } = req.body;
+  const userId = req.user?.id;
+
+  if (!userId) {
+    return res.status(401).json({ error: "用户未登录或会话已过期" });
+  }
 
   try {
+    const existingBm = await prisma.facebookBusinessManager.findFirst({
+      where: { id: parseInt(id), userId }
+    });
+
+    if (!existingBm) {
+      return res.status(404).json({ error: "找不到指定的 BM 或无权操作" });
+    }
+
     const healthDetails = generateMockHealthDetails(status, name, `manual_${id}`);
 
     const updatedBm = await prisma.facebookBusinessManager.update({
-      where: { id: parseInt(id) },
+      where: { id: existingBm.id },
       data: {
         name,
         status,
@@ -616,12 +675,17 @@ router.post("/:id/manual-update", async (req, res) => {
 });
 
 // 5. 获取 BM 下辖拥有的资产列表 (Pixels, Pages, Ad Accounts) (已废除嵌套 fields 批量拉取，采用更安全的两步走分步、try-catch 隔离抓取方式)
-router.get("/:id/assets", async (req, res) => {
+router.get("/:id/assets", async (req: any, res) => {
   const { id } = req.params;
+  const userId = req.user?.id;
+
+  if (!userId) {
+    return res.status(401).json({ error: "用户未登录或会话已过期" });
+  }
 
   try {
-    const bm = await prisma.facebookBusinessManager.findUnique({
-      where: { id: parseInt(id) },
+    const bm = await prisma.facebookBusinessManager.findFirst({
+      where: { id: parseInt(id), userId },
     });
 
     if (!bm) {
@@ -714,16 +778,21 @@ router.get("/:id/assets", async (req, res) => {
 });
 
 // 6. 一键共享资产 API (像素 / 主页 / 广告账户)
-router.post("/share-asset", async (req, res) => {
+router.post("/share-asset", async (req: any, res) => {
   const { bmId, assetType, assetId, targetBmId, permitRole } = req.body;
+  const userId = req.user?.id;
+
+  if (!userId) {
+    return res.status(401).json({ error: "用户未登录或会话已过期" });
+  }
 
   if (!bmId || !assetType || !assetId || !targetBmId) {
     return res.status(400).json({ error: "缺少共享资产必要参数" });
   }
 
   try {
-    const bm = await prisma.facebookBusinessManager.findUnique({
-      where: { bmId },
+    const bm = await prisma.facebookBusinessManager.findFirst({
+      where: { bmId, userId },
     });
 
     if (!bm) {
@@ -799,8 +868,13 @@ router.post("/share-asset", async (req, res) => {
 });
 
 // 7. 员工权限管理 - 批量邀请员工与生成邀请链接
-router.post("/invite-user", async (req, res) => {
+router.post("/invite-user", async (req: any, res) => {
   const { bmId, email, role } = req.body; // role: ADMIN | EMPLOYEE
+  const userId = req.user?.id;
+
+  if (!userId) {
+    return res.status(401).json({ error: "用户未登录或会话已过期" });
+  }
 
   if (!bmId || !email) {
     return res.status(400).json({ error: "请输入需要邀请的员工邮箱并选择 BM" });
@@ -809,8 +883,8 @@ router.post("/invite-user", async (req, res) => {
   const targetRole = role || "EMPLOYEE";
 
   try {
-    const bm = await prisma.facebookBusinessManager.findUnique({
-      where: { bmId },
+    const bm = await prisma.facebookBusinessManager.findFirst({
+      where: { bmId, userId },
     });
 
     if (!bm) {

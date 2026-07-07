@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { Dashboard } from "./components/Dashboard";
 import { LoginPage } from "./components/LoginPage";
 import { AccountDetailsPage } from "./components/AccountDetailsPage";
@@ -10,17 +10,16 @@ import { DataDeletionPage } from "./components/DataDeletionPage";
 import { DeletionStatusPage } from "./components/DeletionStatusPage";
 import { Toaster } from "sonner";
 
-export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [checking, setChecking] = useState(true);
+function AppContent({ isAuthenticated, setIsAuthenticated, checking, setChecking, handleLogin, handleLogout }: any) {
+  const location = useLocation();
 
   useEffect(() => {
-    console.log("🚀 App component mounted");
+    console.log("🚀 Route change detected:", location.pathname, location.search);
     try {
-      const urlParams = new URLSearchParams(window.location.search);
+      const urlParams = new URLSearchParams(location.search);
       const token = urlParams.get("token");
       if (token) {
-        console.log("Found invitation token, forcing unauthenticated state so user can register.");
+        console.log("🔑 Found active invitation token in URL. Forcing unauthenticated state for password setup.");
         localStorage.removeItem("isAuthenticated");
         localStorage.removeItem("user");
         setIsAuthenticated(false);
@@ -31,22 +30,11 @@ export default function App() {
         }
       }
     } catch (e) {
-      console.warn("Storage access failed");
+      console.warn("Storage or location access failed in AppContent:", e);
     } finally {
       setChecking(false);
     }
-  }, []);
-
-  const handleLogin = () => {
-    setIsAuthenticated(true);
-  };
-
-  const handleLogout = () => {
-    try {
-      localStorage.removeItem("isAuthenticated");
-      setIsAuthenticated(false);
-    } catch (e) {}
-  };
+  }, [location.pathname, location.search, setIsAuthenticated, setChecking]);
 
   if (checking) {
     return (
@@ -57,32 +45,61 @@ export default function App() {
   }
 
   return (
+    <Routes>
+      <Route path="/privacy" element={<PrivacyPage />} />
+      <Route path="/data-deletion-instructions" element={<DataDeletionPage />} />
+      <Route path="/deletion-status" element={<DeletionStatusPage />} />
+      <Route
+        path="/*"
+        element={
+          !isAuthenticated ? (
+            <LoginPage onLogin={handleLogin} />
+          ) : (
+            <>
+              <Routes>
+                <Route path="/" element={<Dashboard onLogout={handleLogout} />} />
+                <Route path="/account/:accountId" element={<AccountDetailsPage onLogout={handleLogout} />} />
+                <Route path="/store/new" element={<StoreDetailsPage onLogout={handleLogout} isNew={true} />} />
+                <Route path="/store/:storeId" element={<StoreDetailsPage onLogout={handleLogout} />} />
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+              <FloatingAIChat />
+            </>
+          )
+        }
+      />
+    </Routes>
+  );
+}
+
+export default function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [checking, setChecking] = useState(true);
+
+  const handleLogin = () => {
+    setIsAuthenticated(true);
+  };
+
+  const handleLogout = () => {
+    try {
+      localStorage.clear();
+      setIsAuthenticated(false);
+    } catch (e) {
+      console.error("Failed to clear localStorage on logout", e);
+    }
+  };
+
+  return (
     <BrowserRouter>
       <Toaster position="top-center" richColors />
-      <Routes>
-        <Route path="/privacy" element={<PrivacyPage />} />
-        <Route path="/data-deletion-instructions" element={<DataDeletionPage />} />
-        <Route path="/deletion-status" element={<DeletionStatusPage />} />
-        <Route
-          path="/*"
-          element={
-            !isAuthenticated ? (
-              <LoginPage onLogin={handleLogin} />
-            ) : (
-              <>
-                <Routes>
-                  <Route path="/" element={<Dashboard onLogout={handleLogout} />} />
-                  <Route path="/account/:accountId" element={<AccountDetailsPage onLogout={handleLogout} />} />
-                  <Route path="/store/new" element={<StoreDetailsPage onLogout={handleLogout} isNew={true} />} />
-                  <Route path="/store/:storeId" element={<StoreDetailsPage onLogout={handleLogout} />} />
-                  <Route path="*" element={<Navigate to="/" replace />} />
-                </Routes>
-                <FloatingAIChat />
-              </>
-            )
-          }
-        />
-      </Routes>
+      <AppContent
+        isAuthenticated={isAuthenticated}
+        setIsAuthenticated={setIsAuthenticated}
+        checking={checking}
+        setChecking={setChecking}
+        handleLogin={handleLogin}
+        handleLogout={handleLogout}
+      />
     </BrowserRouter>
   );
 }

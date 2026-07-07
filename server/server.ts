@@ -175,11 +175,11 @@ async function checkDb() {
 
     await prisma.user.upsert({
       where: { email: defaultEmail },
-      update: { role: "admin", password: hashedPass }, 
+      update: { role: "SUPER_ADMIN", password: hashedPass }, 
       create: {
         email: defaultEmail,
         password: hashedPass,
-        role: "admin"
+        role: "SUPER_ADMIN"
       }
     });
     console.log(`👤 Verified/Restored admin user: ${defaultEmail}`);
@@ -215,6 +215,18 @@ process.on("unhandledRejection", (reason, promise) => {
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Global user context middleware for multi-user isolation
+app.use((req: any, res, next) => {
+  const userIdStr = req.headers["x-user-id"] || req.query.userId;
+  if (userIdStr) {
+    const parsed = parseInt(String(userIdStr), 10);
+    if (!isNaN(parsed)) {
+      req.user = { id: parsed };
+    }
+  }
+  next();
+});
 
 import routes from "./routes/index.js";
 app.use("/api", routes);

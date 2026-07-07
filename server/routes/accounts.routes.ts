@@ -5,10 +5,11 @@ import { getMetaToken, extractMetaError, evaluateActivityStatus, getCachedData, 
 
 const router = Router();
 
-router.get("", async (req, res) => {
+router.get("", async (req: any, res) => {
   let token: string | null = null;
+  const userId = req.user?.id;
   try {
-    token = await getMetaToken();
+    token = await getMetaToken(userId);
   } catch (e) {}
 
   if (token) {
@@ -38,6 +39,7 @@ router.get("", async (req, res) => {
   // Fallback if no token is configured or live API failed
   try {
     const dbAccs = await prisma.adAccount.findMany({
+      where: userId ? { userId } : {},
       include: { store: true }
     });
     if (dbAccs.length > 0) {
@@ -439,8 +441,18 @@ router.get("/:accountId/hierarchy", async (req, res) => {
   }
 });
 
-router.get("/list", async (req, res) => {
+router.get("/list", async (req: any, res) => {
   try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.json([]);
+    }
+
+    const userAccounts = await prisma.adAccount.findMany({
+      where: { userId }
+    });
+    const accountIds = userAccounts.map(a => a.fb_account_id.replace("act_", ""));
+
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().split('T')[0];
@@ -448,6 +460,7 @@ router.get("/list", async (req, res) => {
     // 获取停用的账户 ID 列表
     const disabledAccounts = await prisma.metaAccountMonitoring.findMany({
       where: {
+        accountId: { in: accountIds },
         OR: [
           { status: 3 },
           { status: 2 },
@@ -461,6 +474,7 @@ router.get("/list", async (req, res) => {
     const rawAccounts = await prisma.adInsight.groupBy({
       by: ["accountId", "accountName"],
       where: {
+        accountId: { in: accountIds },
         date: { gte: thirtyDaysAgoStr },
         spend: { gt: 0 }
       }

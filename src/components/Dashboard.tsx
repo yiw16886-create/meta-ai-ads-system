@@ -123,7 +123,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
   >(initialTab);
 
   const currentUser = JSON.parse(localStorage.getItem("user") || "{}");
-  const isAdmin = currentUser.role === "admin";
+  const isAdmin = currentUser.role === "admin" || currentUser.role === "SUPER_ADMIN";
   
   const [settingsExpanded, setSettingsExpanded] = useState<boolean>(
     initialTab === "settings" || initialTab === "users"
@@ -607,8 +607,8 @@ export function Dashboard({ onLogout }: DashboardProps) {
             退出登录
           </button>
           <div className="flex items-center gap-3 px-2 py-4 mt-2 border-t border-gray-800/50">
-            <div className={`w-8 h-8 rounded-full ${isAdmin ? 'bg-meta-blue' : 'bg-gray-700'} flex items-center justify-center text-[10px]`}>
-              {isAdmin ? 'ADMIN' : 'USER'}
+            <div className={`w-8 h-8 rounded-full ${currentUser.role === 'SUPER_ADMIN' ? 'bg-amber-500' : (isAdmin ? 'bg-meta-blue' : 'bg-gray-700')} flex items-center justify-center text-[10px]`}>
+              {currentUser.role === 'SUPER_ADMIN' ? 'SUPER' : (isAdmin ? 'ADMIN' : 'USER')}
             </div>
             <div className="flex-1 overflow-hidden">
               <p className="text-[12px] font-medium truncate">{currentUser.email || 'Admin User'}</p>
@@ -1613,6 +1613,7 @@ function UsersManagementPage() {
     SMTP_FROM: ""
   });
   const [savingSmtp, setSavingSmtp] = useState(false);
+  const [testingSmtp, setTestingSmtp] = useState(false);
   
   // Custom delete confirmation state
   const [deleteConfirm, setDeleteConfirm] = useState<{ open: boolean; id: string | number | null; email: string; isPending: boolean }>({
@@ -1774,6 +1775,31 @@ function UsersManagementPage() {
     }
   };
 
+  const handleTestSmtp = async () => {
+    if (!smtpConfig.SMTP_HOST || !smtpConfig.SMTP_PORT || !smtpConfig.SMTP_USER || !smtpConfig.SMTP_PASS) {
+      toast.error("请先填写完整的 SMTP 主机、端口、账户和密码");
+      return;
+    }
+    setTestingSmtp(true);
+    const toastId = toast.loading("正在尝试连接 SMTP 服务器并发送测试邮件...");
+    try {
+      const res = await axios.post("/api/settings/test-smtp", {
+        ...smtpConfig,
+        targetEmail: smtpConfig.SMTP_USER // Test sending to self
+      });
+      if (res.data.success) {
+        toast.success(res.data.message || "连接测试成功！", { id: toastId, duration: 5000 });
+      } else {
+        toast.error(res.data.error || "连接测试失败，请检查配置", { id: toastId, duration: 6000 });
+      }
+    } catch (err: any) {
+      const errMsg = err.response?.data?.details || err.response?.data?.error || err.message || "连接异常";
+      toast.error(`测试失败: ${errMsg}`, { id: toastId, duration: 8000 });
+    } finally {
+      setTestingSmtp(false);
+    }
+  };
+
   if (fetching) {
     return (
       <div className="flex-1 flex items-center justify-center bg-white rounded-[12px]">
@@ -1826,6 +1852,7 @@ function UsersManagementPage() {
               >
                 <option value="member">普通成员 (Member)</option>
                 <option value="admin">管理员 (Admin)</option>
+                <option value="SUPER_ADMIN">超级管理员 (Super Admin)</option>
               </select>
             </div>
             <Button onClick={handleInvite} disabled={inviting} className="bg-meta-blue hover:bg-blue-600 h-11 px-8 shadow-sm text-white font-medium transition-all hover:translate-y-[-1px]">
@@ -1859,10 +1886,11 @@ function UsersManagementPage() {
                         className="bg-white border border-gray-200 text-sm rounded-md focus:ring-2 focus:ring-meta-blue block p-1.5 min-w-[120px] outline-none"
                         value={u.role}
                         onChange={(e) => handleUpdateRole(u.id, e.target.value)}
-                        disabled={(u.email === currentUser.email && u.role === "admin") || u.status === 'pending'}
+                        disabled={(u.email === currentUser.email && (u.role === "admin" || u.role === "SUPER_ADMIN")) || u.status === 'pending'}
                       >
                         <option value="member">成员 (Member)</option>
                         <option value="admin">管理员 (Admin)</option>
+                        <option value="SUPER_ADMIN">超级管理员 (Super Admin)</option>
                       </select>
                     </TableCell>
                     <TableCell className="text-gray-500 font-mono text-xs">
@@ -2047,10 +2075,19 @@ function UsersManagementPage() {
             </div>
           </div>
           <div className="flex justify-end gap-3 pt-4 border-t">
-            <Button variant="outline" onClick={() => setShowSmtpModal(false)} disabled={savingSmtp}>取消</Button>
+            <Button variant="outline" onClick={() => setShowSmtpModal(false)} disabled={savingSmtp || testingSmtp}>取消</Button>
+            <Button 
+              variant="secondary"
+              onClick={handleTestSmtp}
+              disabled={savingSmtp || testingSmtp}
+              className="px-5 border border-gray-200"
+            >
+              {testingSmtp ? <RefreshCcw className="w-4 h-4 animate-spin mr-2" /> : null}
+              测试连接
+            </Button>
             <Button 
               onClick={handleSaveSmtp} 
-              disabled={savingSmtp}
+              disabled={savingSmtp || testingSmtp}
               className="bg-meta-blue hover:bg-blue-600 px-6"
             >
               {savingSmtp ? <RefreshCcw className="w-4 h-4 animate-spin mr-2" /> : null}
@@ -2064,6 +2101,7 @@ function UsersManagementPage() {
 }
 
 function SettingsPage() {
+  const currentUser = JSON.parse(localStorage.getItem("user") || "{}");
   const [metaToken, setMetaToken] = useState("");
   const [hasMetaToken, setHasMetaToken] = useState(false);
   const [metaTokenUpdatedAt, setMetaTokenUpdatedAt] = useState<string | null>(null);
@@ -2135,6 +2173,19 @@ function SettingsPage() {
   const [showMetaModal, setShowMetaModal] = useState(false);
   const [showMetaHelpModal, setShowMetaHelpModal] = useState(false);
 
+  const fetchAdminSettings = async () => {
+    try {
+      const res = await axios.get("/api/admin/settings");
+      if (res.data) {
+        setFbClientId(res.data.meta_client_id || "");
+        setFbConfigId(res.data.meta_config_id || "");
+        setHasFbClientSecret(!!res.data.meta_client_secret);
+      }
+    } catch (err) {
+      console.error("Failed to load admin settings", err);
+    }
+  };
+
   const reloadSettings = async () => {
     try {
       const settingsRes = await axios.get("/api/settings");
@@ -2148,21 +2199,16 @@ function SettingsPage() {
       } else {
         setMetaTokenUpdatedAt(null);
       }
-      if (settingsRes.data.FACEBOOK_CLIENT_ID) {
-        setFbClientId(settingsRes.data.FACEBOOK_CLIENT_ID);
+      
+      const currentUser = JSON.parse(localStorage.getItem("user") || "{}");
+      if (currentUser.role === "SUPER_ADMIN" || currentUser.role === "admin") {
+        await fetchAdminSettings();
       } else {
         setFbClientId("");
-      }
-      if (settingsRes.data.FACEBOOK_CONFIG_ID) {
-        setFbConfigId(settingsRes.data.FACEBOOK_CONFIG_ID);
-      } else {
         setFbConfigId("");
-      }
-      if (settingsRes.data.hasFbClientSecret === "true") {
-        setHasFbClientSecret(true);
-      } else {
         setHasFbClientSecret(false);
       }
+
       if (settingsRes.data.FB_AUTHORIZED_USER_ID) {
         setFbUserId(settingsRes.data.FB_AUTHORIZED_USER_ID);
       } else {
@@ -2199,15 +2245,12 @@ function SettingsPage() {
         if (settingsRes.data.GEMINI_MODEL) {
           setGeminiModel(settingsRes.data.GEMINI_MODEL);
         }
-        if (settingsRes.data.FACEBOOK_CLIENT_ID) {
-          setFbClientId(settingsRes.data.FACEBOOK_CLIENT_ID);
+        
+        const currentUser = JSON.parse(localStorage.getItem("user") || "{}");
+        if (currentUser.role === "SUPER_ADMIN" || currentUser.role === "admin") {
+          await fetchAdminSettings();
         }
-        if (settingsRes.data.FACEBOOK_CONFIG_ID) {
-          setFbConfigId(settingsRes.data.FACEBOOK_CONFIG_ID);
-        }
-        if (settingsRes.data.hasFbClientSecret === "true") {
-          setHasFbClientSecret(true);
-        }
+
         if (settingsRes.data.FB_AUTHORIZED_USER_ID) {
           setFbUserId(settingsRes.data.FB_AUTHORIZED_USER_ID);
         }
@@ -2329,10 +2372,12 @@ function SettingsPage() {
     }
     setLoadingFbSave(true);
     try {
-      await handleSaveSetting("FACEBOOK_CLIENT_ID", fbClientId);
-      await handleSaveSetting("FACEBOOK_CONFIG_ID", fbConfigId);
+      await axios.post("/api/admin/settings", {
+        meta_client_id: fbClientId,
+        meta_config_id: fbConfigId,
+        meta_client_secret: fbClientSecret || undefined,
+      });
       if (fbClientSecret) {
-        await handleSaveSetting("FACEBOOK_CLIENT_SECRET", fbClientSecret);
         setHasFbClientSecret(true);
         setFbClientSecret(""); // clear it
       }
@@ -2345,37 +2390,35 @@ function SettingsPage() {
     }
   };
 
-  const handleFbConnect = () => {
-    if (!fbClientId) {
-      toast.error("请先点击【配置开发者应用】输入 Facebook App ID！");
-      return;
-    }
-    if (!fbConfigId) {
-      toast.error("请先点击【配置开发者应用】输入 Meta 登录配置 ID (config_id)！");
-      return;
-    }
-    // Open OAuth provider directly in popup window
-    const redirectUri = "https://1-eight-azure.vercel.app/api/auth/facebook/callback";
-    const scope = "public_profile,email,business_management,ads_management";
-    const extras = JSON.stringify({
-      setup: {
-        asset_types: ["business_account", "ad_account", "page"]
+  const handleFbConnect = async () => {
+    const currentUser = JSON.parse(localStorage.getItem("user") || "{}");
+    try {
+      const res = await axios.get("/api/facebook/auth-url");
+      if (!res.data || !res.data.url) {
+        toast.error("未能获取 Facebook 授权链接，请联系超级管理员配置");
+        return;
       }
-    });
-    const authUrl = `https://www.facebook.com/v20.0/dialog/oauth?client_id=${fbClientId}&config_id=${fbConfigId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}&extras=${encodeURIComponent(extras)}`;
+      
+      let authUrl = res.data.url;
+      if (!authUrl.includes("state=")) {
+        authUrl += `&state=${currentUser.id || ""}`;
+      }
 
-    const popup = window.open(
-      authUrl,
-      "facebook_oauth_popup",
-      "width=650,height=700,status=no,resizable=yes,scrollbars=yes"
-    );
+      const popup = window.open(
+        authUrl,
+        "facebook_oauth_popup",
+        "width=650,height=700,status=no,resizable=yes,scrollbars=yes"
+      );
 
-    if (!popup) {
-      // Fallback to full-page redirect if popup is blocked
-      toast.warning("弹出窗口已被浏览器拦截，已为您切换为当前页面跳转...");
-      setTimeout(() => {
-        window.location.href = authUrl;
-      }, 1000);
+      if (!popup) {
+        // Fallback to full-page redirect if popup is blocked
+        toast.warning("弹出窗口已被浏览器拦截，已为您切换为当前页面跳转...");
+        setTimeout(() => {
+          window.location.href = authUrl;
+        }, 1000);
+      }
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || "未能获取 Facebook 授权链接，请联系超级管理员配置");
     }
   };
 
@@ -2390,7 +2433,7 @@ function SettingsPage() {
       
       // Auto-open privacy and data deletion policy in a new tab for Meta review compliance
       try {
-        window.open('https://1-eight-azure.vercel.app/privacy', '_blank');
+        window.open(`${window.location.origin}/privacy`, '_blank');
       } catch (openErr) {
         console.warn("Popup block detected or browser restricted opening window inside sandbox:", openErr);
       }
@@ -2710,13 +2753,18 @@ function SettingsPage() {
               </Button>
             )}
             
-            <Button 
-              variant="outline"
-              className="w-full font-normal rounded-[4px] h-9 text-[13px] text-gray-600 border-gray-200 hover:bg-gray-50"
-              onClick={() => setShowFbModal(true)}
-            >
-              配置开发者应用
-            </Button>
+            {(currentUser.role === "SUPER_ADMIN" || currentUser.role === "admin") && (
+              <Button 
+                variant="outline"
+                className="w-full font-normal rounded-[4px] h-9 text-[13px] text-gray-600 border-gray-200 hover:bg-gray-50"
+                onClick={() => {
+                  fetchAdminSettings();
+                  setShowFbModal(true);
+                }}
+              >
+                配置开发者应用
+              </Button>
+            )}
           </div>
 
           {/* Facebook Edit Real User ID Modal */}
@@ -2830,8 +2878,9 @@ function SettingsPage() {
           </Dialog>
 
           {/* Facebook App Config Modal */}
-          <Dialog open={showFbModal} onOpenChange={setShowFbModal}>
-            <DialogContent className="max-w-[450px] p-0 overflow-hidden bg-white rounded-lg border-0 shadow-2xl">
+          {(currentUser.role === "SUPER_ADMIN" || currentUser.role === "admin") && (
+            <Dialog open={showFbModal} onOpenChange={setShowFbModal}>
+              <DialogContent className="max-w-[450px] p-0 overflow-hidden bg-white rounded-lg border-0 shadow-2xl">
               <div className="flex justify-between items-center px-6 py-4 border-b border-gray-100">
                 <h3 className="text-[16px] font-medium text-gray-800">配置 Facebook 开发者应用</h3>
                 <button onClick={() => setShowFbModal(false)} className="text-gray-400 hover:text-gray-600 transition-colors">
@@ -2845,10 +2894,10 @@ function SettingsPage() {
                   </p>
                   <p className="bg-amber-50 text-amber-800 p-2 rounded border border-amber-100 font-medium">
                     提示：请确保在应用后台的【用户数据删除类型】中，切换为“数据删除说明网址”，并填入下面的隐私政策链接：<br />
-                    <code className="bg-white px-1 py-0.5 rounded font-mono text-[10px] select-all border border-amber-200 break-all">https://1-eight-azure.vercel.app/privacy</code>
+                    <code className="bg-white px-1 py-0.5 rounded font-mono text-[10px] select-all border border-amber-200 break-all">{window.location.origin}/privacy</code>
                   </p>
                   <p>
-                    回调重定向 URI 固定为：<code className="bg-gray-100 px-1 py-0.5 rounded font-mono text-[10px] break-all">https://1-eight-azure.vercel.app/api/auth/facebook/callback</code>
+                    回调重定向 URI 固定为：<code className="bg-gray-100 px-1 py-0.5 rounded font-mono text-[10px] break-all">{window.location.origin}/api/auth/facebook/callback</code>
                   </p>
                 </div>
                 <div className="space-y-4">
@@ -2906,6 +2955,7 @@ function SettingsPage() {
               </div>
             </DialogContent>
           </Dialog>
+          )}
         </div>
 
       </div>

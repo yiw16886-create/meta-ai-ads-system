@@ -67,7 +67,7 @@ router.post("/register", async (req, res) => {
 
 // GET /api/auth/facebook/callback
 router.get("/facebook/callback", async (req, res) => {
-  const { code, error } = req.query;
+  const { code, error, state } = req.query;
   
   if (error) {
     console.error("Facebook OAuth callback error from query:", error);
@@ -86,8 +86,11 @@ router.get("/facebook/callback", async (req, res) => {
       config[s.key] = s.value;
     });
 
-    const clientId = config["FACEBOOK_CLIENT_ID"] || process.env.FACEBOOK_CLIENT_ID;
-    const clientSecret = config["FACEBOOK_CLIENT_SECRET"] || process.env.FACEBOOK_CLIENT_SECRET;
+    const systemConfig = await prisma.systemSetting.findFirst();
+    const clientId = systemConfig?.meta_client_id || config["FACEBOOK_CLIENT_ID"] || process.env.FACEBOOK_CLIENT_ID;
+    const clientSecret = systemConfig?.meta_client_secret || config["FACEBOOK_CLIENT_SECRET"] || process.env.FACEBOOK_CLIENT_SECRET;
+    
+    // Use the exact redirect URI specified by the user
     const redirectUri = "https://1-eight-azure.vercel.app/api/auth/facebook/callback";
 
     if (!clientId || !clientSecret) {
@@ -188,7 +191,38 @@ router.get("/facebook/callback", async (req, res) => {
       console.warn("⚠️ Could not debug token permissions via /me/permissions:", permErr.response?.data || permErr.message);
     }
 
-    // 4. Securely store long-lived token, expiry, and user ID in database settings
+    // 4. Securely store long-lived token, expiry, and user ID in database
+    const stateVal = state;
+    let userId = stateVal ? parseInt(String(stateVal), 10) : null;
+    if (!userId || isNaN(userId)) {
+      const firstUser = await prisma.user.findFirst();
+      if (firstUser) {
+        userId = firstUser.id;
+        console.log(`⚠️ Fallback to first user ID in DB: ${userId}`);
+      } else {
+        throw new Error("No users in system to link Facebook account to.");
+      }
+    }
+
+    // Save isolated Facebook Account details for this user
+    await prisma.facebookAccount.upsert({
+      where: { userId },
+      update: {
+        accessToken: longLivedToken,
+        facebookId: facebookUserId || null,
+        facebookName: facebookUserName || null,
+        facebookLink: facebookUserLink || null,
+      },
+      create: {
+        userId,
+        accessToken: longLivedToken,
+        facebookId: facebookUserId || null,
+        facebookName: facebookUserName || null,
+        facebookLink: facebookUserLink || null,
+      },
+    });
+
+    // Retro-compatibility fallback setting updates
     await prisma.setting.upsert({
       where: { key: "META_ACCESS_TOKEN" },
       update: { value: longLivedToken },
@@ -226,16 +260,18 @@ router.get("/facebook/callback", async (req, res) => {
       });
     }
 
-    // Update all AdAccounts where token is different or null
+    // Update all AdAccounts where token is different, null, or has no associated userId
     await prisma.adAccount.updateMany({
       where: {
         OR: [
           { fb_access_token: { not: longLivedToken } },
-          { fb_access_token: null }
+          { fb_access_token: null },
+          { userId: null }
         ]
       },
       data: {
         fb_access_token: longLivedToken,
+        userId: userId,
       }
     });
 
@@ -316,21 +352,24 @@ router.get("/facebook/callback", async (req, res) => {
 });
 
 // POST /api/auth/facebook/disconnect
-router.post("/facebook/disconnect", async (req, res) => {
+router.post("/facebook/disconnect", async (req: any, res) => {
   try {
-    await prisma.setting.deleteMany({
-      where: {
-        key: {
-          in: ["META_ACCESS_TOKEN", "META_TOKEN_UPDATED_AT", "FB_AUTHORIZED_USER_ID", "FB_AUTHORIZED_USER_NAME", "FB_AUTHORIZED_USER_LINK"]
+    const userId = req.user?.id;
+    if (userId) {
+      await prisma.facebookAccount.deleteMany({
+        where: { userId }
+      });
+      await prisma.facebookBusinessManager.deleteMany({
+        where: { userId }
+      });
+      await prisma.adAccount.updateMany({
+        where: { userId },
+        data: {
+          fb_access_token: null,
+          userId: null
         }
-      }
-    });
-
-    await prisma.adAccount.updateMany({
-      data: {
-        fb_access_token: null
-      }
-    });
+      });
+    }
 
     res.json({ success: true, message: "已成功断开 Facebook 授权绑定" });
   } catch (error: any) {
@@ -340,33 +379,27 @@ router.post("/facebook/disconnect", async (req, res) => {
 });
 
 // POST /api/auth/facebook/delete-local - Local User Requested Data Deletion & Purge
-router.post("/facebook/delete-local", async (req, res) => {
+router.post("/facebook/delete-local", async (req: any, res) => {
   try {
     console.log("📥 Local unbind and data purge requested for Facebook integration");
-    
-    // Delete settings keys
-    await prisma.setting.deleteMany({
-      where: {
-        key: {
-          in: ["META_ACCESS_TOKEN", "META_TOKEN_UPDATED_AT", "FB_AUTHORIZED_USER_ID", "FB_AUTHORIZED_USER_NAME", "FB_AUTHORIZED_USER_LINK"]
+    const userId = req.user?.id;
+    if (userId) {
+      await prisma.facebookAccount.deleteMany({
+        where: { userId }
+      });
+      await prisma.facebookBusinessManager.deleteMany({
+        where: { userId }
+      });
+      await prisma.adAccount.updateMany({
+        where: { userId },
+        data: {
+          fb_access_token: null,
+          userId: null
         }
-      }
-    });
-
-    // Set ad accounts access tokens to null
-    await prisma.adAccount.updateMany({
-      data: {
-        fb_access_token: null
-      }
-    });
-
-    // Delete/purge BM status and cached Business Manager structures
-    await prisma.facebookBusinessManager.deleteMany({});
-
-    // Delete page access tokens cached in our FacebookPage table
-    await prisma.facebookPage.deleteMany({});
+      });
+    }
     
-    console.log("✅ Successfully purged all local Facebook configuration and tokens");
+    console.log("✅ Successfully purged local Facebook configuration and tokens for user:", userId);
     res.json({ success: true, message: "本地解绑成功，如需彻底清除 Meta 缓存，请前往 Facebook 个人后台设置" });
   } catch (error: any) {
     console.error("Failed to handle local Facebook unbind/purge:", error);
@@ -375,42 +408,27 @@ router.post("/facebook/delete-local", async (req, res) => {
 });
 
 // POST /api/auth/facebook/unbind - Standard Compliant Facebook Unbind & Data Purge (Meta App Review Compliant)
-router.post("/facebook/unbind", async (req, res) => {
+router.post("/facebook/unbind", async (req: any, res) => {
   try {
     console.log("📥 Compliant unbind and data purge requested for Facebook integration");
-    
-    // Delete settings keys
-    await prisma.setting.deleteMany({
-      where: {
-        key: {
-          in: [
-            "META_ACCESS_TOKEN", 
-            "META_TOKEN_UPDATED_AT", 
-            "FB_AUTHORIZED_USER_ID",
-            "FB_AUTHORIZED_USER_NAME",
-            "FB_AUTHORIZED_USER_LINK",
-            "facebook_oauth_token",
-            "config_id",
-            "expires_in"
-          ]
+    const userId = req.user?.id;
+    if (userId) {
+      await prisma.facebookAccount.deleteMany({
+        where: { userId }
+      });
+      await prisma.facebookBusinessManager.deleteMany({
+        where: { userId }
+      });
+      await prisma.adAccount.updateMany({
+        where: { userId },
+        data: {
+          fb_access_token: null,
+          userId: null
         }
-      }
-    });
-
-    // Set ad accounts access tokens to null
-    await prisma.adAccount.updateMany({
-      data: {
-        fb_access_token: null
-      }
-    });
-
-    // Delete/purge BM status and cached Business Manager structures
-    await prisma.facebookBusinessManager.deleteMany({});
-
-    // Delete page access tokens cached in our FacebookPage table
-    await prisma.facebookPage.deleteMany({});
+      });
+    }
     
-    console.log("✅ Successfully purged all local Facebook configuration and tokens under compliant unbind");
+    console.log("✅ Successfully purged Facebook configuration and tokens under compliant unbind for user:", userId);
     res.status(200).json({ success: true, message: "您的本地授权 Token 已成功擦除" });
   } catch (error: any) {
     console.error("Failed to handle compliant Facebook unbind:", error);
@@ -469,6 +487,10 @@ router.post("/facebook/delete", async (req, res) => {
 
     // Retrieve Facebook Client Secret from Env or DB
     let clientSecret = process.env.FACEBOOK_CLIENT_SECRET;
+    if (!clientSecret) {
+      const systemConfig = await prisma.systemSetting.findFirst();
+      clientSecret = systemConfig?.meta_client_secret || undefined;
+    }
     if (!clientSecret) {
       const secretSetting = await prisma.setting.findUnique({
         where: { key: "FACEBOOK_CLIENT_SECRET" }
@@ -535,7 +557,9 @@ router.post("/facebook/delete", async (req, res) => {
 
     // Generate response required by Meta
     const confirmationCode = "DEL-" + crypto.randomBytes(6).toString("hex").toUpperCase();
-    const statusUrl = `https://1-eight-azure.vercel.app/deletion-status?id=${confirmationCode}`;
+    const host = req.get("host");
+    const protocol = req.protocol === "https" || req.headers["x-forwarded-proto"] === "https" ? "https" : "http";
+    const statusUrl = `${protocol}://${host}/deletion-status?id=${confirmationCode}`;
 
     console.log(`Responding to Meta with Confirmation Code: ${confirmationCode}`);
     return res.json({
@@ -549,12 +573,28 @@ router.post("/facebook/delete", async (req, res) => {
 });
 
 // GET /api/auth/facebook/profile-link - Fetch user's actual profile link dynamically
-router.get("/facebook/profile-link", async (req, res) => {
+router.get("/facebook/profile-link", async (req: any, res) => {
   try {
-    const tokenSetting = await prisma.setting.findUnique({
-      where: { key: "META_ACCESS_TOKEN" }
-    });
-    if (!tokenSetting || !tokenSetting.value) {
+    const userId = req.user?.id;
+    let userAccessToken = null;
+    if (userId) {
+      const acc = await prisma.facebookAccount.findUnique({
+        where: { userId }
+      });
+      if (acc) {
+        userAccessToken = acc.accessToken;
+      }
+    }
+    
+    // Fallback to global setting if no user-specific token is found
+    if (!userAccessToken) {
+      const tokenSetting = await prisma.setting.findUnique({
+        where: { key: "META_ACCESS_TOKEN" }
+      });
+      userAccessToken = tokenSetting?.value;
+    }
+
+    if (!userAccessToken) {
       return res.status(404).json({ error: "Access token not found" });
     }
 
@@ -562,7 +602,7 @@ router.get("/facebook/profile-link", async (req, res) => {
     // We only fetch 'id,name' and construct the profile link programmatically to prevent API crashes.
     const meRes = await axios.get("https://graph.facebook.com/v20.0/me", {
       params: { 
-        access_token: tokenSetting.value,
+        access_token: userAccessToken,
         fields: "id,name"
       }
     });
@@ -574,6 +614,14 @@ router.get("/facebook/profile-link", async (req, res) => {
         realId = "100032911327297";
       }
       const profileLink = `https://www.facebook.com/profile.php?id=${realId}`;
+      
+      if (userId) {
+        await prisma.facebookAccount.update({
+          where: { userId },
+          data: { facebookLink: profileLink }
+        });
+      }
+      
       await prisma.setting.upsert({
         where: { key: "FB_AUTHORIZED_USER_LINK" },
         update: { value: profileLink },

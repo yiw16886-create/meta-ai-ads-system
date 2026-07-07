@@ -39,6 +39,15 @@ model Setting {
   value String
 }
 
+model SystemSetting {
+  id                 Int      @id @default(autoincrement())
+  meta_client_id     String?
+  meta_client_secret String?
+  meta_config_id     String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
 model AccountMapping {
   id          Int      @id @default(autoincrement())
   storeId     Int?
@@ -52,12 +61,15 @@ model AccountMapping {
 }
 
 model User {
-  id        Int      @id @default(autoincrement())
-  email     String   @unique
-  password  String
-  role      String   @default("member") // "admin" or "member"
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id               Int                       @id @default(autoincrement())
+  email            String                    @unique
+  password         String
+  role             String                    @default("member") // "admin" or "member"
+  createdAt        DateTime                  @default(now())
+  updatedAt        DateTime                  @updatedAt
+  facebookAccount  FacebookAccount?
+  businessManagers FacebookBusinessManager[]
+  adAccounts       AdAccount[]
 }
 
 model Invitation {
@@ -107,11 +119,15 @@ model AdAccount {
   fb_access_token String?
   storeId         Int
   activityStatus  Int      @default(2)
+  userId          Int?
   store           Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   campaigns       Campaign[]
   monitoring      MetaAccountMonitoring?
+  user            User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, fb_account_id])
 }
 
 model Product {
@@ -267,7 +283,7 @@ model AdPostComment {
 // 4. 企业商务管理平台 (Business Manager) 表
 model FacebookBusinessManager {
   id              Int      @id @default(autoincrement())
-  bmId            String   @unique // Meta Business Manager ID
+  bmId            String   // Meta Business Manager ID
   name            String
   systemToken     String   // 系统用户 Token (System User Token)
   status          String   @default("ACTIVE") // ACTIVE / RESTRICTED / DISABLED / UNKNOWN
@@ -276,7 +292,23 @@ model FacebookBusinessManager {
   adAccountLimit  Int      @default(1)
   role            String   @default("ADMIN") // ADMIN (完全权限) / EMPLOYEE (部分权限) / UNKNOWN
   healthDetails   String?
+  userId          Int      // 🌟 关联系统用户ID
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, bmId]) // 🌟 联合唯一索引
+}
+
+// 5. Facebook 个人账户绑定表 (多用户隔离存储 Token)
+model FacebookAccount {
+  id           Int      @id @default(autoincrement())
+  userId       Int      @unique // 每个系统用户只能绑定一个主 FB 账号
+  accessToken  String   @db.Text
+  facebookId   String?
+  facebookName String?
+  facebookLink String?
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
