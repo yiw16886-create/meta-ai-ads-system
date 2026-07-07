@@ -426,13 +426,14 @@ export function Dashboard({ onLogout }: DashboardProps) {
   return (
     <div className="flex min-h-screen bg-meta-bg">
       <aside className="w-[200px] bg-meta-dark text-white hidden md:flex flex-col fixed left-0 top-0 h-screen z-30">
-        <div className="p-[20px] mb-[20px]">
+        <div className="p-[20px] mb-[20px] flex-shrink-0">
           <div className="flex items-center gap-2 text-meta-blue text-[18px] font-bold">
             <BarChart3 className="w-5 h-5" />
             <span>Meta Insights Pro</span>
           </div>
         </div>
-        <nav className="flex-1 px-4 space-y-1">
+        <div className="flex-1 flex flex-col overflow-y-auto min-h-0 sidebar-scrollbar">
+          <nav className="flex-1 px-4 space-y-1">
           <button
             onClick={() => navigate(`/?tab=overview`)}
             className={cn(
@@ -546,7 +547,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
             </button>
           ))}
         </nav>
-        <div className="mt-auto p-4 space-y-1 border-t border-gray-800">
+        <div className="mt-auto p-4 space-y-1 border-t border-gray-800 flex-shrink-0">
           <div>
             <button
               onClick={() => setSettingsExpanded(!settingsExpanded)}
@@ -614,6 +615,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
               <p className="text-[12px] font-medium truncate">{currentUser.email || 'Admin User'}</p>
             </div>
           </div>
+        </div>
         </div>
       </aside>
       <main className="flex-1 ml-[200px] p-[24px] overflow-x-hidden flex flex-col h-screen box-border">
@@ -1411,7 +1413,7 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
                   <DialogHeader>
                     <DialogTitle>选择 Meta 广告账户</DialogTitle>
                     <p className="text-xs text-gray-500">
-                      已自动过滤出系统中存在消费记录的所有账户
+                      已自动为您展示所有已授权可用的广告账户
                     </p>
                   </DialogHeader>
                   <div className="mt-4 relative mb-4">

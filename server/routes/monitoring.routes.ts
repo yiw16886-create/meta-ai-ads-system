@@ -5,10 +5,10 @@ import { getMetaToken, extractMetaError, evaluateActivityStatus } from "../utils
 
 const router = Router();
 
-router.get("/accounts", async (req, res) => {
+router.get("/accounts", async (req: any, res) => {
   try {
     const { refresh } = req.query;
-    const token = await getMetaToken();
+    const token = await getMetaToken(req.user?.id);
     if (!token) {
       return res.status(400).json({ error: "Meta Token 未配置" });
     }
@@ -240,10 +240,10 @@ router.get("/accounts", async (req, res) => {
   }
 });
 
-router.post("/accounts/:accountId/reset", async (req, res) => {
+router.post("/accounts/:accountId/reset", async (req: any, res) => {
   const { accountId } = req.params;
   try {
-    const token = await getMetaToken();
+    const token = await getMetaToken(req.user?.id);
     if (!token) return res.status(400).json({ error: "Meta Token 未配置" });
 
     // Meta API: POST act_{id}?spend_cap_action=reset

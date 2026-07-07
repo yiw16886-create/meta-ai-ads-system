@@ -59,7 +59,7 @@ router.get("", async (req: any, res) => {
   return res.status(502).json({ success: false, message: "Meta Graph API 請求受限，請重新授權" });
 });
 
-router.get("/:accountId/details", async (req, res) => {
+router.get("/:accountId/details", async (req: any, res) => {
   const { accountId } = req.params;
   const { startDate, endDate, level } = req.query; // level: 'campaigns', 'adsets', 'ads'
 
@@ -81,7 +81,7 @@ router.get("/:accountId/details", async (req, res) => {
   const endStr = endDate as string;
 
   try {
-    const token = await getMetaToken();
+    const token = await getMetaToken(req.user?.id);
     if (!token) throw new Error("Meta Token 未配置，自动触发本地级联备份逻辑");
 
     // 组合时间范围
@@ -242,12 +242,12 @@ router.get("/:accountId/details", async (req, res) => {
   }
 });
 
-router.get("/:accountId/audience-insights", async (req, res) => {
+router.get("/:accountId/audience-insights", async (req: any, res) => {
   const { accountId } = req.params;
   const { startDate, endDate, breakdown } = req.query;
 
   try {
-    const token = await getMetaToken();
+    const token = await getMetaToken(req.user?.id);
     if (!token) throw new Error("Meta Token 未配置，自动触发本地级联备份逻辑");
 
     let breakdownsParam = "";
@@ -290,7 +290,7 @@ router.get("/:accountId/audience-insights", async (req, res) => {
   }
 });
 
-router.get("/:accountId/hierarchy", async (req, res) => {
+router.get("/:accountId/hierarchy", async (req: any, res) => {
   const { accountId } = req.params;
   const cacheKey = `hierarchy_${accountId}`;
   const cached = getCachedData(cacheKey);
@@ -299,7 +299,7 @@ router.get("/:accountId/hierarchy", async (req, res) => {
   const cleanAccId = accountId.replace("act_", "").trim();
 
   try {
-    const token = await getMetaToken();
+    const token = await getMetaToken(req.user?.id);
     if (!token) return res.status(400).json({ error: "Meta Token 未配置" });
 
         // 一次性获取三种资源，去掉 insights 以提升速度
@@ -448,19 +448,9 @@ router.get("/list", async (req: any, res) => {
       return res.json([]);
     }
 
-    const userAccounts = await prisma.adAccount.findMany({
-      where: { userId }
-    });
-    const accountIds = userAccounts.map(a => a.fb_account_id.replace("act_", ""));
-
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().split('T')[0];
-
     // 获取停用的账户 ID 列表
     const disabledAccounts = await prisma.metaAccountMonitoring.findMany({
       where: {
-        accountId: { in: accountIds },
         OR: [
           { status: 3 },
           { status: 2 },
@@ -471,22 +461,42 @@ router.get("/list", async (req: any, res) => {
     });
     const disabledAccountIds = disabledAccounts.map(a => a.accountId);
 
-    const rawAccounts = await prisma.adInsight.groupBy({
-      by: ["accountId", "accountName"],
-      where: {
-        accountId: { in: accountIds },
-        date: { gte: thirtyDaysAgoStr },
-        spend: { gt: 0 }
-      }
-    });
+    const allAdAccounts = await prisma.adAccount.findMany();
+    const allMonitoring = await prisma.metaAccountMonitoring.findMany();
+    const allMappings = await prisma.accountMapping.findMany();
     
-    // Deduplicate by accountId if multiple names exist for the same ID, and filter out disabled
     const uniqueMap = new Map();
-    rawAccounts.forEach(acc => {
-      if (!disabledAccountIds.includes(acc.accountId) && !uniqueMap.has(acc.accountId)) {
-        uniqueMap.set(acc.accountId, acc);
+    
+    allAdAccounts.forEach(acc => {
+      const idStr = acc.fb_account_id.replace("act_", "");
+      if (!disabledAccountIds.includes(idStr) && !uniqueMap.has(idStr)) {
+        uniqueMap.set(idStr, {
+          accountId: idStr,
+          accountName: acc.fb_account_name || idStr
+        });
       }
     });
+
+    allMonitoring.forEach(acc => {
+      const idStr = acc.accountId.replace("act_", "");
+      if (!disabledAccountIds.includes(idStr) && !uniqueMap.has(idStr)) {
+        uniqueMap.set(idStr, {
+          accountId: idStr,
+          accountName: acc.accountName || idStr
+        });
+      }
+    });
+
+    allMappings.forEach(acc => {
+      const idStr = acc.fbAccountId.replace("act_", "");
+      if (!disabledAccountIds.includes(idStr) && !uniqueMap.has(idStr)) {
+        uniqueMap.set(idStr, {
+          accountId: idStr,
+          accountName: acc.name || idStr
+        });
+      }
+    });
+
     
     res.json(Array.from(uniqueMap.values()));
   } catch (err: any) {

@@ -10,9 +10,12 @@ export async function getMetaToken(userId?: number): Promise<string | null> {
     const acc = await prisma.facebookAccount.findUnique({
       where: { userId }
     });
-    if (acc) return acc.accessToken;
+    if (acc && acc.accessToken) return acc.accessToken;
   }
-  return null;
+  const setting = await prisma.setting.findUnique({
+    where: { key: "META_ACCESS_TOKEN" }
+  });
+  return setting ? setting.value : null;
 }
 
 export function mapOffsetToIana(tzStr: string): string {

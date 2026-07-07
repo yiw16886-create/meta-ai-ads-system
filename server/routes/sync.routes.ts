@@ -11,7 +11,7 @@ import { runMetaCreativeAutoPatch } from "../services/metaFetchPatch.service.js"
 
 const router = Router();
 
-router.post("/sync", async (req, res) => {
+router.post("/sync", async (req: any, res) => {
   const { startDate, endDate, syncProduct, syncCreative, accounts: requestedAccounts } = req.body;
   if (!startDate || !endDate) {
     return res
@@ -20,7 +20,7 @@ router.post("/sync", async (req, res) => {
   }
 
   try {
-    const token = await getMetaToken();
+    const token = await getMetaToken(req.user?.id);
     if (!token) {
       return res
         .status(400)
@@ -79,6 +79,19 @@ router.post("/sync", async (req, res) => {
         return !isDormant;
       }
     );
+    // Merge explicitly allowed accounts that might not appear in me/adaccounts (e.g. nested BM accounts)
+    const existingAccountIds = new Set(accounts.map((a: any) => (a.account_id || a.id || "").replace("act_", "")));
+    for (const allowedId of allowedAccountIds) {
+      if (!existingAccountIds.has(allowedId) && !DORMANT_ACCOUNT_IDS.includes(allowedId)) {
+        if (Array.isArray(requestedAccounts) && requestedAccounts.length > 0) {
+            if (!requestedAccounts.map((id: string) => id.replace("act_", "")).includes(allowedId)) {
+                continue;
+            }
+        }
+        accounts.push({ account_id: allowedId, account_status: 1 });
+      }
+    }
+
     let totalSynced = 0;
     let stopSync = false;
     let lastError = "";
@@ -174,7 +187,7 @@ router.post("/sync", async (req, res) => {
   }
 });
 
-router.post("/sync-store", async (req, res) => {
+router.post("/sync-store", async (req: any, res) => {
   const { startDate, endDate, storeId } = req.body;
   if (!startDate || !endDate) {
     return res.status(400).json({ error: "startDate and endDate are required" });
@@ -189,13 +202,13 @@ router.post("/sync-store", async (req, res) => {
   }
 });
 
-router.post("/sync-creatives", async (req, res) => {
+router.post("/sync-creatives", async (req: any, res) => {
   const { startDate, endDate } = req.body;
   if (!startDate || !endDate) {
     return res.status(400).json({ error: "startDate and endDate are required" });
   }
   try {
-    const token = await getMetaToken();
+    const token = await getMetaToken(req.user?.id);
     if (!token) {
       return res.status(400).json({ error: "Meta Token 未配置，请前往设置页面填写" });
     }
@@ -209,9 +222,9 @@ router.post("/sync-creatives", async (req, res) => {
   }
 });
 
-router.post("/sync-creative-hash", async (req, res) => {
+router.post("/sync-creative-hash", async (req: any, res) => {
   try {
-    const token = await getMetaToken();
+    const token = await getMetaToken(req.user?.id);
     if (!token) {
       return res.status(400).json({ error: "Meta Token 未配置，请前往设置页面填写" });
     }
@@ -229,10 +242,10 @@ router.post("/sync-creative-hash", async (req, res) => {
   }
 });
 
-router.get("/cron/sync-monthly", async (req, res) => {
+router.get("/cron/sync-monthly", async (req: any, res) => {
   console.log("⏰ Starting background sync: Last 30 days...");
   try {
-    const token = await getMetaToken();
+    const token = await getMetaToken(req.user?.id);
     if (!token)
       throw new Error("Meta Access Token is not configured in settings.");
 
@@ -265,6 +278,12 @@ router.get("/cron/sync-monthly", async (req, res) => {
     const disabledAccountIds = disabledAccounts.map(a => a.accountId);
     const DORMANT_ACCOUNT_IDS = ["26380439", "341040412"];
 
+    const dbMappings = await prisma.accountMapping.findMany();
+    const dbAdAccounts = await prisma.adAccount.findMany();
+    const allowedAccountIds = new Set<string>();
+    dbMappings.forEach(m => { if (m.fbAccountId) allowedAccountIds.add(m.fbAccountId.replace("act_", "")); });
+    dbAdAccounts.forEach(a => { if (a.fb_account_id) allowedAccountIds.add(a.fb_account_id.replace("act_", "")); });
+
     const accounts = (accountsResponse.data.data || []).filter(
       (a: any) => {
         const rawId = (a.account_id || a.id || "").replace("act_", "");
@@ -272,6 +291,14 @@ router.get("/cron/sync-monthly", async (req, res) => {
         return !isDormant;
       }
     );
+    // Merge explicitly allowed accounts that might not appear in me/adaccounts (e.g. nested BM accounts)
+    const existingAccountIds = new Set(accounts.map((a: any) => (a.account_id || a.id || "").replace("act_", "")));
+    for (const allowedId of allowedAccountIds) {
+      if (!existingAccountIds.has(allowedId) && !DORMANT_ACCOUNT_IDS.includes(allowedId)) {
+        accounts.push({ account_id: allowedId, account_status: 1 });
+      }
+    }
+
     let totalSynced = 0;
     let stopSync = false;
     let lastError = "";

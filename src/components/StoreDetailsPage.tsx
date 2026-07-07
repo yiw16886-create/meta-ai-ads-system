@@ -405,7 +405,8 @@ export function StoreDetailsPage({
     }
   };
 
-  const isAdmin = JSON.parse(localStorage.getItem("user") || "{}").role === "admin";
+  const userRole = JSON.parse(localStorage.getItem("user") || "{}").role;
+  const isAdmin = userRole === "admin" || userRole === "SUPER_ADMIN";
 
   const handleSaveStore = async () => {
     if (!isAdmin) return toast.error("仅管理员可修改店铺配置");
