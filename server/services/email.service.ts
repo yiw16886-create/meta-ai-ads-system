@@ -51,8 +51,8 @@ export async function sendInvitationEmail(email: string, token: string, role: st
   const normalizedRole = String(role || 'member').toLowerCase();
   
   // Format the activation URLs safely. We support both root queries and direct paths.
-  const cleanBaseUrl = baseUrl.replace(/\/$/, '');
-  const registerUrl = `${cleanBaseUrl}/?token=${token}&role=${normalizedRole}`;
+  // 必须严格使用我们自己的 Vercel 项目域名
+  const registerUrl = `https://1-eight-azure.vercel.app/accept-invite?token=${token}`;
   
   const html = `
     <div style="font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">

@@ -17,7 +17,7 @@ router.get("/", async (req: any, res) => {
     
     req.user.role = dbUser.role;
 
-    if (req.user.role !== "SUPER_ADMIN" && req.user.role !== "admin") {
+    if (req.user.role !== "SUPER_ADMIN") {
       return res.status(403).json({ error: "无权访问" });
     }
 
@@ -42,7 +42,7 @@ router.post("/", async (req: any, res) => {
 
     req.user.role = dbUser.role;
 
-    if (req.user.role !== "SUPER_ADMIN" && req.user.role !== "admin") {
+    if (req.user.role !== "SUPER_ADMIN") {
       return res.status(403).json({ error: "无权访问" });
     }
 

@@ -1,3 +1,4 @@
+import { getMetaToken } from "../utils.js";
 import { Router } from "express";
 import prisma from "../../db/index.js";
 import axios from "axios";
@@ -372,13 +373,12 @@ router.post("/fetch-by-personal-token", async (req, res) => {
   let isEnterpriseToken = false;
 
   if (!personalToken || personalToken.trim() === "") {
-    const tokenSetting = await prisma.setting.findUnique({
-      where: { key: "META_ACCESS_TOKEN" }
-    });
-    if (!tokenSetting || !tokenSetting.value) {
-      return res.status(400).json({ error: "请先在系统设置页绑定 Facebook 企业授权，或手动输入 Meta Access Token" });
+    const userId = (req as any).user?.id;
+    const token = await getMetaToken(userId);
+    if (!token) {
+      return res.status(400).json({ error: "请先在系统参数配置页绑定您的 Facebook 企业授权，或手动输入 Meta Access Token" });
     }
-    personalToken = tokenSetting.value;
+    personalToken = token;
     isEnterpriseToken = true;
   }
 
@@ -421,10 +421,7 @@ router.post("/batch-import", async (req: any, res) => {
   }
 
   // 获取数据库已绑定的企业级 Token，作为默认/备用 Token
-  const dbTokenSetting = await prisma.setting.findUnique({
-    where: { key: "META_ACCESS_TOKEN" }
-  });
-  const defaultToken = dbTokenSetting ? dbTokenSetting.value : "";
+  const defaultToken = (await getMetaToken(userId)) || "";
 
   const results = [];
   for (const item of bms) {

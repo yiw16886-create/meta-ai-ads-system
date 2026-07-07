@@ -12,10 +12,7 @@ export async function getMetaToken(userId?: number): Promise<string | null> {
     });
     if (acc) return acc.accessToken;
   }
-  const setting = await prisma.setting.findUnique({
-    where: { key: "META_ACCESS_TOKEN" }
-  });
-  return setting ? setting.value : null;
+  return null;
 }
 
 export function mapOffsetToIana(tzStr: string): string {

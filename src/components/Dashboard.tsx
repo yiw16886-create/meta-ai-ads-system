@@ -2235,10 +2235,16 @@ function SettingsPage() {
         const settingsRes = await axios.get("/api/settings");
         if (settingsRes.data.META_ACCESS_TOKEN) {
           setHasMetaToken(true);
+        } else {
+          setHasMetaToken(false);
         }
+        
         if (settingsRes.data.META_TOKEN_UPDATED_AT) {
           setMetaTokenUpdatedAt(settingsRes.data.META_TOKEN_UPDATED_AT);
+        } else {
+          setMetaTokenUpdatedAt(null);
         }
+        
         if (settingsRes.data.GEMINI_API_KEY) {
           setGeminiApiKey(settingsRes.data.GEMINI_API_KEY);
         }
@@ -2247,18 +2253,24 @@ function SettingsPage() {
         }
         
         const currentUser = JSON.parse(localStorage.getItem("user") || "{}");
-        if (currentUser.role === "SUPER_ADMIN" || currentUser.role === "admin") {
+        if (currentUser.role === "SUPER_ADMIN") {
           await fetchAdminSettings();
         }
 
         if (settingsRes.data.FB_AUTHORIZED_USER_ID) {
           setFbUserId(settingsRes.data.FB_AUTHORIZED_USER_ID);
+        } else {
+          setFbUserId("");
         }
         if (settingsRes.data.FB_AUTHORIZED_USER_NAME) {
           setFbUserName(settingsRes.data.FB_AUTHORIZED_USER_NAME);
+        } else {
+          setFbUserName("");
         }
         if (settingsRes.data.FB_AUTHORIZED_USER_LINK) {
           setFbUserLink(settingsRes.data.FB_AUTHORIZED_USER_LINK);
+        } else {
+          setFbUserLink("");
         }
       } catch (err) {
         toast.error("加载设置失败");
@@ -2753,7 +2765,7 @@ function SettingsPage() {
               </Button>
             )}
             
-            {(currentUser.role === "SUPER_ADMIN" || currentUser.role === "admin") && (
+            {(currentUser.role === "SUPER_ADMIN") && (
               <Button 
                 variant="outline"
                 className="w-full font-normal rounded-[4px] h-9 text-[13px] text-gray-600 border-gray-200 hover:bg-gray-50"

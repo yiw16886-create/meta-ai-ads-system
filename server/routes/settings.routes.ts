@@ -47,29 +47,11 @@ router.get("/", async (req: any, res) => {
       config["FB_AUTHORIZED_USER_LINK"] = userFbAccount.facebookLink || "";
       config["META_ACCESS_TOKEN"] = userFbAccount.accessToken || "";
     } else {
-      // Fallback: If no user-specific FacebookAccount exists, but global settings have a valid token, we use the global values.
-      const globalToken = config["META_ACCESS_TOKEN"];
-      if (globalToken && userId) {
-        // Auto-migrate: Create a user-specific FacebookAccount entry to synchronize them properly
-        try {
-          await prisma.facebookAccount.create({
-            data: {
-              userId,
-              accessToken: globalToken,
-              facebookId: config["FB_AUTHORIZED_USER_ID"] || null,
-              facebookName: config["FB_AUTHORIZED_USER_NAME"] || null,
-              facebookLink: config["FB_AUTHORIZED_USER_LINK"] || null,
-            }
-          });
-          console.log(`⚡ Auto-migrated global Facebook configuration to user ID: ${userId}`);
-        } catch (migErr) {
-          console.warn("Auto-migration of FacebookAccount failed:", migErr);
-        }
-      }
-      config["FB_AUTHORIZED_USER_ID"] = config["FB_AUTHORIZED_USER_ID"] || "";
-      config["FB_AUTHORIZED_USER_NAME"] = config["FB_AUTHORIZED_USER_NAME"] || "";
-      config["FB_AUTHORIZED_USER_LINK"] = config["FB_AUTHORIZED_USER_LINK"] || "";
-      config["META_ACCESS_TOKEN"] = config["META_ACCESS_TOKEN"] || "";
+      // 绝对不能因为全局配置存在，就把上一个用户的绑定名字渲染给新用户！
+      config["FB_AUTHORIZED_USER_ID"] = "";
+      config["FB_AUTHORIZED_USER_NAME"] = "";
+      config["FB_AUTHORIZED_USER_LINK"] = "";
+      config["META_ACCESS_TOKEN"] = "";
     }
     
     res.json(config);
