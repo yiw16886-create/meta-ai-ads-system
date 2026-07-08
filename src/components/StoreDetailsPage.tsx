@@ -17,7 +17,9 @@ import {
   CheckCircle2,
   AlertTriangle,
   ShoppingBag,
+  Search,
 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -44,6 +46,28 @@ import {
 import { Calendar } from "@/components/ui/calendar";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+
+const getPlatformSuffix = (platform: string): string => {
+  if (platform === "shopify") return ".myshopify.com";
+  if (platform === "shoplazza") return ".myshoplaza.com";
+  return ".myshopline.com"; // default is shopline
+};
+
+const getSubdomainOnly = (domain: string, platform: string): string => {
+  if (!domain) return "";
+  
+  // Clean up https:// and trailing slashes first
+  let clean = domain.replace(/^https?:\/\//i, "").replace(/\/$/, "").replace(/\/admin\/.*$/i, "");
+  
+  // Clean up any other known platform suffixes first to keep it pristine
+  clean = clean.replace(/\.myshopline\.com$/i, "").replace(/\.myshopline$/i, "")
+               .replace(/\.myshopify\.com$/i, "").replace(/\.myshopify$/i, "")
+               .replace(/\.myshoplazz\.com$/i, "").replace(/\.myshoplazz$/i, "")
+               .replace(/\.myshoplazza\.com$/i, "").replace(/\.myshoplazza$/i, "")
+               .replace(/\.myshoplaza\.com$/i, "").replace(/\.myshoplaza$/i, "");
+               
+  return clean;
+};
 
 export function StoreDetailsPage({
   onLogout,
@@ -127,6 +151,73 @@ export function StoreDetailsPage({
     owner: "",
     project: "",
   });
+
+  // Multi-select Available Ad Accounts states
+  const [availableAccounts, setAvailableAccounts] = useState<any[]>([]);
+  const [accountsListLoading, setAccountsListLoading] = useState(false);
+  const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
+  const [accSearchQuery, setAccSearchQuery] = useState("");
+
+  const fetchAvailableAccounts = async () => {
+    setAccountsListLoading(true);
+    try {
+      const res = await axios.get("/api/accounts/list");
+      if (Array.isArray(res.data)) {
+        setAvailableAccounts(res.data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch available accounts:", err);
+    } finally {
+      setAccountsListLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (addAccountOpen) {
+      fetchAvailableAccounts();
+      setSelectedAccountIds([]);
+      setAccSearchQuery("");
+    }
+  }, [addAccountOpen]);
+
+  const filteredAvailableAccounts = useMemo(() => {
+    const query = accSearchQuery.toLowerCase().trim();
+    return availableAccounts.filter(acc => {
+      const name = (acc.accountName || "").toLowerCase();
+      const id = (acc.accountId || "").toLowerCase();
+      return name.includes(query) || id.includes(query);
+    });
+  }, [availableAccounts, accSearchQuery]);
+
+  const isAllFilteredSelected = useMemo(() => {
+    if (filteredAvailableAccounts.length === 0) return false;
+    // Filter out accounts already associated with this store so we don't count them in toggle select-all logic
+    const selectables = filteredAvailableAccounts.filter(acc => {
+      return !mappings.some(
+        (m: any) => m.accountId === acc.accountId && String(m.store).toLowerCase() === String(storeData.name).toLowerCase()
+      );
+    });
+    if (selectables.length === 0) return false;
+    return selectables.every(acc => selectedAccountIds.includes(acc.accountId));
+  }, [filteredAvailableAccounts, selectedAccountIds, mappings, storeData?.name]);
+
+  const toggleSelectAllFiltered = () => {
+    const selectables = filteredAvailableAccounts.filter(acc => {
+      return !mappings.some(
+        (m: any) => m.accountId === acc.accountId && String(m.store).toLowerCase() === String(storeData.name).toLowerCase()
+      );
+    });
+    
+    if (isAllFilteredSelected) {
+      // Remove all selectable filtered IDs from selection
+      const idsToRemove = selectables.map(acc => acc.accountId);
+      setSelectedAccountIds(prev => prev.filter(id => !idsToRemove.includes(id)));
+    } else {
+      // Add all selectable filtered IDs to selection
+      const idsToAdd = selectables.map(acc => acc.accountId);
+      setSelectedAccountIds(prev => Array.from(new Set([...prev, ...idsToAdd])));
+    }
+  };
 
   const fetchAssociatedAdAccounts = async () => {
     if (!storeData?.name) return;
@@ -287,24 +378,27 @@ export function StoreDetailsPage({
 
   const handleAddAccountSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newAccount.accountId) return toast.error("请输入广告账户 ID");
+    if (selectedAccountIds.length === 0) {
+      return toast.error("请选择至少一个广告账户");
+    }
     
     try {
       const payload = {
-        mappings: [
-          {
-            accountId: newAccount.accountId,
-            accountName: newAccount.accountName || newAccount.accountId,
+        mappings: selectedAccountIds.map(id => {
+          const acc = availableAccounts.find(a => a.accountId === id);
+          return {
+            accountId: id,
+            accountName: acc?.accountName || id,
             store: storeData.name,
             owner: newAccount.owner || "未分配",
             project: newAccount.project || "未分配",
-          }
-        ]
+          };
+        })
       };
 
       const res = await axios.post("/api/mappings/batch", payload);
       if (res.data.success) {
-        toast.success("广告账户添加成功");
+        toast.success(`成功关联 ${selectedAccountIds.length} 个广告账户`);
         setAddAccountOpen(false);
         setNewAccount({
           accountId: "",
@@ -312,6 +406,7 @@ export function StoreDetailsPage({
           owner: "",
           project: "",
         });
+        setSelectedAccountIds([]);
         fetchAssociatedAdAccounts();
       } else {
         toast.error("添加广告账户失败");
@@ -521,7 +616,15 @@ export function StoreDetailsPage({
                             <button
                               key={p.id}
                               type="button"
-                              onClick={() => setStoreData({ ...storeData, platform: p.id })}
+                              onClick={() => {
+                                const currentSub = getSubdomainOnly(storeData.domain || "", storeData.platform || "shopline");
+                                const nextSuffix = getPlatformSuffix(p.id);
+                                setStoreData({
+                                  ...storeData,
+                                  platform: p.id,
+                                  domain: currentSub ? `${currentSub}${nextSuffix}` : ""
+                                });
+                              }}
                               className={cn(
                                 "flex items-start gap-2.5 p-2.5 rounded-xl border text-left transition-all cursor-pointer relative overflow-hidden",
                                 isSelected
@@ -564,16 +667,37 @@ export function StoreDetailsPage({
                         </div>
                         
                         <div className="space-y-1.5">
-                          <label className="text-xs font-bold text-slate-700">域名</label>
-                          <Input
-                            value={storeData.domain || ""}
-                            onChange={(e) => setStoreData({ ...storeData, domain: e.target.value })}
-                            placeholder="例如: xxxx.myshopline.com"
-                            className="h-9 text-sm border-slate-200 focus:border-meta-blue focus:ring-meta-blue rounded-lg"
-                          />
-                          <p className="text-[10px] text-slate-400 leading-normal mt-1">
-                            提示: 请使用 {storeData.platform === "shoplazza" ? "Shoplazza" : storeData.platform === "shopify" ? "Shopify" : "SHOPLINE"} 内部域名。
-                          </p>
+                          <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                            <span>域名</span>
+                            <span className="text-[10px] text-slate-400 font-normal">
+                              (请使用 {storeData.platform === "shoplazza" ? "Shoplazza" : storeData.platform === "shopify" ? "Shopify" : "SHOPLINE"} 内部域名)
+                            </span>
+                          </label>
+                          <div className="flex items-center rounded-lg border border-slate-250 bg-white focus-within:border-meta-blue focus-within:ring-1 focus-within:ring-meta-blue h-9 overflow-hidden transition-colors">
+                            <input
+                              type="text"
+                              value={getSubdomainOnly(storeData.domain || "", storeData.platform || "shopline")}
+                              onChange={(e) => {
+                                let sub = e.target.value.trim();
+                                sub = sub.replace(/^https?:\/\//i, "").replace(/\/.*$/, "");
+                                sub = sub.replace(/\.myshopline\.com$/i, "").replace(/\.myshopline$/i, "")
+                                         .replace(/\.myshopify\.com$/i, "").replace(/\.myshopify$/i, "")
+                                         .replace(/\.myshoplazz\.com$/i, "").replace(/\.myshoplazz$/i, "")
+                                         .replace(/\.myshoplazza\.com$/i, "").replace(/\.myshoplazza$/i, "")
+                                         .replace(/\.myshoplaza\.com$/i, "").replace(/\.myshoplaza$/i, "");
+                                const suffix = getPlatformSuffix(storeData.platform || "shopline");
+                                setStoreData({
+                                  ...storeData,
+                                  domain: sub ? `${sub}${suffix}` : ""
+                                });
+                              }}
+                              placeholder="例如: xxxx"
+                              className="flex-1 h-full px-3 text-sm border-0 bg-transparent focus:outline-none focus:ring-0 text-right font-medium text-slate-800 placeholder:text-slate-400 placeholder:font-normal"
+                            />
+                            <span className="h-full flex items-center bg-slate-50 px-3 border-l border-slate-200 text-slate-500 font-mono text-xs select-none shrink-0 font-medium">
+                              {getPlatformSuffix(storeData.platform || "shopline")}
+                            </span>
+                          </div>
                         </div>
 
                         <div className="space-y-1.5">
@@ -794,23 +918,136 @@ export function StoreDetailsPage({
                     </DialogHeader>
                     <form onSubmit={handleAddAccountSubmit} className="space-y-4">
                       <div className="space-y-1.5">
-                        <label className="text-[11px] font-bold text-slate-600 block">广告账户 ID (ID) <span className="text-red-500">*</span></label>
-                        <Input
-                          value={newAccount.accountId}
-                          onChange={(e) => setNewAccount({ ...newAccount, accountId: e.target.value })}
-                          placeholder="例如: 1234567890123"
-                          className="h-8 text-xs border-slate-200 rounded-md"
-                          required
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <label className="text-[11px] font-bold text-slate-600 block">广告账户名称 (Name)</label>
-                        <Input
-                          value={newAccount.accountName}
-                          onChange={(e) => setNewAccount({ ...newAccount, accountName: e.target.value })}
-                          placeholder="例如: YF-kolaich-1"
-                          className="h-8 text-xs border-slate-200 rounded-md"
-                        />
+                        <label className="text-[11px] font-bold text-slate-600 block">
+                          选择要关联的广告账户 (可多选) <span className="text-red-500">*</span>
+                        </label>
+                        <div className="border border-slate-200 rounded-lg p-2.5 bg-slate-50/50 space-y-2">
+                          {/* Search box with Search icon */}
+                          <div className="relative">
+                            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                            <Input
+                              value={accSearchQuery}
+                              onChange={(e) => setAccSearchQuery(e.target.value)}
+                              placeholder="输入账户名称或 ID 搜索..."
+                              className="pl-8 h-8 text-xs border-slate-200 rounded-md bg-white"
+                            />
+                          </div>
+
+                          {/* Accounts list container */}
+                          {accountsListLoading ? (
+                            <div className="h-[180px] flex items-center justify-center gap-1.5 bg-white border border-slate-100 rounded-md">
+                              <Loader2 className="w-4 h-4 text-meta-blue animate-spin" />
+                              <span className="text-[11px] text-slate-400">正在加载广告账户...</span>
+                            </div>
+                          ) : availableAccounts.length === 0 ? (
+                            <div className="h-[180px] flex items-center justify-center bg-white border border-slate-100 rounded-md text-[11px] text-slate-400">
+                              暂无可用广告账户
+                            </div>
+                          ) : (
+                            <div className="bg-white border border-slate-200 rounded-md overflow-hidden">
+                              {/* Selection Toolbar / Select All */}
+                              <div className="flex items-center justify-between px-2.5 py-1.5 border-b border-slate-100 bg-slate-50/50 text-[10px] text-slate-500">
+                                <div 
+                                  className="flex items-center gap-1.5 cursor-pointer select-none" 
+                                  onClick={toggleSelectAllFiltered}
+                                >
+                                  <Checkbox
+                                    checked={isAllFilteredSelected}
+                                    onCheckedChange={toggleSelectAllFiltered}
+                                    className="w-3.5 h-3.5"
+                                  />
+                                  <span>全选当前筛选 ({filteredAvailableAccounts.length})</span>
+                                </div>
+                                <div className="font-medium">
+                                  已选择: <span className="font-bold text-meta-blue">{selectedAccountIds.length}</span> 个
+                                </div>
+                              </div>
+
+                              {/* Scrollable list of accounts */}
+                              <div className="max-h-[150px] overflow-y-auto divide-y divide-slate-100">
+                                {filteredAvailableAccounts.length === 0 ? (
+                                  <div className="p-4 text-center text-[11px] text-slate-400">
+                                    未找到匹配的的广告账户
+                                  </div>
+                                ) : (
+                                  filteredAvailableAccounts.map((acc) => {
+                                    const isCurrentStore = mappings.some(
+                                      (m: any) => m.accountId === acc.accountId && String(m.store).toLowerCase() === String(storeData.name).toLowerCase()
+                                    );
+                                    const otherStore = mappings.find(
+                                      (m: any) => m.accountId === acc.accountId && String(m.store).toLowerCase() !== String(storeData.name).toLowerCase()
+                                    )?.store;
+
+                                    const isSelected = selectedAccountIds.includes(acc.accountId);
+
+                                    const handleItemClick = () => {
+                                      if (isCurrentStore) return; // Already linked to this store
+                                      setSelectedAccountIds(prev => 
+                                        prev.includes(acc.accountId) 
+                                          ? prev.filter(id => id !== acc.accountId)
+                                          : [...prev, acc.accountId]
+                                      );
+                                    };
+
+                                    return (
+                                      <div
+                                        key={acc.accountId}
+                                        onClick={handleItemClick}
+                                        className={cn(
+                                          "flex items-center justify-between px-2.5 py-2 hover:bg-slate-50/80 transition-colors text-xs select-none",
+                                          isCurrentStore ? "opacity-60 cursor-not-allowed bg-slate-50/40" : "cursor-pointer"
+                                        )}
+                                      >
+                                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                                          <Checkbox
+                                            checked={isSelected || isCurrentStore}
+                                            disabled={isCurrentStore}
+                                            onCheckedChange={handleItemClick}
+                                            className="w-3.5 h-3.5"
+                                          />
+                                          <div className="min-w-0 flex-1">
+                                            <div className="flex items-center gap-1.5">
+                                              <span className="font-medium text-slate-700 truncate block max-w-[150px]">
+                                                {acc.accountName || acc.accountId}
+                                              </span>
+                                              {acc.status && (
+                                                <span className={cn(
+                                                  "text-[9px] px-1.5 py-0.2 rounded font-semibold scale-90",
+                                                  acc.status === "ACTIVE" 
+                                                    ? "text-green-600 bg-green-50 border border-green-100" 
+                                                    : acc.status === "DISABLED" || acc.status === "3"
+                                                    ? "text-red-600 bg-red-50 border border-red-100"
+                                                    : "text-amber-600 bg-amber-50 border border-amber-100"
+                                                )}>
+                                                  {acc.status === "ACTIVE" ? "活跃" : acc.status === "DISABLED" || acc.status === "3" ? "停用" : acc.status}
+                                                </span>
+                                              )}
+                                            </div>
+                                            <span className="text-[10px] text-slate-400 font-mono block">
+                                              {acc.accountId}
+                                            </span>
+                                          </div>
+                                        </div>
+
+                                        <div className="flex items-center gap-1.5 shrink-0 pl-1">
+                                          {isCurrentStore ? (
+                                            <span className="text-[9px] text-green-600 bg-green-50 px-1.5 py-0.5 rounded border border-green-100 font-medium">
+                                              已关联本店铺
+                                            </span>
+                                          ) : otherStore ? (
+                                            <span className="text-[9px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 font-medium max-w-[90px] truncate block">
+                                              已在: {otherStore}
+                                            </span>
+                                          ) : null}
+                                        </div>
+                                      </div>
+                                    );
+                                  })
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       </div>
                       <div className="space-y-1.5">
                         <label className="text-[11px] font-bold text-slate-600 block">负责人 (Owner)</label>
@@ -1136,7 +1373,15 @@ export function StoreDetailsPage({
                         <button
                           key={p.id}
                           type="button"
-                          onClick={() => setStoreData({ ...storeData, platform: p.id })}
+                          onClick={() => {
+                            const currentSub = getSubdomainOnly(storeData.domain || "", storeData.platform || "shopline");
+                            const nextSuffix = getPlatformSuffix(p.id);
+                            setStoreData({
+                              ...storeData,
+                              platform: p.id,
+                              domain: currentSub ? `${currentSub}${nextSuffix}` : ""
+                            });
+                          }}
                           className={cn(
                             "flex items-start gap-3 p-3.5 rounded-xl border text-left transition-all cursor-pointer relative overflow-hidden",
                             isSelected
@@ -1185,17 +1430,34 @@ export function StoreDetailsPage({
                     </div>
 
                     <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
-                        域名 <span className="text-xs text-slate-400 font-normal">(建议内部域名)</span>
+                      <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                        <span>域名 <span className="text-xs text-slate-400 font-normal">(建议内部域名)</span></span>
                       </label>
-                      <Input
-                        value={storeData.domain || ""}
-                        onChange={(e) =>
-                          setStoreData({ ...storeData, domain: e.target.value })
-                        }
-                        placeholder="例如: xxxx.myshopline.com"
-                        className="h-10 text-sm border-slate-200 focus:border-meta-blue focus:ring-meta-blue rounded-lg"
-                      />
+                      <div className="flex items-center rounded-lg border border-slate-200 bg-white focus-within:border-meta-blue focus-within:ring-1 focus-within:ring-meta-blue h-10 overflow-hidden transition-colors">
+                        <input
+                          type="text"
+                          value={getSubdomainOnly(storeData.domain || "", storeData.platform || "shopline")}
+                          onChange={(e) => {
+                            let sub = e.target.value.trim();
+                            sub = sub.replace(/^https?:\/\//i, "").replace(/\/.*$/, "");
+                            sub = sub.replace(/\.myshopline\.com$/i, "").replace(/\.myshopline$/i, "")
+                                     .replace(/\.myshopify\.com$/i, "").replace(/\.myshopify$/i, "")
+                                     .replace(/\.myshoplazz\.com$/i, "").replace(/\.myshoplazz$/i, "")
+                                     .replace(/\.myshoplazza\.com$/i, "").replace(/\.myshoplazza$/i, "")
+                                     .replace(/\.myshoplaza\.com$/i, "").replace(/\.myshoplaza$/i, "");
+                            const suffix = getPlatformSuffix(storeData.platform || "shopline");
+                            setStoreData({
+                              ...storeData,
+                              domain: sub ? `${sub}${suffix}` : ""
+                            });
+                          }}
+                          placeholder="例如: xxxx"
+                          className="flex-1 h-full px-3 text-sm border-0 bg-transparent focus:outline-none focus:ring-0 text-right font-medium text-slate-850 placeholder:text-slate-400 placeholder:font-normal"
+                        />
+                        <span className="h-full flex items-center bg-slate-50 px-3 border-l border-slate-200 text-slate-500 font-mono text-sm select-none shrink-0 font-medium">
+                          {getPlatformSuffix(storeData.platform || "shopline")}
+                        </span>
+                      </div>
                     </div>
 
                      <div className="space-y-1.5">

@@ -3,6 +3,41 @@ import prisma from "../../db/index.js";
 import axios from "axios";
 import { getTimezoneOffsetStr, mapOffsetToIana } from "../utils.js";
 
+const getBrowserHeaders = (extraHeaders?: Record<string, string>) => {
+  return {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'application/json, text/plain, */*',
+    'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7',
+    'Cache-Control': 'no-cache',
+    'Pragma': 'no-cache',
+    ...extraHeaders
+  };
+};
+
+const getCleanDomain = (domain: string): string => {
+  let clean = domain.replace(/^https?:\/\//, "").replace(/\/$/, "").replace(/\/admin\/.*$/, "");
+  if (clean.endsWith(".myshopline")) {
+    clean = clean + ".com";
+  } else if (clean.endsWith(".myshoplazz")) {
+    clean = clean + ".com";
+  } else if (clean.endsWith(".myshoplazza")) {
+    clean = clean + ".com";
+  } else if (clean.endsWith(".myshopify")) {
+    clean = clean + ".com";
+  } else if (clean.endsWith(".myshoplaza")) {
+    clean = clean + ".com";
+  }
+
+  // Normalize Shoplaza/Shoplazza spelling variations to the correct, resolvable .myshoplaza.com domain
+  if (clean.endsWith(".myshoplazz.com")) {
+    clean = clean.replace(/\.myshoplazz\.com$/, ".myshoplaza.com");
+  } else if (clean.endsWith(".myshoplazza.com")) {
+    clean = clean.replace(/\.myshoplazza\.com$/, ".myshoplaza.com");
+  }
+
+  return clean;
+};
+
 const router = Router();
 const shoplineCache = new Map<string, { data: any; expiry: number }>();
 
@@ -58,7 +93,7 @@ async function detectStoreTimezone(
   token: string,
   existingTimezone?: string | null
 ): Promise<{ timezone: string; isFallback: boolean }> {
-  const cleanDomain = domain.replace(/^https?:\/\//, "").replace(/\/$/, "").replace(/\/admin\/.*$/, "");
+  const cleanDomain = getCleanDomain(domain);
 
   // 1. Shoplazza API
   if (platform === "shoplazza") {
@@ -72,10 +107,10 @@ async function detectStoreTimezone(
     for (const url of candidateUrls) {
       try {
         const response = await axios.get(url, {
-          headers: {
+          headers: getBrowserHeaders({
             'Access-Token': token,
             'Content-Type': 'application/json'
-          },
+          }),
           timeout: 5000
         });
         const shopTz = response.data?.shop?.timezone;
@@ -93,10 +128,10 @@ async function detectStoreTimezone(
   if (platform === "shopify") {
     try {
       const response = await axios.get(`https://${cleanDomain}/admin/api/2024-01/shop.json`, {
-        headers: {
+        headers: getBrowserHeaders({
           'X-Shopify-Access-Token': token,
           'Content-Type': 'application/json'
-        },
+        }),
         timeout: 5000
       });
       const ianaTz = response.data?.shop?.iana_timezone;
@@ -108,7 +143,7 @@ async function detectStoreTimezone(
         return { timezone: mapOffsetToIana(tzExpr), isFallback: false };
       }
     } catch (e: any) {
-      console.warn(`[Tz Detection] Shopify Shop API failed:`, e.message);
+      console.log(`[Tz Detection Info] Shopify Shop API status:`, e.message);
     }
   }
 
@@ -124,14 +159,13 @@ async function detectStoreTimezone(
       `https://${cleanDomain}/admin/api/shop.json`
     ];
 
-    let foundTz = false;
     for (const url of shoplineCandidates) {
       try {
         const response = await axios.get(url, {
-          headers: {
+          headers: getBrowserHeaders({
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'
-          },
+          }),
           timeout: 4000
         });
         const shopTz = response.data?.data?.timezone || response.data?.shop?.timezone;
@@ -142,7 +176,7 @@ async function detectStoreTimezone(
         // quiet continue
       }
     }
-    console.warn(`[Tz Detection] Shopline Shop API candidates all failed. Falling back to order inspection/other methods.`);
+    console.log(`[Tz Detection Info] Shopline Shop API candidates completed. Falling back to order inspection or other methods.`);
   }
 
   // 4. Fallback: Try order matching logic
@@ -150,19 +184,19 @@ async function detectStoreTimezone(
     let orders: any[] = [];
     if (platform === "shopify") {
       const response = await axios.get(`https://${cleanDomain}/admin/api/2024-01/orders.json?limit=1`, {
-        headers: { 'X-Shopify-Access-Token': token },
+        headers: getBrowserHeaders({ 'X-Shopify-Access-Token': token }),
         timeout: 5000
       });
       orders = response.data?.orders || [];
     } else if (platform === "shopline") {
       const response = await axios.get(`https://${cleanDomain}/admin/openapi/v20240301/orders.json?limit=1`, {
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: getBrowserHeaders({ 'Authorization': `Bearer ${token}` }),
         timeout: 5000
       });
       orders = response.data?.data || response.data?.orders || [];
     } else if (platform === "shoplazza") {
       const response = await axios.get(`https://${cleanDomain}/openapi/2022-01/orders?limit=1`, {
-        headers: { 'Access-Token': token },
+        headers: getBrowserHeaders({ 'Access-Token': token }),
         timeout: 5000
       });
       orders = response.data?.orders || [];
@@ -177,7 +211,7 @@ async function detectStoreTimezone(
       }
     }
   } catch (e: any) {
-    console.warn(`[Tz Detection] Orders inspect failed:`, e.message);
+    console.log(`[Tz Detection Info] Orders inspect status:`, e.message);
   }
 
   // 5. Fallback to existing timezone
@@ -186,7 +220,7 @@ async function detectStoreTimezone(
   }
 
   // 6. Last resort default standard compliant
-  console.warn(`[Tz Detection] All methods failed. Defaulting with risk warning to America/Los_Angeles.`);
+  console.log(`[Tz Detection Info] All methods finished. Defaulting to America/Los_Angeles.`);
   return { timezone: "America/Los_Angeles", isFallback: true };
 }
 
@@ -526,11 +560,11 @@ router.post("/test-shoplazza-connection", async (req, res) => {
     return res.status(400).json({ error: "域名 (domain) 和授权秘钥 (Access-Token) 不能为空" });
   }
 
-  const cleanDomain = domain.replace(/^https?:\/\//, "").replace(/\/$/, "").replace(/\/admin\/.*$/, "");
-  const headers = {
+  const cleanDomain = getCleanDomain(domain);
+  const headers = getBrowserHeaders({
     'Access-Token': token,
     'Content-Type': 'application/json'
-  };
+  });
 
   const productCandidates = [
     `https://${cleanDomain}/openapi/2022-01/products?limit=10`,
@@ -665,11 +699,11 @@ router.post("/test-shopify-connection", async (req, res) => {
     return res.status(400).json({ error: "域名 (domain) 和授权秘钥 (Access-Token) 不能为空" });
   }
 
-  const cleanDomain = domain.replace(/^https?:\/\//, "").replace(/\/$/, "").replace(/\/admin\/.*$/, "");
-  const headers = {
+  const cleanDomain = getCleanDomain(domain);
+  const headers = getBrowserHeaders({
     'X-Shopify-Access-Token': token,
     'Content-Type': 'application/json'
-  };
+  });
 
   const url = `https://${cleanDomain}/admin/api/2024-01/products.json?limit=10`;
   console.log(`[Shopify Test HTTP] Trying URL: ${url}`);
@@ -720,11 +754,11 @@ router.post("/test-shopline-connection", async (req, res) => {
     return res.status(400).json({ error: "域名 (domain) 和授权秘钥 (Access-Token) 不能为空" });
   }
 
-  const cleanDomain = domain.replace(/^https?:\/\//, "").replace(/\/$/, "").replace(/\/admin\/.*$/, "");
-  const headers = {
+  const cleanDomain = getCleanDomain(domain);
+  const headers = getBrowserHeaders({
     'Authorization': `Bearer ${token}`,
     'Content-Type': 'application/json'
-  };
+  });
 
   const productCandidates = [
     `https://${cleanDomain}/admin/openapi/v20240401/products/list.json?limit=10`,

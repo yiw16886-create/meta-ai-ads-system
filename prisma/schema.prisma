@@ -292,6 +292,8 @@ model FacebookBusinessManager {
   adAccountLimit  Int      @default(1)
   role            String   @default("ADMIN") // ADMIN (完全权限) / EMPLOYEE (部分权限) / UNKNOWN
   healthDetails   String?
+  syncStatus      String   @default("SUCCESS") // SUCCESS / FAILED
+  syncError       String?  // 保存同步错误日志
   userId          Int      // 🌟 关联系统用户ID
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt

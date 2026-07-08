@@ -5,98 +5,29 @@ import axios from "axios";
 
 const router = Router();
 
-// Helper function to generate mock health details based on BM status and name
+// Helper function to generate empty, clean health details structure (no mock data)
 function generateMockHealthDetails(status: string, name: string, bmId: string) {
   const lastSynced = new Date().toISOString();
-  if (status === "ACTIVE" || status === "UNKNOWN") {
-    return JSON.stringify({
-      adAccounts: {
-        total: 2,
-        active: 2,
-        disabled: 0,
-        pendingReview: 0,
-        details: [
-          { id: `act_101_${bmId}`, accountId: `101_${bmId}`, name: `${name} - 广告账户 01`, status: "ACTIVE", rawStatus: 1, disableReason: "NONE" },
-          { id: `act_102_${bmId}`, accountId: `102_${bmId}`, name: `${name} - 广告账户 02`, status: "ACTIVE", rawStatus: 1, disableReason: "NONE" }
-        ]
-      },
-      pages: {
-        total: 1,
-        published: 1,
-        unpublished: 0,
-        details: [
-          { id: `page_201_${bmId}`, name: `${name} - 官方主页`, status: "ACTIVE" }
-        ]
-      },
-      pixels: {
-        total: 1,
-        details: [
-          { id: `px_301_${bmId}`, name: `${name} - 共享像素`, status: "ACTIVE" }
-        ]
-      },
-      lastSynced
-    });
-  } else if (status === "RESTRICTED") {
-    return JSON.stringify({
-      adAccounts: {
-        total: 3,
-        active: 2,
-        disabled: 1,
-        pendingReview: 0,
-        details: [
-          { id: `act_101_${bmId}`, accountId: `101_${bmId}`, name: `${name} - 广告账户 01`, status: "ACTIVE", rawStatus: 1, disableReason: "NONE" },
-          { id: `act_102_${bmId}`, accountId: `102_${bmId}`, name: `${name} - 广告账户 02 (受限中)`, status: "ACTIVE", rawStatus: 1, disableReason: "NONE" },
-          { id: `act_103_${bmId}`, accountId: `103_${bmId}`, name: `${name} - 广告账户 03 (停用)`, status: "DISABLED", rawStatus: 2, disableReason: "POLICY_VIOLATION" }
-        ]
-      },
-      pages: {
-        total: 2,
-        published: 1,
-        unpublished: 1,
-        details: [
-          { id: `page_201_${bmId}`, name: `${name} - 备用主页`, status: "ACTIVE" },
-          { id: `page_202_${bmId}`, name: `${name} - 推广主页 (未发布/封禁)`, status: "DISABLED" }
-        ]
-      },
-      pixels: {
-        total: 2,
-        details: [
-          { id: `px_301_${bmId}`, name: `${name} - 像素 01`, status: "ACTIVE" },
-          { id: `px_302_${bmId}`, name: `${name} - 像素 02 (异常)`, status: "DISABLED" }
-        ]
-      },
-      lastSynced
-    });
-  } else {
-    // DISABLED
-    return JSON.stringify({
-      adAccounts: {
-        total: 2,
-        active: 0,
-        disabled: 2,
-        pendingReview: 0,
-        details: [
-          { id: `act_101_${bmId}`, accountId: `101_${bmId}`, name: `${name} - 广告账户 01 (禁用)`, status: "DISABLED", rawStatus: 2, disableReason: "UNUSUAL_ACTIVITY" },
-          { id: `act_102_${bmId}`, accountId: `102_${bmId}`, name: `${name} - 广告账户 02 (禁用)`, status: "DISABLED", rawStatus: 2, disableReason: "POLICY_VIOLATION" }
-        ]
-      },
-      pages: {
-        total: 1,
-        published: 0,
-        unpublished: 1,
-        details: [
-          { id: `page_201_${bmId}`, name: `${name} - 推广主页 (已封禁)`, status: "DISABLED" }
-        ]
-      },
-      pixels: {
-        total: 1,
-        details: [
-          { id: `px_301_${bmId}`, name: `${name} - 像素 (不可用)`, status: "DISABLED" }
-        ]
-      },
-      lastSynced
-    });
-  }
+  return JSON.stringify({
+    adAccounts: {
+      total: 0,
+      active: 0,
+      disabled: 0,
+      pendingReview: 0,
+      details: []
+    },
+    pages: {
+      total: 0,
+      published: 0,
+      unpublished: 0,
+      details: []
+    },
+    pixels: {
+      total: 0,
+      details: []
+    },
+    lastSynced
+  });
 }
 
 // 辅助检测 Meta Graph API 接口抛出的错误是否由账户受限、封禁、政策违规引起
@@ -165,7 +96,7 @@ async function getUserIdForToken(token: string) {
 
 // 核心同步逻辑：同步单个 BM 的健康状态与子资产，并更新数据库 (两步走分步安全抓取，拒绝嵌套，try-catch 独立捕获隔离)
 export async function syncBmStatusAndHealth(bm: any) {
-  let status = "ACTIVE";
+  let status = bm.status || "ACTIVE"; // Keep existing status if API fails
   let verification = bm.verification || "UNVERIFIED";
   const adAccountLimit = bm.adAccountLimit || 1;
   const dailySpendLimit = bm.dailySpendLimit || "UNKNOWN";
@@ -173,9 +104,15 @@ export async function syncBmStatusAndHealth(bm: any) {
   const role = bm.role || "ADMIN";
 
   let apiSuccess = false;
+  let syncStatus = "SUCCESS";
+  let syncError: string | null = null;
+
+  // Real arrays we will fetch from Meta Graph API
+  let fetchedAdAccounts: any[] = [];
+  let fetchedPages: any[] = [];
+  let fetchedPixels: any[] = [];
 
   try {
-    // 【修改后的轻量化 API 请求：只抓表面，绝对不写大括号 {} 嵌套任何下游资产】
     console.log(`[Meta BM Sync] Fetching lightweight basic details for BM ${bm.bmId}`);
     const basicRes = await axios.get(
       `https://graph.facebook.com/v20.0/${bm.bmId}`,
@@ -203,33 +140,168 @@ export async function syncBmStatusAndHealth(bm: any) {
       
       status = "ACTIVE";
     }
-  } catch (fbErr: any) {
-    const errMsg = fbErr.response?.data?.error?.message || fbErr.message;
-    console.log(`[Meta BM Sync] Basic info fetch failed for BM ${bm.bmId} (${errMsg}). Adopting previous cached or fallback status.`);
+
+    // Now, fetch actual sub-assets from Meta API - 100% real, no mocking!
+    console.log(`[Meta BM Sync] Fetching sub-assets for BM ${bm.bmId}`);
     
+    // 1. Fetch Ad Accounts (Client & Owned)
+    try {
+      const [clientAccsRes, ownedAccsRes] = await Promise.all([
+        axios.get(`https://graph.facebook.com/v20.0/${bm.bmId}/client_ad_accounts`, {
+          params: { fields: "id,name,account_id,account_status,disable_reason", limit: 200, access_token: bm.systemToken },
+          timeout: 10000
+        }).catch(() => ({ data: { data: [] } })),
+        axios.get(`https://graph.facebook.com/v20.0/${bm.bmId}/owned_ad_accounts`, {
+          params: { fields: "id,name,account_id,account_status,disable_reason", limit: 200, access_token: bm.systemToken },
+          timeout: 10000
+        }).catch(() => ({ data: { data: [] } }))
+      ]);
+
+      const allAccounts = [
+        ...(clientAccsRes.data?.data || []),
+        ...(ownedAccsRes.data?.data || [])
+      ];
+
+      // De-duplicate by id
+      const seenIds = new Set();
+      for (const acc of allAccounts) {
+        if (!acc.id || seenIds.has(acc.id)) continue;
+        seenIds.add(acc.id);
+
+        let accStatus: "ACTIVE" | "RESTRICTED" | "DISABLED" = "ACTIVE";
+        if (acc.account_status === 2) {
+          accStatus = "DISABLED";
+        } else if (acc.account_status === 3 || acc.account_status === 101 || acc.account_status === 102) {
+          accStatus = "RESTRICTED";
+        }
+
+        fetchedAdAccounts.push({
+          id: acc.id,
+          accountId: acc.account_id || acc.id.replace("act_", ""),
+          name: acc.name || `Ad Account ${acc.account_id || acc.id}`,
+          status: accStatus,
+          rawStatus: acc.account_status || 1,
+          disableReason: acc.disable_reason || "NONE"
+        });
+      }
+    } catch (err: any) {
+      console.warn(`[Meta BM Sync] Failed to fetch real ad accounts for BM ${bm.bmId}:`, err.message);
+    }
+
+    // 2. Fetch Pages (Owned & Owned Businesses)
+    try {
+      const [ownedPagesRes, ownedBizRes] = await Promise.all([
+        axios.get(`https://graph.facebook.com/v20.0/${bm.bmId}/owned_pages`, {
+          params: { fields: "id,name", limit: 200, access_token: bm.systemToken },
+          timeout: 10000
+        }).catch(() => ({ data: { data: [] } })),
+        axios.get(`https://graph.facebook.com/v20.0/${bm.bmId}/owned_businesses`, {
+          params: { fields: "id,name", limit: 200, access_token: bm.systemToken },
+          timeout: 10000
+        }).catch(() => ({ data: { data: [] } }))
+      ]);
+
+      const allPages = [
+        ...(ownedPagesRes.data?.data || []),
+        ...(ownedBizRes.data?.data || [])
+      ];
+
+      const seenPageIds = new Set();
+      for (const p of allPages) {
+        if (!p.id || seenPageIds.has(p.id)) continue;
+        seenPageIds.add(p.id);
+
+        fetchedPages.push({
+          id: p.id,
+          name: p.name || `Page ${p.id}`,
+          status: "ACTIVE"
+        });
+      }
+    } catch (err: any) {
+      console.warn(`[Meta BM Sync] Failed to fetch real pages for BM ${bm.bmId}:`, err.message);
+    }
+
+    // 3. Fetch Pixels
+    try {
+      const pixelsRes = await axios.get(`https://graph.facebook.com/v20.0/${bm.bmId}/adspixels`, {
+        params: { fields: "id,name", limit: 200, access_token: bm.systemToken },
+        timeout: 10000
+      });
+
+      const allPixels = pixelsRes.data?.data || [];
+      for (const px of allPixels) {
+        fetchedPixels.push({
+          id: px.id,
+          name: px.name || `Pixel ${px.id}`,
+          status: "ACTIVE"
+        });
+      }
+    } catch (err: any) {
+      console.warn(`[Meta BM Sync] Failed to fetch real pixels for BM ${bm.bmId}:`, err.message);
+    }
+
+  } catch (fbErr: any) {
+    apiSuccess = false;
+    syncStatus = "FAILED";
+    syncError = fbErr.response?.data?.error?.message || fbErr.message;
+    console.error(`[Meta BM Sync] BM ${bm.bmId} sync failed:`, syncError);
+    
+    // Check if it is restricted or disabled from Meta API
     const restriction = checkErrorForRestriction(fbErr);
     if (restriction) {
       status = restriction;
-    } else {
-      status = bm.status || "ACTIVE";
     }
   }
 
+  // Compile final health details string - containing only 100% real fetched assets!
   let healthDetailsStr = "";
-  if (apiSuccess) {
-    healthDetailsStr = generateMockHealthDetails(status, verifiedName, bm.bmId);
+  if (syncStatus === "SUCCESS") {
+    const activeAdAccounts = fetchedAdAccounts.filter(a => a.status === "ACTIVE").length;
+    const disabledAdAccounts = fetchedAdAccounts.filter(a => a.status === "DISABLED").length;
+    const restrictedAdAccounts = fetchedAdAccounts.filter(a => a.status === "RESTRICTED").length;
+
+    healthDetailsStr = JSON.stringify({
+      adAccounts: {
+        total: fetchedAdAccounts.length,
+        active: activeAdAccounts,
+        disabled: disabledAdAccounts,
+        pendingReview: restrictedAdAccounts,
+        details: fetchedAdAccounts
+      },
+      pages: {
+        total: fetchedPages.length,
+        published: fetchedPages.length,
+        unpublished: 0,
+        details: fetchedPages
+      },
+      pixels: {
+        total: fetchedPixels.length,
+        details: fetchedPixels
+      },
+      lastSynced: new Date().toISOString()
+    });
   } else {
-    // 接口由于鉴权等错误彻底失败时，如果数据库已有旧的 healthDetails 且格式正常，我们保留并更新它的 lastSynced 字段
+    // If sync failed, retain old assets from healthDetails but update sync metadata if it exists
     if (bm.healthDetails) {
       try {
         const healthObj = JSON.parse(bm.healthDetails);
         healthObj.lastSynced = new Date().toISOString();
         healthDetailsStr = JSON.stringify(healthObj);
       } catch {
-        healthDetailsStr = generateMockHealthDetails(status, verifiedName, bm.bmId);
+        healthDetailsStr = JSON.stringify({
+          adAccounts: { total: 0, active: 0, disabled: 0, pendingReview: 0, details: [] },
+          pages: { total: 0, published: 0, unpublished: 0, details: [] },
+          pixels: { total: 0, details: [] },
+          lastSynced: new Date().toISOString()
+        });
       }
     } else {
-      healthDetailsStr = generateMockHealthDetails(status, verifiedName, bm.bmId);
+      healthDetailsStr = JSON.stringify({
+        adAccounts: { total: 0, active: 0, disabled: 0, pendingReview: 0, details: [] },
+        pages: { total: 0, published: 0, unpublished: 0, details: [] },
+        pixels: { total: 0, details: [] },
+        lastSynced: new Date().toISOString()
+      });
     }
   }
 
@@ -243,7 +315,9 @@ export async function syncBmStatusAndHealth(bm: any) {
       adAccountLimit,
       dailySpendLimit,
       role,
-      healthDetails: healthDetailsStr
+      healthDetails: healthDetailsStr,
+      syncStatus,
+      syncError
     },
   });
 
@@ -710,61 +784,86 @@ router.get("/:id/assets", async (req: any, res) => {
       pixels = pixelsRes.data?.data || [];
     } catch (e: any) {
       console.warn(`[Meta Assets Fetch] Isolated pixel fetch failed for BM ${bm.bmId}: ${e.message}`);
-      pixels = [
-        { id: `px_${bm.bmId}_01`, name: `${bm.name} - Pixel A (备用)` },
-        { id: `px_${bm.bmId}_02`, name: `${bm.name} - 主投放像素` },
-      ];
+      pixels = [];
     }
 
-    // 2. 独立抓取 owned_pages
+    // 2. 独立抓取 owned_pages & owned_businesses
     try {
       console.log(`[Meta Assets Fetch] Fetching pages separately for BM ${bm.bmId}`);
-      const pagesRes = await axios.get(
-        `https://graph.facebook.com/v20.0/${bm.bmId}/owned_pages`,
-        {
-          params: {
-            fields: "name,id,username",
-            limit: 100,
-            access_token: bm.systemToken,
-          },
-          timeout: 8000,
-        }
-      );
-      pages = pagesRes.data?.data || [];
+      const [pagesRes, bizRes] = await Promise.all([
+        axios.get(
+          `https://graph.facebook.com/v20.0/${bm.bmId}/owned_pages`,
+          {
+            params: { fields: "name,id,username", limit: 100, access_token: bm.systemToken },
+            timeout: 8000,
+          }
+        ).catch(() => ({ data: { data: [] } })),
+        axios.get(
+          `https://graph.facebook.com/v20.0/${bm.bmId}/owned_businesses`,
+          {
+            params: { fields: "name,id", limit: 100, access_token: bm.systemToken },
+            timeout: 8000,
+          }
+        ).catch(() => ({ data: { data: [] } }))
+      ]);
+
+      const mergedPages = [
+        ...(pagesRes.data?.data || []),
+        ...(bizRes.data?.data || [])
+      ];
+
+      const seenPageIds = new Set();
+      pages = [];
+      for (const p of mergedPages) {
+        if (!p.id || seenPageIds.has(p.id)) continue;
+        seenPageIds.add(p.id);
+        pages.push(p);
+      }
     } catch (e: any) {
       console.warn(`[Meta Assets Fetch] Isolated page fetch failed for BM ${bm.bmId}: ${e.message}`);
-      pages = [
-        { id: `page_${bm.bmId}_01`, name: `${bm.name} Official Brand Page` },
-        { id: `page_${bm.bmId}_02`, name: `${bm.name} Promotion Hub` },
-      ];
+      pages = [];
     }
 
-    // 3. 独立抓取 owned_ad_accounts
+    // 3. 独立抓取 owned_ad_accounts & client_ad_accounts
     try {
       console.log(`[Meta Assets Fetch] Fetching ad accounts separately for BM ${bm.bmId}`);
-      const accRes = await axios.get(
-        `https://graph.facebook.com/v20.0/${bm.bmId}/owned_ad_accounts`,
-        {
-          params: {
-            fields: "name,id,account_id,account_status",
-            limit: 100,
-            access_token: bm.systemToken,
-          },
-          timeout: 8000,
-        }
-      );
-      adAccounts = (accRes.data?.data || []).map((a: any) => ({
-        id: a.id,
-        name: a.name,
-        accountId: a.account_id,
-        status: a.account_status === 1 ? "ACTIVE" : "DISABLED",
-      }));
+      const [ownedRes, clientRes] = await Promise.all([
+        axios.get(
+          `https://graph.facebook.com/v20.0/${bm.bmId}/owned_ad_accounts`,
+          {
+            params: { fields: "name,id,account_id,account_status", limit: 100, access_token: bm.systemToken },
+            timeout: 8000,
+          }
+        ).catch(() => ({ data: { data: [] } })),
+        axios.get(
+          `https://graph.facebook.com/v20.0/${bm.bmId}/client_ad_accounts`,
+          {
+            params: { fields: "name,id,account_id,account_status", limit: 100, access_token: bm.systemToken },
+            timeout: 8000,
+          }
+        ).catch(() => ({ data: { data: [] } }))
+      ]);
+
+      const mergedAccs = [
+        ...(ownedRes.data?.data || []),
+        ...(clientRes.data?.data || [])
+      ];
+
+      const seenAccIds = new Set();
+      adAccounts = [];
+      for (const a of mergedAccs) {
+        if (!a.id || seenAccIds.has(a.id)) continue;
+        seenAccIds.add(a.id);
+        adAccounts.push({
+          id: a.id,
+          name: a.name || `Ad Account ${a.account_id || a.id}`,
+          accountId: a.account_id || a.id.replace("act_", ""),
+          status: a.account_status === 1 ? "ACTIVE" : "DISABLED",
+        });
+      }
     } catch (e: any) {
       console.warn(`[Meta Assets Fetch] Isolated ad account fetch failed for BM ${bm.bmId}: ${e.message}`);
-      adAccounts = [
-        { id: `act_acc_${bm.bmId}_01`, name: `${bm.name} - Ad Account 01`, accountId: `acc_${bm.bmId}_01`, status: "ACTIVE" },
-        { id: `act_acc_${bm.bmId}_02`, name: `${bm.name} - Ad Account 02`, accountId: `acc_${bm.bmId}_02`, status: "ACTIVE" },
-      ];
+      adAccounts = [];
     }
 
     return res.json({ pixels, pages, adAccounts });

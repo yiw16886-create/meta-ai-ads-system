@@ -101,8 +101,15 @@ router.get("/:accountId/details", async (req: any, res) => {
       {
         params: {
           fields,
-          limit: 100, // 可以支持翻页，这里先返回最多 100 条
+          limit: 500, // Increased limit from 100 to 500 to fetch more records
           access_token: token,
+          filtering: JSON.stringify([
+            {
+              field: "effective_status",
+              operator: "IN",
+              value: ["ACTIVE", "PAUSED", "DELETED", "ARCHIVED"]
+            }
+          ])
         },
       },
     );
@@ -448,56 +455,115 @@ router.get("/list", async (req: any, res) => {
       return res.json([]);
     }
 
-    // 获取停用的账户 ID 列表
-    const disabledAccounts = await prisma.metaAccountMonitoring.findMany({
-      where: {
-        OR: [
-          { status: 3 },
-          { status: 2 },
-          { activityStatus: 3 }
-        ]
-      },
-      select: { accountId: true }
+    // 1. 获取当前用户绑定的 Business Managers 及其健康详情中的广告账户和状态
+    const bms = await prisma.facebookBusinessManager.findMany({
+      where: { userId }
     });
-    const disabledAccountIds = disabledAccounts.map(a => a.accountId);
+    const bmAccounts = new Map<string, { name: string; status?: string }>();
+    bms.forEach(bm => {
+      if (bm.healthDetails) {
+        try {
+          const parsed = JSON.parse(bm.healthDetails);
+          const details = parsed?.adAccounts?.details;
+          if (Array.isArray(details)) {
+            details.forEach((acc: any) => {
+              if (acc.id) {
+                const cleanId = String(acc.id).replace("act_", "").trim();
+                const accName = acc.name && acc.name !== "Unknown" ? acc.name : "";
+                const accStatus = acc.status || "";
+                
+                const existing = bmAccounts.get(cleanId);
+                bmAccounts.set(cleanId, {
+                  name: accName || existing?.name || "",
+                  status: accStatus || existing?.status || ""
+                });
+              }
+            });
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+    });
 
     const allAdAccounts = await prisma.adAccount.findMany();
     const allMonitoring = await prisma.metaAccountMonitoring.findMany();
     const allMappings = await prisma.accountMapping.findMany();
     
     const uniqueMap = new Map();
-    
+
+    const processAccount = (rawId: string, currentName?: string | null, sourceStatus?: string | null) => {
+      if (!rawId) return;
+      const idStr = String(rawId).replace("act_", "").trim();
+      
+      // Determine best name
+      let bestName = "";
+      
+      // Check BM parsed details first (highly accurate)
+      if (bmAccounts.has(idStr)) {
+        bestName = bmAccounts.get(idStr)!.name || "";
+      }
+      
+      // Fallback 1: currentName if valid (not Unknown/null/empty/Default Meta Account)
+      if (!bestName && currentName && currentName !== "Unknown" && currentName !== "Default Meta Account") {
+        bestName = currentName;
+      }
+      
+      // Fallback 2: if still empty or "Unknown", use the id itself
+      if (!bestName || bestName === "Unknown") {
+        bestName = idStr;
+      }
+
+      // Determine best status
+      let status = bmAccounts.get(idStr)?.status || sourceStatus || "";
+      
+      uniqueMap.set(idStr, {
+        accountId: idStr,
+        accountName: bestName,
+        status: status
+      });
+    };
+
+    // 1. Process BM accounts first to seed the map with best possible names & statuses
+    bmAccounts.forEach((val, key) => {
+      processAccount(key, val.name, val.status);
+    });
+
+    // 2. Process all database tables
     allAdAccounts.forEach(acc => {
       const idStr = acc.fb_account_id.replace("act_", "");
-      if (!disabledAccountIds.includes(idStr) && !uniqueMap.has(idStr)) {
-        uniqueMap.set(idStr, {
-          accountId: idStr,
-          accountName: acc.fb_account_name || idStr
-        });
-      }
+      const existing = uniqueMap.get(idStr);
+      processAccount(
+        idStr, 
+        existing?.accountName || acc.fb_account_name, 
+        existing?.status || (acc.activityStatus === 3 ? "DISABLED" : "")
+      );
     });
 
     allMonitoring.forEach(acc => {
       const idStr = acc.accountId.replace("act_", "");
-      if (!disabledAccountIds.includes(idStr) && !uniqueMap.has(idStr)) {
-        uniqueMap.set(idStr, {
-          accountId: idStr,
-          accountName: acc.accountName || idStr
-        });
+      const existing = uniqueMap.get(idStr);
+      let statusStr = "";
+      if (acc.status === 2 || acc.status === 3 || acc.activityStatus === 3) {
+        statusStr = "DISABLED";
       }
+      processAccount(
+        idStr, 
+        existing?.accountName || acc.accountName, 
+        existing?.status || statusStr
+      );
     });
 
     allMappings.forEach(acc => {
       const idStr = acc.fbAccountId.replace("act_", "");
-      if (!disabledAccountIds.includes(idStr) && !uniqueMap.has(idStr)) {
-        uniqueMap.set(idStr, {
-          accountId: idStr,
-          accountName: acc.name || idStr
-        });
-      }
+      const existing = uniqueMap.get(idStr);
+      processAccount(
+        idStr, 
+        existing?.accountName || acc.name, 
+        existing?.status
+      );
     });
 
-    
     res.json(Array.from(uniqueMap.values()));
   } catch (err: any) {
     console.error("Fetch unique accounts error:", err);

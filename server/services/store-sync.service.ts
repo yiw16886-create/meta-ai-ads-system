@@ -10,6 +10,41 @@ dayjs.extend(timezone);
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const getBrowserHeaders = (extraHeaders?: Record<string, string>) => {
+  return {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'application/json, text/plain, */*',
+    'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7',
+    'Cache-Control': 'no-cache',
+    'Pragma': 'no-cache',
+    ...extraHeaders
+  };
+};
+
+const getCleanDomain = (domain: string): string => {
+  let clean = domain.replace(/^https?:\/\//, "").replace(/\/$/, "").replace(/\/admin\/.*$/, "");
+  if (clean.endsWith(".myshopline")) {
+    clean = clean + ".com";
+  } else if (clean.endsWith(".myshoplazz")) {
+    clean = clean + ".com";
+  } else if (clean.endsWith(".myshoplazza")) {
+    clean = clean + ".com";
+  } else if (clean.endsWith(".myshopify")) {
+    clean = clean + ".com";
+  } else if (clean.endsWith(".myshoplaza")) {
+    clean = clean + ".com";
+  }
+
+  // Normalize Shoplaza/Shoplazza spelling variations to the correct, resolvable .myshoplaza.com domain
+  if (clean.endsWith(".myshoplazz.com")) {
+    clean = clean.replace(/\.myshoplazz\.com$/, ".myshoplaza.com");
+  } else if (clean.endsWith(".myshoplazza.com")) {
+    clean = clean.replace(/\.myshoplazza\.com$/, ".myshoplaza.com");
+  }
+
+  return clean;
+};
+
 function extractOrderStoreIdStr(o: any): string | null {
   if (!o) return null;
 
@@ -155,11 +190,11 @@ export async function syncStoreData(startDate: string, endDate: string, storeIde
 }
 
 async function syncShoplineStoreData(store: any, startDate: string, endDate: string) {
-  const domain = store.domain.replace(/^https?:\/\//, "").replace(/\/$/, "").replace(/\/admin\/.*$/, "");
-  const headers = { 
+  const domain = getCleanDomain(store.domain);
+  const headers = getBrowserHeaders({ 
     'Authorization': `Bearer ${store.shopline_token}`,
     'Content-Type': 'application/json'
-  };
+  });
   
   // 1. Fetch Products
   // We skip fetching products directly for Shopline as the /products.json endpoint is often not exposed or returns 404.
@@ -293,11 +328,12 @@ async function syncShoplineStoreData(store: any, startDate: string, endDate: str
 
 async function syncShopifyStoreData(store: any, startDate: string, endDate: string) {
       try {
-        const domain = store.domain.replace(/^https?:\/\//, ""); // clean up URL
+        const domain = getCleanDomain(store.domain); // clean up URL
         // We set both headers to maximize compatibility if it's a shopify/shopline hybrid or custom endpoint
-        const headers: Record<string, string> = {};
-        if (store.shopify_token) headers['X-Shopify-Access-Token'] = store.shopify_token;
-        if (store.shopline_token) headers['Authorization'] = `Bearer ${store.shopline_token}`;
+        const rawHeaders: Record<string, string> = {};
+        if (store.shopify_token) rawHeaders['X-Shopify-Access-Token'] = store.shopify_token;
+        if (store.shopline_token) rawHeaders['Authorization'] = `Bearer ${store.shopline_token}`;
+        const headers = getBrowserHeaders(rawHeaders);
         
         console.log(`[Store Sync] Starting API sync for store ${store.id} (${store.name}) on domain ${domain}`);
         
@@ -488,11 +524,11 @@ async function syncShopifyStoreData(store: any, startDate: string, endDate: stri
 
 async function syncShoplazzaStoreData(store: any, startDate: string, endDate: string) {
   try {
-    const domain = store.domain.replace(/^https?:\/\//, "").replace(/\/$/, "").replace(/\/admin\/.*$/, "");
-    const headers = {
+    const domain = getCleanDomain(store.domain);
+    const headers = getBrowserHeaders({
       'Access-Token': store.shoplazza_token,
       'Content-Type': 'application/json'
-    };
+    });
     
     console.log(`[Shoplazza Sync] Starting API sync for store ${store.id} (${store.name}) on domain ${domain}`);
     

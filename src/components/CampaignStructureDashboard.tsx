@@ -41,18 +41,68 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
 
   useEffect(() => {
     const fetchAccounts = async () => {
+      if (!startDate || !endDate) return;
       try {
-        const res = await axios.get("/api/accounts/list");
-        if (Array.isArray(res.data) && res.data.length > 0) {
-          setAccounts(res.data);
-          setSelectedAccount(res.data[0].accountId); // Default to first account
+        const [accountsRes, insightsRes] = await Promise.all([
+          axios.get("/api/accounts/list"),
+          axios.get("/api/insights", {
+            params: {
+              startDate: format(startDate, "yyyy-MM-dd"),
+              endDate: format(endDate, "yyyy-MM-dd")
+            }
+          })
+        ]);
+
+        const allAccs = Array.isArray(accountsRes.data) ? accountsRes.data : [];
+        const insights = Array.isArray(insightsRes.data) ? insightsRes.data : [];
+
+        // Find the set of accountIds that have data (spend > 0) in the current range
+        const activeAccountIds = new Set(
+          insights
+            .filter((ins: any) => parseFloat(ins.spend || "0") > 0)
+            .map((ins: any) => ins.accountId.replace("act_", "").trim())
+        );
+
+        // Filter the accounts list to only include those with spend > 0 in the current date range
+        const filteredAccs = allAccs.filter((acc: any) => {
+          const cleanId = acc.accountId.replace("act_", "").trim();
+          const hasSpend = activeAccountIds.has(cleanId);
+          // Hide "Unknown" or unnamed accounts if they have no spend
+          const name = acc.accountName || "";
+          if ((name === "Unknown" || name.toLowerCase().includes("unknown") || name === cleanId) && !hasSpend) {
+            return false;
+          }
+          return hasSpend;
+        });
+
+        // Fallback: if no accounts have spend in this date range, fall back to showing all accounts with valid names
+        // so the select dropdown doesn't look completely empty or broken.
+        const finalAccs = filteredAccs.length > 0 ? filteredAccs : allAccs.filter((acc: any) => {
+          const name = acc.accountName || "";
+          const cleanId = acc.accountId.replace("act_", "").trim();
+          return name !== "Unknown" && !name.toLowerCase().includes("unknown") && name !== cleanId;
+        });
+
+        const safeFinalAccs = finalAccs.length > 0 ? finalAccs : allAccs;
+
+        setAccounts(safeFinalAccs);
+
+        // Select the first account with spend by default if possible
+        if (safeFinalAccs.length > 0) {
+          const currentlySelectedClean = selectedAccount ? selectedAccount.replace("act_", "").trim() : "";
+          const isStillValid = safeFinalAccs.some((acc: any) => acc.accountId.replace("act_", "").trim() === currentlySelectedClean);
+          if (!isStillValid) {
+            setSelectedAccount(safeFinalAccs[0].accountId);
+          }
+        } else {
+          setSelectedAccount("");
         }
       } catch (e) {
-        console.error("Failed to fetch accounts", e);
+        console.error("Failed to fetch or filter accounts", e);
       }
     };
     fetchAccounts();
-  }, []);
+  }, [startDate, endDate]);
 
   const fetchDataForTab = async () => {
     if (!selectedAccount || !startDate || !endDate) return;
@@ -65,39 +115,54 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
           endDate: format(endDate, "yyyy-MM-dd"),
         }
       });
-      // Flatten the insights out
+      // Flatten and aggregate the insights across all nested insights data objects
       const processed = (res.data.data || []).map((item: any) => {
-        const insights = item.insights?.data?.[0] || {};
+        const insightsList = item.insights?.data || [];
         
-        const actions = insights.actions || [];
-        const actionValues = insights.action_values || [];
-        
-        const getActionVal = (type: string) => {
-           const found = actions.find((a: any) => a.action_type === type);
-           return found ? parseFloat(found.value) : 0;
-        }
+        let spend = 0;
+        let impressions = 0;
+        let reach = 0;
+        let clicks = 0;
+        let inline_link_clicks = 0;
+        let purchases = 0;
+        let purchaseValue = 0;
+        let addsToCart = 0;
+        let initiateCheckouts = 0;
 
-        const getValueVal = (type: string) => {
-           const found = actionValues.find((a: any) => a.action_type === type);
-           return found ? parseFloat(found.value) : 0;
-        }
-        
-        const purchases = getActionVal("purchase") || getActionVal("omni_purchase");
-        const addsToCart = getActionVal("add_to_cart") || getActionVal("omni_add_to_cart");
-        const initiateCheckouts = getActionVal("initiate_checkout") || getActionVal("omni_initiate_checkout");
-        const purchaseValue = getValueVal("purchase") || getValueVal("omni_purchase");
-        
-        const spend = parseFloat(insights.spend || "0");
+        insightsList.forEach((ins: any) => {
+          spend += parseFloat(ins.spend || "0");
+          impressions += parseInt(ins.impressions || "0");
+          reach += parseInt(ins.reach || "0"); // Aggregate reach as sum across sub-periods
+          clicks += parseFloat(ins.clicks || "0");
+          inline_link_clicks += parseFloat(ins.inline_link_clicks || "0");
+
+          const actions = ins.actions || [];
+          const actionValues = ins.action_values || [];
+
+          const getActionVal = (type: string) => {
+             const found = actions.find((a: any) => a.action_type === type);
+             return found ? parseFloat(found.value) : 0;
+          }
+
+          const getValueVal = (type: string) => {
+             const found = actionValues.find((a: any) => a.action_type === type);
+             return found ? parseFloat(found.value) : 0;
+          }
+
+          purchases += getActionVal("purchase") || getActionVal("omni_purchase");
+          addsToCart += getActionVal("add_to_cart") || getActionVal("omni_add_to_cart");
+          initiateCheckouts += getActionVal("initiate_checkout") || getActionVal("omni_initiate_checkout");
+          purchaseValue += getValueVal("purchase") || getValueVal("omni_purchase");
+        });
+
         const roas = spend > 0 ? purchaseValue / spend : 0;
         const cpp = purchases > 0 ? spend / purchases : 0;
         const cpa = addsToCart > 0 ? spend / addsToCart : 0;
-        
-        const inline_link_clicks = parseFloat(insights.inline_link_clicks || "0");
-        const inline_link_click_ctr = parseFloat(insights.inline_link_click_ctr || "0");
-        const cost_per_inline_link_click = parseFloat(insights.cost_per_inline_link_click || "0");
-        const clicks = parseFloat(insights.clicks || "0");
-        const ctr = parseFloat(insights.ctr || "0");
-        const cpc = parseFloat(insights.cpc || "0");
+        const frequency = reach > 0 ? impressions / reach : 1;
+        const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
+        const linkCTR = impressions > 0 ? (inline_link_clicks / impressions) * 100 : 0;
+        const cpc = clicks > 0 ? spend / clicks : 0;
+        const cpcLink = inline_link_clicks > 0 ? spend / inline_link_clicks : 0;
 
         return {
           id: item.id,
@@ -114,20 +179,20 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
           addsToCart,
           atcRate: clicks > 0 ? (addsToCart / clicks) * 100 : 0,
           linkClicks: inline_link_clicks,
-          linkCTR: inline_link_click_ctr,
-          cpcLink: cost_per_inline_link_click,
+          linkCTR: linkCTR,
+          cpcLink: cpcLink,
           clicks,
           ctr,
           cpc,
-          impressions: parseInt(insights.impressions || "0"),
-          reach: parseInt(insights.reach || "0"),
-          frequency: parseFloat(insights.frequency || "0"),
+          impressions,
+          reach,
+          frequency,
           checkoutRate: clicks > 0 ? (initiateCheckouts / clicks) * 100 : 0,
           campaign_id: item.campaign_id,
           adset_id: item.adset_id,
           creative_id: item.creative_id || item.creative?.id || null
-        }
-      }).filter((item: any) => item.spend > 0); // 底层最优先级逻辑：根据日期查询有消耗的账户数据。没有消耗的才需要隐藏
+        };
+      }).filter((item: any) => item.spend > 0); // Hide items with no spend
 
       setData(processed);
     } catch (err) {

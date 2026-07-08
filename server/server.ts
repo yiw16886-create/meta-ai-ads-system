@@ -458,6 +458,50 @@ async function runBackgroundSync() {
   }
 }
 
+async function cleanupMockData() {
+  try {
+    console.log("🧹 Running startup database cleanup for mock BM data...");
+    
+    // 1. Delete all FacebookBusinessManager records whose name starts with "BM New" or specific ID
+    const deleteBms = await prisma.facebookBusinessManager.deleteMany({
+      where: {
+        OR: [
+          { name: { startsWith: "BM New" } },
+          { bmId: "100462942944183" } // The specific BM ID requested: 100462942944183
+        ]
+      }
+    });
+    console.log(`🧹 Deleted ${deleteBms.count} Business Managers matching "BM New" or target ID`);
+
+    // 2. For any remaining Business Managers, reset/clean up healthDetails containing mock markers
+    const allBms = await prisma.facebookBusinessManager.findMany();
+    for (const bm of allBms) {
+      if (
+        bm.healthDetails &&
+        (bm.healthDetails.includes("广告账户 01") ||
+         bm.healthDetails.includes("官方主页") ||
+         bm.healthDetails.includes("101_") ||
+         bm.healthDetails.includes("102_"))
+      ) {
+        console.log(`🧹 Cleaning up mock healthDetails for BM ${bm.bmId} (${bm.name})`);
+        const cleanHealth = JSON.stringify({
+          adAccounts: { total: 0, active: 0, disabled: 0, pendingReview: 0, details: [] },
+          pages: { total: 0, published: 0, unpublished: 0, details: [] },
+          pixels: { total: 0, details: [] },
+          lastSynced: new Date().toISOString()
+        });
+        await prisma.facebookBusinessManager.update({
+          where: { id: bm.id },
+          data: { healthDetails: cleanHealth }
+        });
+      }
+    }
+    console.log("🧹 Database cleanup completed successfully!");
+  } catch (error) {
+    console.error("🧹 Error during database cleanup:", error);
+  }
+}
+
 app.use("/api", (req, res) => {
   res
     .status(404)
@@ -468,9 +512,13 @@ async function startServer() {
   try {
     console.log("🚀 Starting server startup sequence...");
     // Run database connection check asynchronously so the Express server binds and serves the app instantly
-    checkDb().catch((err) => {
-      console.error("❌ Asynchronous database check failed:", err);
-    });
+    checkDb()
+      .then(async () => {
+        await cleanupMockData();
+      })
+      .catch((err) => {
+        console.error("❌ Asynchronous database check failed:", err);
+      });
     if (process.env.NODE_ENV !== "production") {
       console.log("🛠️ Initializing Vite development middleware...");
       const { createServer: createViteServer } = await import("vite");

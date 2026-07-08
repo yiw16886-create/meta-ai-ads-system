@@ -1487,7 +1487,20 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
                                 />
                               </TableCell>
                               <TableCell className="font-medium text-[13px]">
-                                {acc.accountName || "Unknown"}
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span>{acc.accountName || "Unknown"}</span>
+                                  {acc.status && (
+                                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
+                                      acc.status === "ACTIVE" 
+                                        ? "text-green-600 bg-green-50 border border-green-100" 
+                                        : acc.status === "DISABLED" || acc.status === "3"
+                                        ? "text-red-600 bg-red-50 border border-red-100"
+                                        : "text-amber-600 bg-amber-50 border border-amber-100"
+                                    }`}>
+                                      {acc.status === "ACTIVE" ? "活跃" : acc.status === "DISABLED" || acc.status === "3" ? "停用" : acc.status}
+                                    </span>
+                                  )}
+                                </div>
                               </TableCell>
                               <TableCell className="font-mono text-[11px] text-gray-500">
                                 {acc.accountId}
