@@ -169,13 +169,27 @@ async function checkDb() {
     }
 
     // Ensure we have at least one admin user
-    const defaultEmail = process.env.VITE_ADMIN_ID || "admin";
+    // Rename old "admin" user to "administrator@GG.com" if it exists
+    const oldAdmin = await prisma.user.findUnique({ where: { email: "admin" } });
+    if (oldAdmin) {
+      console.log("👤 Renaming existing 'admin' user to 'administrator@GG.com'");
+      try {
+        await prisma.user.update({
+          where: { email: "admin" },
+          data: { email: "administrator@GG.com" }
+        });
+      } catch (renameErr) {
+        console.error("Failed to rename 'admin' to 'administrator@GG.com':", renameErr);
+      }
+    }
+
+    const defaultEmail = "administrator@GG.com";
     const defaultPass = process.env.VITE_ADMIN_SECRET || "123456";
     const hashedPass = await bcrypt.hash(defaultPass, 10);
 
     await prisma.user.upsert({
       where: { email: defaultEmail },
-      update: { role: "SUPER_ADMIN", password: hashedPass }, 
+      update: { role: "SUPER_ADMIN" }, 
       create: {
         email: defaultEmail,
         password: hashedPass,

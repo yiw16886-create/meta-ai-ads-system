@@ -1639,6 +1639,10 @@ function UsersManagementPage() {
   });
   const [isDeleting, setIsDeleting] = useState(false);
   const currentUser = JSON.parse(localStorage.getItem("user") || "{}");
+  const currentUserRole = (currentUser.role || "").toUpperCase();
+  const isCurrentUserMember = currentUserRole === "MEMBER";
+  const isCurrentUserAdmin = currentUserRole === "ADMIN";
+  const isCurrentUserSuperAdmin = currentUserRole === "SUPER_ADMIN" || currentUserRole === "SUPER ADMIN";
 
   const fetchUsers = async () => {
     setFetching(true);
@@ -1673,6 +1677,9 @@ function UsersManagementPage() {
   }, []);
 
   const handleInvite = async () => {
+    if (isCurrentUserMember) {
+      return toast.error("权限不足，成员无法邀请新成员");
+    }
     if (!inviteEmail) return toast.error("请输入邀请邮箱");
     setInviting(true);
     setLastInviteData(null);
@@ -1699,6 +1706,9 @@ function UsersManagementPage() {
   };
 
   const handleUpdateRole = async (userId: string | number, newRole: string) => {
+    if (isCurrentUserMember) {
+      return toast.error("权限不足，成员无法修改角色");
+    }
     // Cannot update role for pending invitations via this endpoint yet (server logic needs update)
     if (typeof userId === 'string' && userId.startsWith('inv_')) {
       return toast.info("请先撤销邀请后重新发送");
@@ -1709,12 +1719,15 @@ function UsersManagementPage() {
         toast.success("权限已更新");
         fetchUsers();
       }
-    } catch (e) {
-      toast.error("更新权限失败");
+    } catch (e: any) {
+      toast.error(e.response?.data?.error || "更新权限失败");
     }
   };
 
   const handleDeleteClick = (user: any) => {
+    if (isCurrentUserMember) {
+      return toast.error("权限不足，成员无法移除成员");
+    }
     const isPending = typeof user.id === 'string' && String(user.id).startsWith('inv_');
     setDeleteConfirm({
       open: true,
@@ -1725,6 +1738,9 @@ function UsersManagementPage() {
   };
 
   const handleConfirmDelete = async () => {
+    if (isCurrentUserMember) {
+      return toast.error("权限不足，成员无法移除成员");
+    }
     if (!deleteConfirm.id) return;
     
     const { id, isPending } = deleteConfirm;
@@ -1751,6 +1767,9 @@ function UsersManagementPage() {
   };
 
   const handleResendInvite = async (userId: string | number) => {
+    if (isCurrentUserMember) {
+      return toast.error("权限不足，成员无法重发邀请");
+    }
     const toastId = toast.loading("正在重新发送邀请邮件...");
     try {
       const res = await axios.post(`/api/users/${userId}/resend`);
@@ -1837,43 +1856,49 @@ function UsersManagementPage() {
                 邀请新成员通过邮箱注册并分配角色权限，控制多账户访问安全
               </p>
             </div>
-            <Button 
-              variant="outline" 
-              className="flex items-center gap-2 border-meta-blue text-meta-blue hover:bg-meta-blue hover:text-white transition-all shadow-sm"
-              onClick={() => setShowSmtpModal(true)}
-            >
-              <Mail className="w-4 h-4" />
-              邮箱设置
-            </Button>
+            {!isCurrentUserMember && (
+              <Button 
+                variant="outline" 
+                className="flex items-center gap-2 border-meta-blue text-meta-blue hover:bg-meta-blue hover:text-white transition-all shadow-sm"
+                onClick={() => setShowSmtpModal(true)}
+              >
+                <Mail className="w-4 h-4" />
+                邮箱设置
+              </Button>
+            )}
           </div>
         </CardHeader>
         <CardContent className="pt-6 space-y-8">
-          <div className="flex gap-4 items-end bg-gray-50 p-6 rounded-xl border border-gray-100">
-            <div className="space-y-2 flex-grow">
-              <label className="text-sm font-semibold text-gray-700">邀请邮箱</label>
-              <Input
-                placeholder="输入邀请成员的邮箱地址"
-                value={inviteEmail}
-                onChange={(e) => setInviteEmail(e.target.value)}
-                className="bg-white h-11 border-gray-200"
-              />
+          {!isCurrentUserMember && (
+            <div className="flex gap-4 items-end bg-gray-50 p-6 rounded-xl border border-gray-100">
+              <div className="space-y-2 flex-grow">
+                <label className="text-sm font-semibold text-gray-700">邀请邮箱</label>
+                <Input
+                  placeholder="输入邀请成员的邮箱地址"
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                  className="bg-white h-11 border-gray-200"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-semibold text-gray-700">分配权限</label>
+                <select
+                  className="flex h-11 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm ring-offset-background focus:ring-2 focus:ring-meta-blue outline-none"
+                  value={inviteRole}
+                  onChange={(e) => setInviteRole(e.target.value)}
+                >
+                  <option value="member">普通成员 (Member)</option>
+                  <option value="admin">管理员 (Admin)</option>
+                  {isCurrentUserSuperAdmin && (
+                    <option value="SUPER_ADMIN">超级管理员 (Super Admin)</option>
+                  )}
+                </select>
+              </div>
+              <Button onClick={handleInvite} disabled={inviting} className="bg-meta-blue hover:bg-blue-600 h-11 px-8 shadow-sm text-white font-medium transition-all hover:translate-y-[-1px]">
+                {inviting ? "发送中..." : "发送邀请链接"}
+              </Button>
             </div>
-            <div className="space-y-2">
-              <label className="text-sm font-semibold text-gray-700">分配权限</label>
-              <select
-                className="flex h-11 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm ring-offset-background focus:ring-2 focus:ring-meta-blue outline-none"
-                value={inviteRole}
-                onChange={(e) => setInviteRole(e.target.value)}
-              >
-                <option value="member">普通成员 (Member)</option>
-                <option value="admin">管理员 (Admin)</option>
-                <option value="SUPER_ADMIN">超级管理员 (Super Admin)</option>
-              </select>
-            </div>
-            <Button onClick={handleInvite} disabled={inviting} className="bg-meta-blue hover:bg-blue-600 h-11 px-8 shadow-sm text-white font-medium transition-all hover:translate-y-[-1px]">
-              {inviting ? "发送中..." : "发送邀请链接"}
-            </Button>
-          </div>
+          )}
 
           <div className="border rounded-xl bg-white overflow-hidden shadow-sm">
             <Table>
@@ -1901,44 +1926,56 @@ function UsersManagementPage() {
                         className="bg-white border border-gray-200 text-sm rounded-md focus:ring-2 focus:ring-meta-blue block p-1.5 min-w-[120px] outline-none"
                         value={u.role}
                         onChange={(e) => handleUpdateRole(u.id, e.target.value)}
-                        disabled={(u.email === currentUser.email && (u.role === "admin" || u.role === "SUPER_ADMIN")) || u.status === 'pending'}
+                        disabled={
+                          isCurrentUserMember ||
+                          u.status === 'pending' ||
+                          u.email === currentUser.email ||
+                          ((u.role || "").toUpperCase() === "SUPER_ADMIN" && !isCurrentUserSuperAdmin)
+                        }
                       >
                         <option value="member">成员 (Member)</option>
                         <option value="admin">管理员 (Admin)</option>
-                        <option value="SUPER_ADMIN">超级管理员 (Super Admin)</option>
+                        {isCurrentUserSuperAdmin && (
+                          <option value="SUPER_ADMIN">超级管理员 (Super Admin)</option>
+                        )}
                       </select>
                     </TableCell>
                     <TableCell className="text-gray-500 font-mono text-xs">
                       {new Date(u.createdAt).toLocaleDateString()}
                     </TableCell>
                     <TableCell className="text-right pr-6">
-                      <div className="flex items-center justify-end gap-2">
-                        {u.status === 'pending' && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 px-3 border-gray-200 text-gray-700 bg-white hover:bg-gray-50 flex items-center gap-1 font-medium text-xs rounded-md shadow-sm transition-colors cursor-pointer"
-                            onClick={() => handleResendInvite(u.id)}
-                          >
-                            <Mail className="w-3.5 h-3.5 text-gray-500" />
-                            重新发送
-                          </Button>
-                        )}
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          className={cn(
-                            "border-none px-4 font-medium h-8 text-xs cursor-pointer",
-                            u.status === 'pending' 
-                              ? "bg-amber-50 text-amber-600 hover:bg-amber-100 hover:text-amber-700"
-                              : "bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700"
+                      {!isCurrentUserMember && (
+                        <div className="flex items-center justify-end gap-2">
+                          {u.status === 'pending' && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-8 px-3 border-gray-200 text-gray-700 bg-white hover:bg-gray-50 flex items-center gap-1 font-medium text-xs rounded-md shadow-sm transition-colors cursor-pointer"
+                              onClick={() => handleResendInvite(u.id)}
+                            >
+                              <Mail className="w-3.5 h-3.5 text-gray-500" />
+                              重新发送
+                            </Button>
                           )}
-                          onClick={() => handleDeleteClick(u)}
-                          disabled={u.email === currentUser.email}
-                        >
-                          {u.status === 'pending' ? "撤回邀请" : "移除"}
-                        </Button>
-                      </div>
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            className={cn(
+                              "border-none px-4 font-medium h-8 text-xs cursor-pointer",
+                              u.status === 'pending' 
+                                ? "bg-amber-50 text-amber-600 hover:bg-amber-100 hover:text-amber-700"
+                                : "bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700"
+                            )}
+                            onClick={() => handleDeleteClick(u)}
+                            disabled={
+                              u.email === currentUser.email ||
+                              ((u.role || "").toUpperCase() === "SUPER_ADMIN" && !isCurrentUserSuperAdmin)
+                            }
+                          >
+                            {u.status === 'pending' ? "撤回邀请" : "移除"}
+                          </Button>
+                        </div>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}

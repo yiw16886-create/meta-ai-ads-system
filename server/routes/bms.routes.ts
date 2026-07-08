@@ -412,6 +412,7 @@ router.post("/", async (req: any, res) => {
         dailySpendLimit,
         role,
         healthDetails,
+        org_id: req.user?.org_id,
       },
       create: {
         userId,
@@ -424,6 +425,7 @@ router.post("/", async (req: any, res) => {
         dailySpendLimit,
         role,
         healthDetails,
+        org_id: req.user?.org_id,
       },
     });
 
@@ -547,6 +549,7 @@ router.post("/batch-import", async (req: any, res) => {
           dailySpendLimit,
           role,
           healthDetails,
+          org_id: req.user?.org_id,
         },
         create: {
           userId,
@@ -559,6 +562,7 @@ router.post("/batch-import", async (req: any, res) => {
           dailySpendLimit,
           role,
           healthDetails,
+          org_id: req.user?.org_id,
         },
       });
 

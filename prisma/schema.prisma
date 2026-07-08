@@ -60,16 +60,27 @@ model AccountMapping {
   updatedAt   DateTime @updatedAt
 }
 
+model Organization {
+  id         String   @id @default(uuid())
+  name       String   // 企业名称（如：XX电商团队）
+  created_at DateTime @default(now())
+  users      User[]   // 一个企业包含多个用户
+}
+
 model User {
   id               Int                       @id @default(autoincrement())
   email            String                    @unique
   password         String
+  password_hash    String?                   // For compatibility with hash-based queries
   role             String                    @default("member") // "admin" or "member"
   createdAt        DateTime                  @default(now())
   updatedAt        DateTime                  @updatedAt
   facebookAccount  FacebookAccount?
   businessManagers FacebookBusinessManager[]
   adAccounts       AdAccount[]
+  fb_binding       UserFacebookBinding?
+  org_id           String?
+  organization     Organization?             @relation(fields: [org_id], references: [id])
 }
 
 model Invitation {
@@ -79,6 +90,7 @@ model Invitation {
   role      String   @default("member")
   expiresAt DateTime
   createdAt DateTime @default(now())
+  org_id    String?
 }
 
 model Store {
@@ -298,6 +310,7 @@ model FacebookBusinessManager {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  org_id          String?
 
   @@unique([userId, bmId]) // 🌟 联合唯一索引
 }
@@ -312,5 +325,22 @@ model FacebookAccount {
   facebookLink String?
   updatedAt    DateTime @updatedAt
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  org_id       String?
 }
+
+// 6. 用户与企业 Facebook 授权关联表 (核心隔离表)
+model UserFacebookBinding {
+  id              String   @id @default(uuid())
+  user_id         Int      @unique // 🌟 关键：这里必须是唯一索引，一个用户只能绑定一个企业FB
+  fb_user_id      String   // Meta 返回的用户的专属 Facebook ID
+  fb_username     String   // Meta 返回 of Facebook 用户名
+  access_token    String   @db.Text // 长期有效的 Facebook Page/User Access Token
+  authorized_at   DateTime @default(now())
+  updated_at      DateTime @updatedAt
+  org_id          String?
+
+  // 建立外键约束，用户删除了，绑定记录同步删除
+  user            User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
 

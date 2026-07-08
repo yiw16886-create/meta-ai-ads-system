@@ -3,8 +3,10 @@ import bcrypt from "bcryptjs";
 import prisma from "../../db/index.js";
 import axios from "axios";
 import crypto from "crypto";
+import jwt from "jsonwebtoken";
 
 const router = Router();
+const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret_here";
 
 router.post("/login", async (req, res) => {
   try {
@@ -12,11 +14,23 @@ router.post("/login", async (req, res) => {
     const user = await prisma.user.findUnique({ where: { email } });
     
     if (user && await bcrypt.compare(password, user.password)) {
-      res.json({ success: true, user: { id: user.id, email: user.email, role: user.role } });
+      // Sign JWT with user id and email
+      const token = jwt.sign(
+        { id: user.id, email: user.email, role: user.role },
+        JWT_SECRET,
+        { expiresIn: "7d" }
+      );
+
+      res.json({ 
+        success: true, 
+        token,
+        user: { id: user.id, email: user.email, role: user.role } 
+      });
     } else {
       res.status(401).json({ success: false, error: "账户或密码错误" });
     }
   } catch (error: any) {
+    console.error("Login failed:", error);
     res.status(500).json({ success: false, error: "登录系统异常" });
   }
 });
@@ -36,7 +50,53 @@ router.post("/verify-token", async (req, res) => {
 });
 
 router.post("/register", async (req, res) => {
-  const { token, password } = req.body;
+  const { token, password, email } = req.body;
+  
+  // 1. Direct registration with email/password (Scenario A: Independent registration)
+  if (email && password) {
+    try {
+      const existing = await prisma.user.findUnique({ where: { email } });
+      if (existing) {
+        return res.status(400).json({ success: false, error: "该邮箱已被注册" });
+      }
+
+      // Initialize/Create a brand new Organization
+      const orgName = `个人团队_${email}`;
+      const organization = await prisma.organization.create({
+        data: {
+          name: orgName
+        }
+      });
+
+      const hashedPass = await bcrypt.hash(password, 10);
+      const user = await prisma.user.create({
+        data: {
+          email,
+          password: hashedPass,
+          password_hash: hashedPass, // set both for compatibility
+          role: "SUPER_ADMIN", // set to Super Admin as they are the company creator
+          org_id: organization.id
+        }
+      });
+
+      const userToken = jwt.sign(
+        { id: user.id, email: user.email, role: user.role, org_id: user.org_id },
+        JWT_SECRET,
+        { expiresIn: "7d" }
+      );
+
+      return res.json({
+        success: true,
+        token: userToken,
+        user: { id: user.id, email: user.email, role: user.role, org_id: user.org_id }
+      });
+    } catch (e: any) {
+      console.error("Direct registration failed", e);
+      return res.status(500).json({ success: false, error: "注册失败" });
+    }
+  }
+
+  // 2. Original token/invitation-based registration (Scenario B: Invited join)
   if (!token || !password) return res.status(400).json({ error: "Missing data" });
   
   try {
@@ -47,21 +107,67 @@ router.post("/register", async (req, res) => {
 
     const hashedPass = await bcrypt.hash(password, 10);
     
+    // Resolve organization ID from invitation. If legacy invitation has no org_id, create one as fallback
+    let orgId = invitation.org_id;
+    if (!orgId) {
+      const orgName = `个人团队_${invitation.email}`;
+      const organization = await prisma.organization.create({
+        data: { name: orgName }
+      });
+      orgId = organization.id;
+    }
+
     const user = await prisma.user.upsert({
       where: { email: invitation.email },
-      update: { password: hashedPass, role: invitation.role },
-      create: { email: invitation.email, password: hashedPass, role: invitation.role }
+      update: { password: hashedPass, password_hash: hashedPass, role: invitation.role, org_id: orgId },
+      create: { email: invitation.email, password: hashedPass, password_hash: hashedPass, role: invitation.role, org_id: orgId }
     });
 
     await prisma.invitation.delete({ where: { token } });
 
+    const userToken = jwt.sign(
+      { id: user.id, email: user.email, role: user.role, org_id: user.org_id },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
     res.json({ 
       success: true, 
-      user: { id: user.id, email: user.email, role: user.role } 
+      token: userToken,
+      user: { id: user.id, email: user.email, role: user.role, org_id: user.org_id } 
     });
   } catch (e) {
     console.error("Registration failed", e);
     res.status(500).json({ error: "注册失败" });
+  }
+});
+
+// 忘记密码/重置密码接口
+router.post("/reset-password", async (req, res) => {
+  try {
+    const { email, new_password } = req.body;
+    if (!email || !new_password) {
+      return res.status(400).json({ success: false, error: "参数不完整，请提供邮箱和新密码" });
+    }
+
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      return res.status(404).json({ success: false, error: "用户不存在" });
+    }
+
+    const hashedPass = await bcrypt.hash(new_password, 10);
+    await prisma.user.update({
+      where: { email },
+      data: {
+        password: hashedPass,
+        password_hash: hashedPass
+      }
+    });
+
+    return res.json({ success: true, message: "密码重置成功" });
+  } catch (error: any) {
+    console.error("Password reset failed:", error);
+    return res.status(500).json({ success: false, error: "重置密码系统异常" });
   }
 });
 
@@ -205,6 +311,9 @@ router.get("/facebook/callback", async (req, res) => {
     }
 
     // Save isolated Facebook Account details for this user
+    const userToLink = await prisma.user.findUnique({ where: { id: userId } });
+    const userOrgId = userToLink?.org_id;
+
     await prisma.facebookAccount.upsert({
       where: { userId },
       update: {
@@ -212,6 +321,7 @@ router.get("/facebook/callback", async (req, res) => {
         facebookId: facebookUserId || null,
         facebookName: facebookUserName || null,
         facebookLink: facebookUserLink || null,
+        org_id: userOrgId,
       },
       create: {
         userId,
@@ -219,6 +329,7 @@ router.get("/facebook/callback", async (req, res) => {
         facebookId: facebookUserId || null,
         facebookName: facebookUserName || null,
         facebookLink: facebookUserLink || null,
+        org_id: userOrgId,
       },
     });
 
