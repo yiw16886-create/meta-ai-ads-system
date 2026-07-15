@@ -478,8 +478,8 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
   };
 
   const filteredAccounts = accounts.filter(acc => 
-    (acc.accountName || acc.accountId).toLowerCase().includes(searchQuery.toLowerCase()) ||
-    acc.accountId.includes(searchQuery)
+    (acc.accountName || acc.accountId || "").toLowerCase().includes((searchQuery || "").toLowerCase()) ||
+    (acc.accountId || "").includes(searchQuery || "")
   );
 
   const totalPurchases = data.reduce((sum, item) => sum + (item.purchases || 0), 0);

@@ -7,21 +7,13 @@ router.get("/", async (req, res) => {
   try {
     const { activeOnly } = req.query;
 
-    let mappings = await prisma.accountMapping.findMany({
+    const mappings = await prisma.accountMapping.findMany({
       include: { store: true }
     });
 
     const monitoringData = await prisma.metaAccountMonitoring.findMany({
       select: { accountId: true, accountName: true, activityStatus: true },
     });
-    
-    if (activeOnly === 'true') {
-      const activeIds = new Set(monitoringData.filter(d => (d.activityStatus || 0) < 4).map(d => d.accountId));
-      mappings = mappings.filter(m => {
-        const cleanId = String(m.fbAccountId).replace("act_", "").trim();
-        return activeIds.has(cleanId);
-      });
-    }
 
     const adAccountData = await prisma.adAccount.findMany({
       select: { fb_account_id: true, fb_account_name: true },
@@ -29,7 +21,7 @@ router.get("/", async (req, res) => {
 
     const nameMap = new Map();
     for (const d of monitoringData) {
-      if (d.accountName) nameMap.set(d.accountId, d.accountName);
+      if (d.accountName) nameMap.set(String(d.accountId).replace("act_", "").trim(), d.accountName);
     }
     for (const d of adAccountData) {
       if (d.fb_account_name) {
@@ -37,19 +29,32 @@ router.get("/", async (req, res) => {
       }
     }
 
-    // Map them back to the old format so frontend is happy
-    const mapped = mappings.map(m => {
-      const cleanId = String(m.fbAccountId).replace("act_", "").trim();
+    // Left-Join minded unique mapping generation: gather all unique account IDs
+    const uniqueIds = new Set<string>();
+    mappings.forEach(m => uniqueIds.add(String(m.fbAccountId).replace("act_", "").trim()));
+    monitoringData.forEach(d => uniqueIds.add(String(d.accountId).replace("act_", "").trim()));
+    adAccountData.forEach(d => uniqueIds.add(String(d.fb_account_id).replace("act_", "").trim()));
+
+    // Map them to the old format so frontend is happy
+    let mapped = Array.from(uniqueIds).map(cleanId => {
+      const m = mappings.find(item => String(item.fbAccountId).replace("act_", "").trim() === cleanId);
+      const accId = m ? m.fbAccountId : cleanId;
       return {
-        accountId: m.fbAccountId,
-        accountName: nameMap.get(cleanId) || m.fbAccountId,
-        fbPageId: m.fbPageId,
-        store: m.store ? m.store.name : "未分配",
-        storeId: m.storeId,
-        project: m.project || "未分配",
-        owner: m.owner || "未分配"
+        accountId: accId.startsWith("act_") ? accId : `act_${accId}`,
+        accountName: nameMap.get(cleanId) || accId,
+        fbPageId: m ? m.fbPageId : null,
+        store: (m && m.store) ? m.store.name : "未分配",
+        storeId: m ? m.storeId : null,
+        project: (m && m.project) ? m.project : "未分配",
+        owner: (m && m.owner) ? m.owner : "未分配",
+        activityStatus: monitoringData.find(d => String(d.accountId).replace("act_", "").trim() === cleanId)?.activityStatus || 1
       };
     });
+
+    if (activeOnly === 'true') {
+      mapped = mapped.filter(item => (item.activityStatus || 0) < 4);
+    }
+
     res.json(mapped);
   } catch (err: any) {
     console.error("Fetch mappings error:", err);

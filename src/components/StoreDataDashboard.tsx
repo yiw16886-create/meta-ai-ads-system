@@ -34,6 +34,12 @@ interface StoreDataDashboardProps {
   storeSummaries?: Record<string, any>;
 }
 
+function getMappingForAccount(accountId: string, mappings: Record<string, any>) {
+  if (!mappings || !accountId) return null;
+  const cleanId = accountId.replace("act_", "").trim();
+  return mappings[accountId] || mappings[`act_${cleanId}`] || mappings[cleanId];
+}
+
 type SortField = "store" | "accountsCount" | "spend" | "purchases" | "purchaseValue" | "totalRefunded" | "avgRoi";
 type SortOrder = "asc" | "desc";
 
@@ -58,7 +64,7 @@ export function StoreDataDashboard({ data = [], mappings = {}, storeSummaries = 
     }> = {};
 
     safeData.forEach((d) => {
-      const mapping = mappings[d.accountId];
+      const mapping = getMappingForAccount(d.accountId, mappings);
       const storeName = mapping?.store || "未分配";
       if (!storeMap[storeName]) {
         storeMap[storeName] = {
@@ -148,7 +154,7 @@ export function StoreDataDashboard({ data = [], mappings = {}, storeSummaries = 
 
   const filteredAndSortedStats = useMemo(() => {
     let result = storeStats.filter(item => 
-      item.store.toLowerCase().includes(searchTerm.toLowerCase())
+      (item.store || "").toLowerCase().includes((searchTerm || "").toLowerCase())
     );
 
     result.sort((a, b) => {

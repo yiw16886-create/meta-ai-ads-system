@@ -118,7 +118,7 @@ export async function ensureAdAccounts(token: string) {
   }
 }
 
-export async function syncMetaHierarchy(token: string, options: { syncCreative?: boolean } = { syncCreative: false }) {
+export async function syncMetaHierarchy(token: string, options: { syncCreative?: boolean; forceRefreshCampaigns?: boolean } = { syncCreative: false, forceRefreshCampaigns: false }) {
   const activeAccountIds = new Set<string>();
   try {
     const url = `https://graph.facebook.com/v19.0/me/adaccounts`;
@@ -180,6 +180,17 @@ export async function syncMetaHierarchy(token: string, options: { syncCreative?:
   for (const acc of accounts) {
     const actId = acc.fb_account_id.startsWith('act_') ? acc.fb_account_id : `act_${acc.fb_account_id}`;
     const rawAccountId = actId.replace('act_', '');
+
+    // Skip warning / dormant accounts in hierarchy sync based on 4-level tiered sync rules
+    const activityStatus = acc.activityStatus || 1; // Default to active if not set
+    if (activityStatus === 4) {
+      console.log(`[Meta Hierarchy Sync] Skipping dormant status 4 account: ${actId}`);
+      continue;
+    }
+    if (activityStatus === 3 && !options.forceRefreshCampaigns) {
+      console.log(`[Meta Hierarchy Sync] Skipping warning status 3 account because forceRefreshCampaigns is false: ${actId}`);
+      continue;
+    }
 
     // Rate-limiting check based on cache
     const lastSyncTime = lastHierarchySyncByAccount.get(rawAccountId) || 0;

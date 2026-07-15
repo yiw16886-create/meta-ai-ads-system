@@ -91,6 +91,12 @@ export interface AdInsight {
   roas: number;
 }
 
+export function getMappingForAccount(accountId: string, mappings: Record<string, any>) {
+  if (!mappings || !accountId) return null;
+  const cleanId = accountId.replace("act_", "").trim();
+  return mappings[accountId] || mappings[`act_${cleanId}`] || mappings[cleanId];
+}
+
 interface DashboardProps {
   onLogout: () => void;
 }
@@ -180,6 +186,8 @@ export function Dashboard({ onLogout }: DashboardProps) {
   const [syncProduct, setSyncProduct] = useState(false);
   const [syncCreative, setSyncCreative] = useState(false);
   const [mappings, setMappings] = useState<Record<string, any>>({});
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [isSilentLoading, setIsSilentLoading] = useState(false);
 
   const fetchMappings = async () => {
     try {
@@ -266,29 +274,138 @@ export function Dashboard({ onLogout }: DashboardProps) {
   useEffect(() => {
     fetchData();
     fetchMappings();
+
+    // 设置 10 分钟定时器：静默无感拉取并自动刷新
+    const interval = setInterval(() => {
+      console.log("⏰ [10分钟定时器触发] 正在后台静默同步 Meta 最新数据...");
+      fetchAdsData(true); 
+    }, 10 * 60 * 1000); 
+
+    return () => clearInterval(interval);
   }, [startDate, endDate]);
 
-  const handleSync = async () => {
-    setSyncing(true);
-    const syncToast = toast.loading("正在同步 Meta 数据...");
+  const fetchAdsData = async (isSilent = false) => {
+    if (isSilent) {
+      setIsSilentLoading(true);
+    } else {
+      setSyncing(true);
+    }
+
+    let syncToast: string | number | undefined = undefined;
+    if (!isSilent) {
+      syncToast = toast.loading("正在同步 Meta 数据...");
+      setData([]); // Clear array to show stream updates
+    }
+
     try {
-      const response = await axios.post("/api/sync", {
-        startDate: format(startDate, "yyyy-MM-dd"),
-        endDate: format(endDate, "yyyy-MM-dd"),
-        syncProduct,
-        syncCreative
+      const token = localStorage.getItem("token");
+      const userStr = localStorage.getItem("user");
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json"
+      };
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+      if (userStr) {
+        try {
+          const user = JSON.parse(userStr);
+          if (user && user.id) {
+            headers["x-user-id"] = String(user.id);
+          }
+        } catch (e) {}
+      }
+
+      const sDateStr = format(startDate, "yyyy-MM-dd");
+      const eDateStr = format(endDate, "yyyy-MM-dd");
+
+      const response = await fetch(`/api/meta/sync-ads?startDate=${sDateStr}&endDate=${eDateStr}`, {
+        method: "GET",
+        headers
       });
-      toast.success(`同步成功: ${response.data.count} 条记录`, {
-        id: syncToast,
-      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP Error: ${response.status}`);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error("Failed to get response reader");
+      }
+
+      const decoder = new TextDecoder("utf-8");
+      let buffer = "";
+      let recordCount = 0;
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.trim()) {
+            try {
+              const row = JSON.parse(line);
+              if (row.type === "SYNC_COMPLETE") {
+                // 🌟 收到结束信号：
+                // 1. 关闭全局 and 静默 loading
+                setIsSilentLoading(false);
+                setSyncing(false);
+                if (syncToast) {
+                  toast.success(`同步完成: 成功拉取 ${recordCount} 条记录`, { id: syncToast });
+                }
+                // 2. 强行改变 refreshKey 逼迫表格刷新，确保数据完全呈现在 DOM 上！
+                setRefreshKey(prev => prev + 1);
+                fetchData();
+                return;
+              }
+              if (row.error) {
+                console.warn(`Sync error for account: ${row.error}`);
+                continue;
+              }
+              if (row.accountId) {
+                setData(prev => {
+                  const safePrev = Array.isArray(prev) ? prev : [];
+                  const exists = safePrev.some(
+                    item => item.accountId === row.accountId && item.date === row.date
+                  );
+                  if (exists) {
+                    return safePrev.map(item => 
+                      (item.accountId === row.accountId && item.date === row.date) ? row : item
+                    );
+                  }
+                  return [...safePrev, row];
+                });
+                recordCount++;
+              }
+            } catch (err) {
+              console.error("Failed to parse streamed line:", err, line);
+            }
+          }
+        }
+      }
+
+      if (syncToast) {
+        toast.success(`同步成功: ${recordCount} 条记录`, {
+          id: syncToast,
+        });
+      }
       fetchData();
     } catch (error: any) {
-      const respErr = error.response?.data?.error;
-      const errMsg = typeof respErr === 'string' ? respErr : (respErr?.message || "同步失败");
-      toast.error(errMsg, { id: syncToast });
+      console.error("Stream sync error:", error);
+      if (syncToast) {
+        toast.error(error.message || "同步失败，请重试", { id: syncToast });
+      }
     } finally {
+      setIsSilentLoading(false);
       setSyncing(false);
     }
+  };
+
+  const handleSync = async () => {
+    await fetchAdsData(false);
   };
 
   const aggregatedData = useMemo(() => {
@@ -802,7 +919,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
               </div>
               <div className="flex-grow overflow-hidden flex flex-col">
                 <div className="flex-grow w-full overflow-auto max-h-[650px] relative border-b">
-                  <Table className="text-[12px] w-max-content border-collapse relative">
+                  <Table key={refreshKey} className="text-[12px] w-max-content border-collapse relative">
                     <TableHeader className="sticky top-0 z-20 shadow-[0_1px_0_rgba(0,0,0,0.05)]">
                       <TableRow className="bg-[#f9fafb] hover:bg-[#f9fafb]">
                     <TableHead 
@@ -1130,7 +1247,7 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
           const accountId = accountIdKey ? row[accountIdKey]?.toString()?.trim() : null;
 
           if (accountId) {
-            const existing = mappings[accountId] || {};
+            const existing = getMappingForAccount(accountId, mappings) || {};
             
             const accountNameKey = keys.find(k => /账户名称|帐户名称|账户\s*Name|Account\s*Name|名称|Name/i.test(k));
             const projectKey = keys.find(k => /项目|Project|Proj/i.test(k));
@@ -1279,13 +1396,14 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
       const newMappings = { ...mappings };
 
       selectedAccountsForBatch.forEach((acc) => {
+        const prevMapping = getMappingForAccount(acc.accountId, mappings) || {};
         newMappings[acc.accountId] = {
           accountId: acc.accountId,
           accountName: acc.accountName,
           project:
-            batchProject || mappings[acc.accountId]?.project || "",
-          store: batchStore || mappings[acc.accountId]?.store || "",
-          owner: batchOwner || mappings[acc.accountId]?.owner || "",
+            batchProject || prevMapping.project || "",
+          store: batchStore || prevMapping.store || "",
+          owner: batchOwner || prevMapping.owner || "",
         };
       });
 
@@ -3209,7 +3327,7 @@ function CategoryDashboard({ mappings, onManageAccounts }: { mappings: Record<st
     }, {});
 
     return Object.values(grouped).map((item: any) => {
-      const mapping = mappings[item.accountId];
+      const mapping = getMappingForAccount(item.accountId, mappings);
       const spend = item.spend || 0;
       const purchaseValue = item.purchaseValue || 0;
       const roas = spend > 0 ? purchaseValue / spend : 0;

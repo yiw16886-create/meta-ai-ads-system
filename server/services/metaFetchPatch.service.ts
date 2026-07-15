@@ -44,11 +44,26 @@ async function getPageTokensMap(accessToken: string): Promise<Record<string, Pag
   return pageTokensMap;
 }
 
+const creativeCache = new Map<string, { data: any, expiresAt: number }>();
+
 /**
  * 核心逻辑：利用已有的 ads_read / pages_read_engagement 权限，
  * 深度穷举解析不同类型的广告创意（普通、动态素材、轮播、主页帖子），以及帖子真实落地页链接、主页ID、有效帖子ID。
  */
-export async function extractMetaAssetHash(creativeId: string, accessToken: string, pageTokensMap: Record<string, PageInfo> = {}) {
+export async function extractMetaAssetHash(
+  creativeId: string, 
+  accessToken: string, 
+  pageTokensMap: Record<string, PageInfo> = {},
+  forceRefresh: boolean = false
+) {
+  const cacheKey = `creative_${creativeId}`;
+  if (!forceRefresh) {
+    const cached = creativeCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.data;
+    }
+  }
+
   try {
     const url = `https://graph.facebook.com/v21.0/${creativeId}?fields=name,actor_id,effective_object_story_id,object_story_spec,object_story_id,object_url,template_url,asset_feed_spec,thumbnail_url,image_url,video_id,url_tags&access_token=${accessToken}`;
     const response = await axios.get(url);
@@ -179,7 +194,7 @@ export async function extractMetaAssetHash(creativeId: string, accessToken: stri
       finalEffectivePostId = finalEffectivePostId.split("_")[1];
     }
 
-    return {
+    const result = {
       landingUrl: cleanUrl(landingUrl),
       previewUrl,
       metaAssetId,
@@ -191,6 +206,13 @@ export async function extractMetaAssetHash(creativeId: string, accessToken: stri
       effectivePostId: finalEffectivePostId,
       data
     };
+
+    creativeCache.set(cacheKey, {
+      data: result,
+      expiresAt: Date.now() + 24 * 60 * 60 * 1000 // 24 hours
+    });
+
+    return result;
   } catch (error: any) {
     console.log(`info: unable to extract asset hash for creative ${creativeId}:`, error?.response?.data?.error?.message || error.message);
     return null;

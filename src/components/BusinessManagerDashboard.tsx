@@ -102,6 +102,7 @@ export function BusinessManagerDashboard() {
   const [inviteRole, setInviteRole] = useState("EMPLOYEE"); // EMPLOYEE / ADMIN
   const [isSendingInvite, setIsSendingInvite] = useState(false);
   const [generatedInvites, setGeneratedInvites] = useState<any[]>([]);
+  const [inviteErrorDetails, setInviteErrorDetails] = useState<any | null>(null);
 
   // 检索过滤
   const [searchTerm, setSearchTerm] = useState("");
@@ -445,24 +446,28 @@ export function BusinessManagerDashboard() {
     if (!sourceBmObj) return;
 
     setIsSendingInvite(true);
-    const inviteToast = toast.loading("正在调用 Meta 接口创建安全邀请...");
+    setInviteErrorDetails(null);
+    const inviteToast = toast.loading("正在请求 Meta 官方 API 接口下发安全邀请...");
     try {
-      const res = await axios.post("/api/bms/invite-user", {
-        bmId: sourceBmObj.bmId,
+      const res = await axios.post("/api/meta/bm/invite", {
+        business_id: sourceBmObj.bmId,
         email: inviteEmail.trim(),
-        role: inviteRole,
+        role: inviteRole === "ADMIN" ? "Admin" : "Employee",
       });
 
       if (res.data.success) {
-        toast.success("成功生成协作者邀请链接！", { id: inviteToast });
+        toast.success(`邀请成功！Facebook 官方已向 ${inviteEmail.trim()} 发送了验证邮件，请提醒员工查收邮件完成 BM 激活加入。`, { 
+          id: inviteToast,
+          duration: 6000
+        });
+
         // 将生成的邀请插入到本地展示列表中
         setGeneratedInvites((prev) => [
           {
-            id: res.data.inviteId,
+            id: res.data.data?.id || `meta-invite-${Date.now()}`,
             bmName: sourceBmObj.name,
-            email: res.data.email,
-            role: res.data.role,
-            link: res.data.inviteLink,
+            email: inviteEmail.trim(),
+            role: inviteRole,
             createdAt: new Date().toLocaleTimeString(),
           },
           ...prev,
@@ -470,8 +475,18 @@ export function BusinessManagerDashboard() {
         setInviteEmail("");
       }
     } catch (err: any) {
-      const serverError = err.response?.data?.details || err.response?.data?.error || "生成邀请失败";
-      toast.error(`生成邀请失败: ${serverError}`, { id: inviteToast });
+      const errorData = err.response?.data;
+      const serverError = errorData?.error || errorData?.details || err.message || "请求 Meta 官方邀请接口失败";
+      toast.error(`邀请失败: ${typeof serverError === "string" ? serverError : "触发 Meta 安全验证"}`, { id: inviteToast, duration: 5000 });
+      
+      if (errorData?.details) {
+        setInviteErrorDetails(errorData.details);
+      } else {
+        setInviteErrorDetails({
+          title: "Meta API 连线错误",
+          message: typeof serverError === "string" ? serverError : JSON.stringify(serverError)
+        });
+      }
     } finally {
       setIsSendingInvite(false);
     }
@@ -489,8 +504,8 @@ export function BusinessManagerDashboard() {
     const lower = searchTerm.toLowerCase();
     return bms.filter(
       (b) =>
-        b.name.toLowerCase().includes(lower) ||
-        b.bmId.toLowerCase().includes(lower)
+        (b.name || "").toLowerCase().includes(lower) ||
+        (b.bmId || "").toLowerCase().includes(lower)
     );
   }, [bms, searchTerm]);
 
@@ -1417,13 +1432,13 @@ export function BusinessManagerDashboard() {
       )}
 
       {activeSubTab === "users" && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          {/* 左侧：员工邀请链接生成 */}
-          <Card className="lg:col-span-5 border border-gray-200 shadow-sm bg-white">
+        <div className="max-w-2xl mx-auto">
+          {/* 员工邀请 */}
+          <Card className="border border-gray-200 shadow-sm bg-white">
             <CardHeader className="bg-gray-50/50 border-b pb-3">
               <CardTitle className="text-sm font-bold text-gray-800 flex items-center gap-2">
                 <UserPlus className="w-4 h-4 text-meta-blue" />
-                批量生成 BM 协作者/管理员邀请
+                BM 协作者/管理员邀请
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-5">
@@ -1462,7 +1477,7 @@ export function BusinessManagerDashboard() {
                     required
                   />
                   <p className="text-[10px] text-gray-400 mt-1">
-                    Meta 官方将向此邮箱发送核验邀请，系统用户可在此提前生成极速链接。
+                    系统将通过 Meta Graph API 接口，直接请求 Facebook 官方下发安全邀请邮件。
                   </p>
                 </div>
 
@@ -1499,103 +1514,40 @@ export function BusinessManagerDashboard() {
                   </div>
                 </div>
 
-                {/* 提交生成邀请链接 */}
+                {/* 错误提示和解决方案 */}
+                {inviteErrorDetails && (
+                  <div className="p-3.5 rounded-lg bg-red-50 border border-red-150 text-xs text-red-800 space-y-2 mt-4">
+                    <div className="font-bold flex items-center gap-1.5 text-red-900">
+                      <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0" />
+                      <span>{inviteErrorDetails.title || "Meta 连线安全验证错误"}</span>
+                    </div>
+                    <div className="whitespace-pre-line leading-relaxed text-red-700 font-medium text-[11px]">
+                      {inviteErrorDetails.message}
+                    </div>
+                    <div className="flex items-center justify-between pt-1">
+                      <button 
+                        type="button" 
+                        onClick={() => setInviteErrorDetails(null)} 
+                        className="text-red-600 hover:text-red-800 font-bold hover:underline text-[11px]"
+                      >
+                        [ 清除错误提示 ]
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* 提交生成邀请 */}
                 <Button
                   type="submit"
                   disabled={isSendingInvite}
                   className="w-full bg-meta-blue hover:bg-blue-600 text-white font-bold h-11 flex items-center justify-center gap-2 mt-4"
                 >
-                  <Link2 className="w-4 h-4" />
-                  {isSendingInvite ? "生成中，正在通信 Meta API..." : "生成员工专属 BM 激活邀请"}
+                  <UserPlus className="w-4 h-4" />
+                  {isSendingInvite ? "邀请发送中，正在通信 Meta API..." : "BM 邀请"}
                 </Button>
               </form>
             </CardContent>
           </Card>
-
-          {/* 右侧：生成的邀请列表与管理 */}
-          <div className="lg:col-span-7 space-y-6">
-            <Card className="border border-gray-200 bg-white shadow-sm overflow-hidden">
-              <CardHeader className="border-b pb-3 bg-gray-50/50 flex flex-row items-center justify-between">
-                <CardTitle className="text-sm font-bold text-gray-800 flex items-center gap-2">
-                  <UserCheck className="w-4 h-4 text-green-600" />
-                  当前生成的 BM 邀请链接列表 ({generatedInvites.length})
-                </CardTitle>
-                {generatedInvites.length > 0 && (
-                  <button
-                    onClick={() => setGeneratedInvites([])}
-                    className="text-xs text-red-500 font-bold hover:underline"
-                  >
-                    清除历史记录
-                  </button>
-                )}
-              </CardHeader>
-              <CardContent className="p-0">
-                {generatedInvites.length === 0 ? (
-                  <div className="p-8 text-center text-gray-400 text-xs">
-                    还没有在当前窗口中生成激活链接。在左侧填写邮箱并点击生成。
-                  </div>
-                ) : (
-                  <div className="divide-y max-h-[420px] overflow-auto">
-                    {generatedInvites.map((inv) => (
-                      <div key={inv.id} className="p-4 hover:bg-gray-50/50 transition-colors">
-                        <div className="flex items-start justify-between gap-4">
-                          <div>
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="font-bold text-gray-800 text-xs">{inv.email}</span>
-                              <span
-                                className={cn(
-                                  "text-[9px] font-bold px-1.5 py-0.5 rounded",
-                                  inv.role === "ADMIN"
-                                    ? "bg-purple-100 text-purple-700"
-                                    : "bg-gray-100 text-gray-700"
-                                )}
-                              >
-                                {inv.role === "ADMIN" ? "管理员" : "普通员工"}
-                              </span>
-                              <span className="text-[10px] text-gray-400 font-medium">
-                                ➔ 目标 BM: {inv.bmName}
-                              </span>
-                            </div>
-                            <div className="text-[11px] text-gray-400 font-mono select-all truncate max-w-md mt-1">
-                              {inv.link}
-                            </div>
-                          </div>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleCopyLink(inv.link)}
-                            className="text-xs h-8 px-2.5 flex items-center gap-1 flex-shrink-0"
-                          >
-                            <Copy className="w-3.5 h-3.5" />
-                            复制链接
-                          </Button>
-                        </div>
-                        <div className="text-[10px] text-gray-400 mt-1 flex items-center gap-1">
-                          <Check className="w-3 h-3 text-green-600" />
-                          通过 API 验证成功。协作者打开上述链接，即可无条件激活进入该企业 BM 对应岗位。
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* 补充员工加入流程图解 */}
-            <div className="bg-blue-50/40 border border-blue-100 p-4 rounded-xl space-y-2 text-xs text-gray-600">
-              <div className="font-bold text-gray-800 text-sm flex items-center gap-1">
-                <Zap className="w-4 h-4 text-blue-600 fill-blue-50" />
-                协作者激活流程
-              </div>
-              <p className="leading-relaxed">
-                1. <strong>下发链接：</strong>在左侧输入需要邀请的人员工作邮箱并生成。
-                <br />
-                2. <strong>极速绑定：</strong>将复制的专属激活链接直接发送给员工，员工在浏览器打开并登录其个人 Facebook 账号，即可直接进入企业 BM，无需等待邮件系统漫长排队。
-                <br />
-                3. <strong>权限下发：</strong>进入 BM 成功后，其对应的角色和您在系统里预设的权限将即刻生效，实现了彻底去中心化的、基于 API 直连的安全协作流程。
-              </p>
-            </div>
-          </div>
         </div>
       )}
 

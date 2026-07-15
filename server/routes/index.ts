@@ -14,6 +14,7 @@ import pageManageRoutes from "./pageManage.routes.js";
 import bmsRoutes from "./bms.routes.js";
 import facebookRoutes from "./facebook.routes.js";
 import adminSettingsRoutes from "./adminSettings.routes.js";
+import metaRoutes from "./meta.routes.js";
 
 const routes = Router();
 
@@ -32,5 +33,6 @@ routes.use("/monitoring", monitoringRoutes);
 routes.use("/pages", pageManageRoutes);
 routes.use("/facebook", facebookRoutes);
 routes.use("/admin/settings", adminSettingsRoutes);
+routes.use("/meta", metaRoutes);
 
 export default routes;

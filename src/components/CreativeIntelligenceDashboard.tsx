@@ -249,11 +249,104 @@ export function CreativeIntelligenceDashboard({
 
   const handleSyncCreativeHash = async () => {
     setIsSyncing(true);
+    const syncToast = toast.loading("正在流式同步素材...");
+    setCreativeData([]); // Clear list to show streaming imports
+
     try {
-      const res = await axios.post("/api/sync-creative-hash");
-      toast.success(res.data.message || "素材特征抓取已在后台开始运行");
+      const token = localStorage.getItem("token");
+      const userStr = localStorage.getItem("user");
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json"
+      };
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+      if (userStr) {
+        try {
+          const user = JSON.parse(userStr);
+          if (user && user.id) {
+            headers["x-user-id"] = String(user.id);
+          }
+        } catch (e) {}
+      }
+
+      const sDateStr = format(startDate, 'yyyy-MM-dd');
+      const eDateStr = format(endDate, 'yyyy-MM-dd');
+
+      const response = await fetch(`/api/meta/sync-creatives?startDate=${sDateStr}&endDate=${eDateStr}`, {
+        method: "GET",
+        headers
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP Error: ${response.status}`);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error("Failed to get response reader");
+      }
+
+      const decoder = new TextDecoder("utf-8");
+      let buffer = "";
+      let creativeCount = 0;
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.trim()) {
+            try {
+              const creativeItem = JSON.parse(line);
+              
+              const formattedItem = {
+                id: creativeItem.id || creativeItem.creativeId,
+                name: creativeItem.name,
+                creativeId: creativeItem.creativeId,
+                storeName: creativeItem.storeName || "未分配",
+                accountId: creativeItem.accountId,
+                accountName: creativeItem.accountName || creativeItem.accountId,
+                status: "ACTIVE",
+                spend: 0,
+                impressions: 0,
+                clicks: 0,
+                reach: 0,
+                purchases: 0,
+                purchaseValue: 0,
+                type: creativeItem.type || "IMAGE",
+                roas: 0,
+                cpp: 0,
+                cpc: 0,
+                ctr: 0,
+                cpm: 0
+              };
+
+              setCreativeData(prev => {
+                const safePrev = Array.isArray(prev) ? prev : [];
+                const exists = safePrev.some(item => item.creativeId === formattedItem.creativeId);
+                if (exists) {
+                  return safePrev.map(item => item.creativeId === formattedItem.creativeId ? { ...item, ...formattedItem } : item);
+                }
+                return [...safePrev, formattedItem];
+              });
+              creativeCount++;
+            } catch (err) {
+              console.error("Failed to parse streamed creative line:", err, line);
+            }
+          }
+        }
+      }
+
+      toast.success(`素材同步完成: 成功抓取 ${creativeCount} 个素材`, { id: syncToast });
+      fetchCreativeData();
     } catch (error: any) {
-      toast.error(error.response?.data?.error || "同步请求失败");
+      console.error("Stream sync creatives error:", error);
+      toast.error(error.message || "素材同步失败，请重试", { id: syncToast });
     } finally {
       setIsSyncing(false);
     }

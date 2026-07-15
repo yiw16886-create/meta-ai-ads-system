@@ -264,7 +264,14 @@ export async function evaluateActivityStatus(accountId: string, fbAccountStatus:
   return 4;
 }
 
-export function getCachedData(key: string) {
+// Active requests map for Request Collapsing (Single Flight Pattern)
+const activeRequests = new Map<string, Promise<any>>();
+
+export function getCachedData(key: string, forceRefresh: boolean = false) {
+  if (forceRefresh) {
+    queryCache.delete(key);
+    return null;
+  }
   const cached = queryCache.get(key);
   if (!cached) return null;
   if (Date.now() > cached.expiry) {
@@ -279,6 +286,28 @@ export function setCachedData(key: string, data: any, ttlMs: number = 300000) {
     data,
     expiry: Date.now() + ttlMs
   });
+}
+
+/**
+ * Request Collapsing (Single Flight) wrapper to collapse concurrent identical Meta API queries.
+ */
+export async function collapseRequest<T>(key: string, fetcher: () => Promise<T>): Promise<T> {
+  const existingPromise = activeRequests.get(key);
+  if (existingPromise) {
+    console.log(`[Request Collapsing] Joined existing in-flight request for key: ${key}`);
+    return existingPromise;
+  }
+
+  const promise = (async () => {
+    try {
+      return await fetcher();
+    } finally {
+      activeRequests.delete(key);
+    }
+  })();
+
+  activeRequests.set(key, promise);
+  return promise;
 }
 
 

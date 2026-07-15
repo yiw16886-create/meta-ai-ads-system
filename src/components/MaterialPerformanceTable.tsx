@@ -494,7 +494,7 @@ export function MaterialPerformanceTable() {
   const filteredAggregated = useMemo(() => {
     if (previewMaterialType === "all") return aggregatedMaterials;
     return aggregatedMaterials.filter(item => {
-      const type = item.material_type.toLowerCase();
+      const type = (item.material_type || "").toLowerCase();
       if (previewMaterialType === "image") return type === "image" || type === "single-image" || type === "single_image";
       if (previewMaterialType === "video") return type === "video";
       if (previewMaterialType === "carousel") return type === "carousel";
@@ -568,12 +568,104 @@ export function MaterialPerformanceTable() {
 
   const handleSyncCreativeHash = async () => {
     setIsSyncing(true);
+    const syncToast = toast.loading("正在流式同步素材...");
+    setPreviewAllData([]); // Clear list to show streaming imports
+
     try {
-      const res = await axios.post("/api/sync-creative-hash");
-      toast.success(res.data.message || "素材特征同步已在后台开启");
+      const token = localStorage.getItem("token");
+      const userStr = localStorage.getItem("user");
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json"
+      };
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+      if (userStr) {
+        try {
+          const user = JSON.parse(userStr);
+          if (user && user.id) {
+            headers["x-user-id"] = String(user.id);
+          }
+        } catch (e) {}
+      }
+
+      const sDateStr = dateParams[0] || "";
+      const eDateStr = dateParams[1] || "";
+
+      const response = await fetch(`/api/meta/sync-creatives?startDate=${sDateStr}&endDate=${eDateStr}`, {
+        method: "GET",
+        headers
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP Error: ${response.status}`);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error("Failed to get response reader");
+      }
+
+      const decoder = new TextDecoder("utf-8");
+      let buffer = "";
+      let creativeCount = 0;
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.trim()) {
+            try {
+              const creativeItem = JSON.parse(line);
+              
+              const formattedItem = {
+                id: creativeItem.id || creativeItem.creativeId,
+                name: creativeItem.name,
+                creativeId: creativeItem.creativeId,
+                storeName: creativeItem.storeName || "未分配",
+                accountId: creativeItem.accountId,
+                accountName: creativeItem.accountName || creativeItem.accountId,
+                status: "ACTIVE",
+                spend: 0,
+                impressions: 0,
+                clicks: 0,
+                reach: 0,
+                purchases: 0,
+                purchaseValue: 0,
+                type: creativeItem.type || "IMAGE",
+                roas: 0,
+                cpp: 0,
+                cpc: 0,
+                ctr: 0,
+                cpm: 0
+              };
+
+              setPreviewAllData(prev => {
+                const safePrev = Array.isArray(prev) ? prev : [];
+                const exists = safePrev.some(item => item.creativeId === formattedItem.creativeId);
+                if (exists) {
+                  return safePrev.map(item => item.creativeId === formattedItem.creativeId ? { ...item, ...formattedItem } : item);
+                }
+                return [...safePrev, formattedItem];
+              });
+              creativeCount++;
+            } catch (err) {
+              console.error("Failed to parse streamed creative line:", err, line);
+            }
+          }
+        }
+      }
+
+      toast.success(`素材同步完成: 成功抓取 ${creativeCount} 个素材`, { id: syncToast });
       refresh();
     } catch (error: any) {
-      toast.error(error.response?.data?.error || "同步请求失败");
+      console.error("Stream sync creatives error:", error);
+      toast.error(error.message || "素材同步失败，请重试", { id: syncToast });
     } finally {
       setIsSyncing(false);
     }
@@ -1193,7 +1285,7 @@ export function MaterialPerformanceTable() {
                   previewMaterialType === "image" ? "bg-meta-blue text-white shadow-sm" : "bg-slate-50 text-slate-500 hover:bg-slate-100"
                 )}
               >
-                单图 Image ({aggregatedMaterials.filter(x => ["image", "single-image", "single_image"].includes(x.material_type.toLowerCase())).length})
+                单图 Image ({aggregatedMaterials.filter(x => ["image", "single-image", "single_image"].includes((x.material_type || "").toLowerCase())).length})
               </button>
               <button 
                 onClick={() => setPreviewMaterialType("video")} 
@@ -1202,7 +1294,7 @@ export function MaterialPerformanceTable() {
                   previewMaterialType === "video" ? "bg-meta-blue text-white shadow-sm" : "bg-slate-50 text-slate-500 hover:bg-slate-100"
                 )}
               >
-                视频 Video ({aggregatedMaterials.filter(x => x.material_type.toLowerCase() === "video").length})
+                视频 Video ({aggregatedMaterials.filter(x => (x.material_type || "").toLowerCase() === "video").length})
               </button>
               <button 
                 onClick={() => setPreviewMaterialType("carousel")} 
@@ -1211,7 +1303,7 @@ export function MaterialPerformanceTable() {
                   previewMaterialType === "carousel" ? "bg-meta-blue text-white shadow-sm" : "bg-slate-50 text-slate-500 hover:bg-slate-100"
                 )}
               >
-                轮播 Carousel ({aggregatedMaterials.filter(x => x.material_type.toLowerCase() === "carousel").length})
+                轮播 Carousel ({aggregatedMaterials.filter(x => (x.material_type || "").toLowerCase() === "carousel").length})
               </button>
             </div>
           </div>
@@ -1260,8 +1352,8 @@ export function MaterialPerformanceTable() {
                   </TableRow>
                 ) : (
                   paginatedPreviewData.map((row) => {
-                    const isVideo = row.material_type.toLowerCase() === "video";
-                    const isCarousel = row.material_type.toLowerCase() === "carousel";
+                    const isVideo = (row.material_type || "").toLowerCase() === "video";
+                    const isCarousel = (row.material_type || "").toLowerCase() === "carousel";
                     const ctr = row.impressions > 0 ? (row.clicks / row.impressions) * 100 : 0;
                     const cpp = row.purchases > 0 ? row.spend / row.purchases : 0;
                     return (

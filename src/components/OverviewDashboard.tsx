@@ -36,6 +36,12 @@ interface OverviewDashboardProps {
   storeSummaries?: Record<string, any>;
 }
 
+function getMappingForAccount(accountId: string, mappings: Record<string, any>) {
+  if (!mappings || !accountId) return null;
+  const cleanId = accountId.replace("act_", "").trim();
+  return mappings[accountId] || mappings[`act_${cleanId}`] || mappings[cleanId];
+}
+
 export function OverviewDashboard({ data = [], mappings = {}, storeSummaries = {} }: OverviewDashboardProps) {
   const safeData = useMemo(() => {
     const rawData = Array.isArray(data) ? data : [];
@@ -58,7 +64,7 @@ export function OverviewDashboard({ data = [], mappings = {}, storeSummaries = {
     }> = {};
 
     safeData.forEach((d) => {
-      const mapping = mappings[d.accountId];
+      const mapping = getMappingForAccount(d.accountId, mappings);
       const storeName = mapping?.store || "未分配";
       if (!storeMap[storeName]) {
         storeMap[storeName] = {
@@ -159,7 +165,7 @@ export function OverviewDashboard({ data = [], mappings = {}, storeSummaries = {
     }> = {};
 
     safeData.forEach((d) => {
-      const mapping = mappings[d.accountId];
+      const mapping = getMappingForAccount(d.accountId, mappings);
       const projectName = mapping?.project || "未分配";
       if (!catMap[projectName]) {
         catMap[projectName] = {
@@ -196,7 +202,7 @@ export function OverviewDashboard({ data = [], mappings = {}, storeSummaries = {
     }> = {};
 
     safeData.forEach((d) => {
-      const mapping = mappings[d.accountId];
+      const mapping = getMappingForAccount(d.accountId, mappings);
       const ownerName = mapping?.owner || "未分配";
       if (!ownerMap[ownerName]) {
         ownerMap[ownerName] = {

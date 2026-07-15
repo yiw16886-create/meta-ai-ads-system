@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import prisma from '../../db/index.js';
 import axios from 'axios';
+import { collapseRequest } from '../utils.js';
 
 // Helper function to clean leading act_ prefix for reliable ID comparisons
 function cleanFbAccountId(id: string | null | undefined): string {
@@ -9,7 +10,11 @@ function cleanFbAccountId(id: string | null | undefined): string {
 }
 
 const apiCache = new Map<string, { data: any, expire: number }>();
-function getCachedApi(key: string) {
+function getCachedApi(key: string, forceRefresh: boolean = false) {
+  if (forceRefresh) {
+    apiCache.delete(key);
+    return null;
+  }
   const hit = apiCache.get(key);
   if (hit && hit.expire > Date.now()) return hit.data;
   return null;
@@ -98,6 +103,7 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
       adMetrics[ad.id] = { spend: 0, impressions: 0, clicks: 0, purchases: 0, purchaseValue: 0 };
     }
 
+    const forceRefresh = req.query.force_refresh === 'true';
     const liveFetchedAccountIds = new Set<string>();
 
     if (allowedAccountIds.length > 0) {
@@ -107,7 +113,7 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
         try {
           const cleanActId = cleanFbAccountId(actId);
           const cacheKey = `MAT_AD_INS_${cleanActId}_${startDate}_${endDate}`;
-          const cached = getCachedApi(cacheKey);
+          const cached = getCachedApi(cacheKey, forceRefresh);
           if (cached) {
             return { actId, insights: cached };
           }
@@ -117,17 +123,22 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
 
           const fbActId = `act_${cleanActId}`;
           const url = `https://graph.facebook.com/v21.0/${fbActId}/insights`;
-          const res = await axios.get(url, {
-            params: {
-              level: 'ad',
-              time_range: JSON.stringify({ since: startDate || '2026-05-01', until: endDate || '2026-06-09' }),
-              fields: 'ad_id,spend,impressions,inline_link_clicks,clicks,actions,action_values',
-              limit: 1000,
-              access_token: useToken
-            }
+          
+          const insights = await collapseRequest(cacheKey, async () => {
+            const res = await axios.get(url, {
+              params: {
+                level: 'ad',
+                time_range: JSON.stringify({ since: startDate || '2026-05-01', until: endDate || '2026-06-09' }),
+                fields: 'ad_id,spend,impressions,inline_link_clicks,clicks,actions,action_values',
+                limit: 1000,
+                access_token: useToken
+              }
+            });
+            const fetched = res.data?.data || [];
+            setCachedApi(cacheKey, fetched, 1800); // cache for 30 minutes
+            return fetched;
           });
-          const insights = res.data?.data || [];
-          setCachedApi(cacheKey, insights, 1800); // cache for 30 minutes
+
           return { actId, insights };
         } catch (err: any) {
           console.log(`[Material Controller] Handled query fallback for account ${actId}`);
@@ -455,12 +466,13 @@ export async function getMaterialTrend(req: Request, res: Response) {
       if (acc.fb_access_token) tokenMap.set(acc.fb_account_id, acc.fb_access_token);
     });
 
+    const forceRefresh = req.query.force_refresh === 'true';
     const dailyMap: Record<string, any> = {};
 
     const fetchPromises = allowedAccountIds.map(async (actId) => {
       const cleanActId = cleanFbAccountId(actId);
       const cacheKey = `MAT_TREND_${cleanActId}_${startStr}_${endStr}`;
-      const cached = getCachedApi(cacheKey);
+      const cached = getCachedApi(cacheKey, forceRefresh);
       if (cached) return { actId, insights: cached, isApi: true };
 
       const useToken = tokenMap.get(cleanActId) || globalToken;
@@ -468,18 +480,22 @@ export async function getMaterialTrend(req: Request, res: Response) {
 
       try {
         const url = `https://graph.facebook.com/v21.0/act_${cleanActId}/insights`;
-        const res = await axios.get(url, {
-          params: {
-            level: 'account',
-            time_range: JSON.stringify({ since: startStr, until: endStr }),
-            time_increment: 1, // break down daily
-            fields: 'date_start,spend,impressions,inline_link_clicks,clicks,actions,action_values',
-            limit: 1000,
-            access_token: useToken
-          }
+        const apiData = await collapseRequest(cacheKey, async () => {
+          const res = await axios.get(url, {
+            params: {
+              level: 'account',
+              time_range: JSON.stringify({ since: startStr, until: endStr }),
+              time_increment: 1, // break down daily
+              fields: 'date_start,spend,impressions,inline_link_clicks,clicks,actions,action_values',
+              limit: 1000,
+              access_token: useToken
+            }
+          });
+          const fetched = res.data?.data || [];
+          setCachedApi(cacheKey, fetched, 1800);
+          return fetched;
         });
-        const apiData = res.data?.data || [];
-        setCachedApi(cacheKey, apiData, 1800);
+
         return { actId, insights: apiData, isApi: true };
       } catch(e) {
         console.log(`[Trend] Fallback for ${cleanActId}`);

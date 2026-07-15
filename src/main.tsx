@@ -21,6 +21,27 @@ axios.interceptors.request.use((config) => {
   return config;
 });
 
+// Set up global axios response interceptor to handle authorization failures
+axios.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response && error.response.status === 401) {
+      console.warn("Unauthorized access - clearing session");
+      try {
+        localStorage.clear();
+        if (window.location.pathname !== "/") {
+          window.location.href = "/";
+        } else {
+          window.location.reload();
+        }
+      } catch (e) {
+        console.error("Failed to clear local session", e);
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />

@@ -194,7 +194,11 @@ export function StoreDetailsPage({
     // Filter out accounts already associated with this store so we don't count them in toggle select-all logic
     const selectables = filteredAvailableAccounts.filter(acc => {
       return !mappings.some(
-        (m: any) => m.accountId === acc.accountId && String(m.store).toLowerCase() === String(storeData.name).toLowerCase()
+        (m: any) => {
+          const mId = String(m.accountId || "").replace("act_", "").trim();
+          const accId = String(acc.accountId || "").replace("act_", "").trim();
+          return mId === accId && String(m.store).toLowerCase() === String(storeData.name).toLowerCase();
+        }
       );
     });
     if (selectables.length === 0) return false;
@@ -204,7 +208,11 @@ export function StoreDetailsPage({
   const toggleSelectAllFiltered = () => {
     const selectables = filteredAvailableAccounts.filter(acc => {
       return !mappings.some(
-        (m: any) => m.accountId === acc.accountId && String(m.store).toLowerCase() === String(storeData.name).toLowerCase()
+        (m: any) => {
+          const mId = String(m.accountId || "").replace("act_", "").trim();
+          const accId = String(acc.accountId || "").replace("act_", "").trim();
+          return mId === accId && String(m.store).toLowerCase() === String(storeData.name).toLowerCase();
+        }
       );
     });
     
@@ -971,11 +979,12 @@ export function StoreDetailsPage({
                                   </div>
                                 ) : (
                                   filteredAvailableAccounts.map((acc) => {
+                                    const cleanAccId = String(acc.accountId || "").replace("act_", "").trim();
                                     const isCurrentStore = mappings.some(
-                                      (m: any) => m.accountId === acc.accountId && String(m.store).toLowerCase() === String(storeData.name).toLowerCase()
+                                      (m: any) => String(m.accountId || "").replace("act_", "").trim() === cleanAccId && String(m.store).toLowerCase() === String(storeData.name).toLowerCase()
                                     );
                                     const otherStore = mappings.find(
-                                      (m: any) => m.accountId === acc.accountId && String(m.store).toLowerCase() !== String(storeData.name).toLowerCase()
+                                      (m: any) => String(m.accountId || "").replace("act_", "").trim() === cleanAccId && String(m.store).toLowerCase() !== String(storeData.name).toLowerCase()
                                     )?.store;
 
                                     const isSelected = selectedAccountIds.includes(acc.accountId);
