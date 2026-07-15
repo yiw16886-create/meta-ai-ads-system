@@ -334,16 +334,52 @@ const handleSyncAds = async (req: AuthenticatedRequest, res: any) => {
         }
       }
 
-      // Update in database
+      // Update in database safely (using upsert in case the account records do not exist yet)
       try {
         await evaluateActivityStatus(accountId, account.account_status, token);
-        await prisma.adAccount.update({
-          where: { fb_account_id: cleanAccountId },
-          data: { activityStatus }
+
+        let unassignedStore = await prisma.store.findUnique({
+          where: { name: "未分配" }
         });
-        await prisma.metaAccountMonitoring.update({
+        if (!unassignedStore) {
+          unassignedStore = await prisma.store.create({
+            data: {
+              name: "未分配",
+              platform: "shopline",
+              timezone: "America/Los_Angeles"
+            }
+          });
+        }
+
+        await prisma.adAccount.upsert({
+          where: { fb_account_id: cleanAccountId },
+          update: {
+            activityStatus,
+            fb_account_name: account.name || `Account ${cleanAccountId}`,
+            fb_access_token: token
+          },
+          create: {
+            fb_account_id: cleanAccountId,
+            fb_account_name: account.name || `Account ${cleanAccountId}`,
+            fb_access_token: token,
+            storeId: unassignedStore.id,
+            activityStatus
+          }
+        });
+
+        await prisma.metaAccountMonitoring.upsert({
           where: { accountId: cleanAccountId },
-          data: { activityStatus, status: account.account_status }
+          update: {
+            activityStatus,
+            status: account.account_status,
+            accountName: account.name || `Account ${cleanAccountId}`
+          },
+          create: {
+            accountId: cleanAccountId,
+            accountName: account.name || `Account ${cleanAccountId}`,
+            activityStatus,
+            status: account.account_status
+          }
         }).catch(() => {});
       } catch (err: any) {
         console.error(`[Stream Sync Ads] Error updating activity status for ${cleanAccountId}:`, err.message);
