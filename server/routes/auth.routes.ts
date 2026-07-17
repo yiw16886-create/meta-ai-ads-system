@@ -425,8 +425,8 @@ router.get("/facebook/callback", async (req, res) => {
     `);
 
   } catch (error: any) {
-    console.error("Facebook OAuth callback handling exception:", error.response?.data || error.message);
     const errMsg = error.response?.data?.error?.message || error.message || "Unknown callback exception";
+    console.error(`Facebook OAuth callback handling exception: ${errMsg}`);
     
     return res.status(500).send(`
       <html>

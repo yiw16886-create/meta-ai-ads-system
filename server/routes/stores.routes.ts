@@ -736,10 +736,10 @@ router.post("/test-shopify-connection", async (req, res) => {
       });
     }
   } catch (error: any) {
-    console.error(`[Shopify Test HTTP Error] Failed:`, error.response?.data || error.message);
     const errorDetails = error.response?.data 
       ? typeof error.response.data === "object" ? JSON.stringify(error.response.data) : String(error.response.data)
       : error.message || "网络请求失败";
+    console.error(`[Shopify Test HTTP Error] Failed: ${errorDetails}`);
     return res.status(500).json({
       success: false,
       error: `无法与 Shopify API 通信，请检查域名和 Access Token。`,

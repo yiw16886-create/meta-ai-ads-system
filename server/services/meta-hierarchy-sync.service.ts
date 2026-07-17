@@ -114,7 +114,8 @@ export async function ensureAdAccounts(token: string) {
     }
     console.log(`[Ensure AdAccounts] Successfully upserted ${successCount} mapped ad accounts.`);
   } catch (error: any) {
-    console.error(`[Ensure AdAccounts] Failed API call:`, error.response?.data || error.message);
+    const errorMsg = error.response?.data?.error?.message || error.response?.data?.message || error.message;
+    console.error(`[Ensure AdAccounts] Failed API call: ${errorMsg}`);
   }
 }
 

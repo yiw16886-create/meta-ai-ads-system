@@ -349,7 +349,7 @@ async function runBackgroundSync() {
         `https://graph.facebook.com/v19.0/me/adaccounts`,
         {
           params: {
-            fields: "name,account_id,account_status",
+            fields: "name,account_id,account_status,amount_spent",
             limit: 1000,
             access_token: token,
           },
@@ -407,7 +407,8 @@ async function runBackgroundSync() {
           let success = false;
           while (retries > 0 && !success) {
             try {
-              const activityStatus = await evaluateActivityStatus(accountId, account.account_status, token);
+              const realTimeSpend = account.amount_spent ? parseInt(account.amount_spent, 10) / 100 : 0;
+              const activityStatus = await evaluateActivityStatus(accountId, account.account_status, token, realTimeSpend);
               if (activityStatus < 4) {
                  await syncSingleAccountAdData(accountId, startDate, endDate, token);
               } else {

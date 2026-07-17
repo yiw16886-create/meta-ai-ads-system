@@ -25,8 +25,17 @@ axios.interceptors.request.use((config) => {
 axios.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response && error.response.status === 401) {
-      console.warn("Unauthorized access - clearing session");
+    const isUnauthorized = error.response && (
+      error.response.status === 401 ||
+      (error.response.status === 403 && 
+       error.response.data && 
+       typeof error.response.data.error === "string" && 
+       (error.response.data.error.includes("Token") || 
+        error.response.data.error.includes("验证") || 
+        error.response.data.error.includes("过期")))
+    );
+    if (isUnauthorized) {
+      console.warn("Unauthorized or expired token access - clearing session");
       try {
         localStorage.clear();
         if (window.location.pathname !== "/") {

@@ -598,7 +598,19 @@ export function MaterialPerformanceTable() {
       });
 
       if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          console.warn("Unauthorized access on creatives sync - clearing session");
+          localStorage.clear();
+          window.location.href = "/";
+          return;
+        }
         throw new Error(`HTTP Error: ${response.status}`);
+      }
+
+      const contentType = response.headers.get("content-type") || "";
+      if (contentType.includes("text/html") || contentType.includes("html")) {
+        console.warn("Received HTML instead of JSON stream - server may be restarting or unauthenticated.");
+        return;
       }
 
       const reader = response.body?.getReader();
@@ -619,7 +631,11 @@ export function MaterialPerformanceTable() {
         buffer = lines.pop() || "";
 
         for (const line of lines) {
-          if (line.trim()) {
+          const trimmed = line.trim();
+          if (trimmed) {
+            if (trimmed.startsWith("<")) {
+              continue;
+            }
             try {
               const creativeItem = JSON.parse(line);
               

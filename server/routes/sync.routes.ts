@@ -182,7 +182,8 @@ router.post("/sync", async (req: any, res) => {
     });
   } catch (error: any) {
     const msg = extractMetaError(error);
-    console.error("Sync error:", error.response?.data || error.message);
+    const errorMsg = error.response?.data?.error?.message || error.response?.data?.message || error.message;
+    console.error(`Sync error: ${errorMsg}`);
     res.status(500).json({ error: msg });
   }
 });

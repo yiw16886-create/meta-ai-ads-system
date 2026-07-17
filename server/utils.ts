@@ -155,7 +155,12 @@ export function extractMetaError(error: any): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export async function evaluateActivityStatus(accountId: string, fbAccountStatus: number, token?: string): Promise<number> {
+export async function evaluateActivityStatus(
+  accountId: string, 
+  fbAccountStatus: number, 
+  token?: string,
+  realTimeSpend?: number
+): Promise<number> {
   const cleanAccountId = accountId.replace("act_", "");
 
   // Helper helper to update both tables
@@ -181,6 +186,40 @@ export async function evaluateActivityStatus(accountId: string, fbAccountStatus:
       console.log(`[evaluateActivityStatus] Account ${cleanAccountId} is classified as dormant (no deletion of history)`);
     }
   };
+
+  // 0. Account Intelligent Resurrection / Activation Detection Logic
+  let dbMonitoring = null;
+  try {
+    dbMonitoring = await prisma.metaAccountMonitoring.findUnique({
+      where: { accountId: cleanAccountId }
+    });
+  } catch (e) {
+    console.error(`[evaluateActivityStatus] Error fetching dbMonitoring for ${cleanAccountId}:`, e);
+  }
+
+  if (dbMonitoring) {
+    const oldSpend = dbMonitoring.amountSpent || 0;
+    const oldStatus = dbMonitoring.status;
+
+    // Condition A: Meta real-time returned spend (latest historical total spend) is greater than DB recorded spend
+    const hasNewSpend = typeof realTimeSpend === "number" && realTimeSpend > oldSpend;
+    // Condition B: Meta status changed from PENDING/DISABLED (non-1) to ACTIVE (1)
+    const becameActive = fbAccountStatus === 1 && oldStatus !== 1 && oldStatus !== null && oldStatus !== undefined;
+
+    if (hasNewSpend || becameActive) {
+      console.log(`[evaluateActivityStatus] 🔄 Resurrection triggered for ${cleanAccountId}: hasNewSpend=${hasNewSpend} (RealTime:${realTimeSpend} > DB:${oldSpend}), becameActive=${becameActive} (New:${fbAccountStatus} vs Old:${oldStatus})`);
+      await saveActivityStatus(1);
+      if (typeof realTimeSpend === "number") {
+        try {
+          await prisma.metaAccountMonitoring.update({
+            where: { accountId: cleanAccountId },
+            data: { amountSpent: realTimeSpend }
+          });
+        } catch (e) {}
+      }
+      return 1;
+    }
+  }
 
   let diffDays = -1;
 

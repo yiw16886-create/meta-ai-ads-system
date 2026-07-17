@@ -318,13 +318,29 @@ export function Dashboard({ onLogout }: DashboardProps) {
       const sDateStr = format(startDate, "yyyy-MM-dd");
       const eDateStr = format(endDate, "yyyy-MM-dd");
 
-      const response = await fetch(`/api/meta/sync-ads?startDate=${sDateStr}&endDate=${eDateStr}`, {
+      const url = `/api/meta/sync-ads?startDate=${sDateStr}&endDate=${eDateStr}${isSilent ? "&is_silent=true" : ""}`;
+      const response = await fetch(url, {
         method: "GET",
         headers
       });
 
       if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          console.warn("Unauthorized access on stream sync - clearing session");
+          localStorage.clear();
+          window.location.href = "/";
+          return;
+        }
         throw new Error(`HTTP Error: ${response.status}`);
+      }
+
+      const contentType = response.headers.get("content-type") || "";
+      if (contentType.includes("text/html") || contentType.includes("html")) {
+        console.warn("Received HTML instead of JSON stream - server may be restarting or unauthenticated.");
+        if (syncToast) {
+          toast.dismiss(syncToast);
+        }
+        return;
       }
 
       const reader = response.body?.getReader();
@@ -345,7 +361,11 @@ export function Dashboard({ onLogout }: DashboardProps) {
         buffer = lines.pop() || "";
 
         for (const line of lines) {
-          if (line.trim()) {
+          const trimmed = line.trim();
+          if (trimmed) {
+            if (trimmed.startsWith("<")) {
+              continue;
+            }
             try {
               const row = JSON.parse(line);
               if (row.type === "SYNC_COMPLETE") {

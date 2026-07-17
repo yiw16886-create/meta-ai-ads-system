@@ -241,7 +241,7 @@ const handleSyncAds = async (req: AuthenticatedRequest, res: any) => {
         `https://graph.facebook.com/v19.0/me/adaccounts`,
         {
           params: {
-            fields: "name,account_id,account_status",
+            fields: "name,account_id,account_status,amount_spent",
             limit: 1000,
             access_token: token,
           },
@@ -290,54 +290,17 @@ const handleSyncAds = async (req: AuthenticatedRequest, res: any) => {
       const accountId = account.account_id || account.id;
       const cleanAccountId = accountId.replace("act_", "");
 
-      // 1. Get diffDays and evaluate activityStatus based on database spend history
-      let diffDays = -1;
-      try {
-        const lastSpendRecord = await prisma.adInsight.findFirst({
-          where: {
-            accountId: cleanAccountId,
-            spend: { gt: 0 }
-          },
-          orderBy: {
-            date: 'desc'
-          }
-        });
-        if (lastSpendRecord) {
-          const today = new Date();
-          const lastSpendDate = new Date(lastSpendRecord.date);
-          today.setHours(0,0,0,0);
-          lastSpendDate.setHours(0,0,0,0);
-          diffDays = Math.round((today.getTime() - lastSpendDate.getTime()) / (1000 * 60 * 60 * 24));
-        }
-      } catch (dbErr: any) {
-        console.error(`[Stream Sync Ads] Database error fetching last spend record for ${cleanAccountId}:`, dbErr.message);
-      }
-
-      // Determine activityStatus level (1: Green, 2: Blue, 3: Orange, 4: Gray)
+      // 1. Get real-time spend from Meta response and evaluate activityStatus based on database history & intelligent resurrection
+      const realTimeSpend = account.amount_spent ? parseInt(account.amount_spent, 10) / 100 : 0;
       let activityStatus = 4;
-      if (diffDays !== -1) {
-        if (diffDays <= 30) {
-          activityStatus = 1;
-        } else if (diffDays <= 60) {
-          activityStatus = 2;
-        } else if (diffDays <= 90) {
-          activityStatus = 3;
-        } else {
-          activityStatus = 4;
-        }
-      } else {
-        // Smart fallback: If Meta state is ACTIVE (1), assign status 3
-        if (account.account_status === 1) {
-          activityStatus = 3;
-        } else {
-          activityStatus = 4;
-        }
+      try {
+        activityStatus = await evaluateActivityStatus(accountId, account.account_status, token, realTimeSpend);
+      } catch (err: any) {
+        console.error(`[Stream Sync Ads] Error evaluating activity status for ${cleanAccountId}:`, err.message);
       }
 
       // Update in database safely (using upsert in case the account records do not exist yet)
       try {
-        await evaluateActivityStatus(accountId, account.account_status, token);
-
         let unassignedStore = await prisma.store.findUnique({
           where: { name: "未分配" }
         });
@@ -372,17 +335,19 @@ const handleSyncAds = async (req: AuthenticatedRequest, res: any) => {
           update: {
             activityStatus,
             status: account.account_status,
-            accountName: account.name || `Account ${cleanAccountId}`
+            accountName: account.name || `Account ${cleanAccountId}`,
+            amountSpent: realTimeSpend
           },
           create: {
             accountId: cleanAccountId,
             accountName: account.name || `Account ${cleanAccountId}`,
             activityStatus,
-            status: account.account_status
+            status: account.account_status,
+            amountSpent: realTimeSpend
           }
         }).catch(() => {});
       } catch (err: any) {
-        console.error(`[Stream Sync Ads] Error updating activity status for ${cleanAccountId}:`, err.message);
+        console.error(`[Stream Sync Ads] Error updating database records for ${cleanAccountId}:`, err.message);
       }
 
       // Determine depth sync for Insights
@@ -395,7 +360,7 @@ const handleSyncAds = async (req: AuthenticatedRequest, res: any) => {
         shouldDoDepthSync = false;
       }
 
-      logDebug(`[Stream Sync Ads] Processing account ${cleanAccountId}: DiffDays=${diffDays}, StatusLevel=${activityStatus}, DepthSync=${shouldDoDepthSync}`);
+      logDebug(`[Stream Sync Ads] Processing account ${cleanAccountId}: StatusLevel=${activityStatus}, DepthSync=${shouldDoDepthSync}`);
 
       if (!shouldDoDepthSync) {
         skippedCount++;

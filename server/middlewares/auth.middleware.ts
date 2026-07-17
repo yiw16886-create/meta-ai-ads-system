@@ -57,7 +57,7 @@ export function authenticateJWT(req: AuthenticatedRequest, res: Response, next: 
 
     jwt.verify(token, JWT_SECRET, async (err: any, decoded: any) => {
       if (err) {
-        return res.status(403).json({ success: false, error: "Token 验证失败或已过期" });
+        return res.status(401).json({ success: false, error: "Token 验证失败或已过期" });
       }
 
       const userId = typeof decoded.id === "string" ? parseInt(decoded.id, 10) : decoded.id;

@@ -40,9 +40,11 @@ router.get("", async (req: any, res) => {
       setCachedData(cacheKey, filteredResult, 300000); // 5 min cache
       return res.json(filteredResult);
     } catch (error: any) {
+      const errorMsg = error.response?.data?.error?.message || error.response?.data?.message || error.message;
+      const errorCode = error.response?.data?.error?.code ? `(Code ${error.response.data.error.code})` : "";
+      const errorSubcode = error.response?.data?.error?.error_subcode ? `(Subcode ${error.response.data.error.error_subcode})` : "";
       console.warn(
-        "Fetch accounts live graph API request failed, moving to database/mock fallback:",
-        error.response?.data || error.message,
+        `Fetch accounts live graph API request failed, moving to database/mock fallback: ${errorMsg} ${errorCode} ${errorSubcode}`
       );
     }
   }
@@ -136,9 +138,11 @@ router.get("/:accountId/details", async (req: any, res) => {
     setCachedData(cacheKey, result, 300000); // 5 min cache
     return res.json(result);
   } catch (error: any) {
+    const errorMsg = error.response?.data?.error?.message || error.response?.data?.message || error.message;
+    const errorCode = error.response?.data?.error?.code ? `(Code ${error.response.data.error.code})` : "";
+    const errorSubcode = error.response?.data?.error?.error_subcode ? `(Subcode ${error.response.data.error.error_subcode})` : "";
     console.warn(
-      `[Resilient Details Fallback] Meta API Error for details of ${accountId}/${targetLevel}:`,
-      error.response?.data || error.message,
+      `[Resilient Details Fallback] Meta API Error for details of ${accountId}/${targetLevel}: ${errorMsg} ${errorCode} ${errorSubcode}`
     );
 
     try {
@@ -513,9 +517,11 @@ router.get("/:accountId/hierarchy", async (req: any, res) => {
 
     return res.json(result);
   } catch (error: any) {
+    const errorMsg = error.response?.data?.error?.message || error.response?.data?.message || error.message;
+    const errorCode = error.response?.data?.error?.code ? `(Code ${error.response.data.error.code})` : "";
+    const errorSubcode = error.response?.data?.error?.error_subcode ? `(Subcode ${error.response.data.error.error_subcode})` : "";
     console.warn(
-      `[Resilient Fallback Triggered] Meta API Error for hierarchy of ${accountId} (Rate Limit or Access error):`,
-      error.response?.data || error.message,
+      `[Resilient Fallback Triggered] Meta API Error for hierarchy of ${accountId} (Rate Limit or Access error): ${errorMsg} ${errorCode} ${errorSubcode}`
     );
 
     // Fall back to database metrics so that UI won't fail with a blocking 500 error
