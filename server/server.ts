@@ -1,3 +1,5 @@
+import "./logger.js";
+import { logContext } from "./logger.js";
 import express, { Request, Response, NextFunction } from "express";
 import cron from "node-cron";
 import path from "path";
@@ -330,16 +332,17 @@ const CACHE_TTL = 10 * 60 * 1000; // Increased to 10 minutes
 // ---后台静默同步逻辑 (Background Auto-Sync) ---
 async function runBackgroundSync() {
   const syncId = format(new Date(), "HH:mm:ss");
-  console.log(`[后台同步 | ${syncId}] 🔄 开始后台静默同步: 过去 30 天数据...`);
+  console.log(`[后台同步 | ${syncId}] 🔄 开始后台静默同步: 过去 2 天数据 (昨天/今天)...`);
 
-  try {
+  await logContext.run({ is_silent: true }, async () => {
+    try {
     const token = await getMetaToken();
     if (!token) {
       console.log(`[后台同步 | ${syncId}] ⚠️ 同步中止: Meta Token 未配置`);
       return;
     }
 
-    const startDate = format(subDays(new Date(), 30), "yyyy-MM-dd");
+    const startDate = format(subDays(new Date(), 1), "yyyy-MM-dd");
     const endDate = format(new Date(), "yyyy-MM-dd");
 
     // 1. 获取账户列表
@@ -460,17 +463,18 @@ async function runBackgroundSync() {
       }
     }
 
-    console.log(
-      `[后台同步 | ${syncId}] ✅ 同步完成! 共处理 ${totalAccounts} 个账户`,
-    );
-  } catch (error: any) {
-    const status = error.response?.status;
-    const metaError = error.response?.data?.error?.message || error.message;
-    console.error(
-      `[后台同步 | ${syncId}] 🚨 全局同步异常 (${status || "Unknown"}):`,
-      metaError,
-    );
-  }
+      (console as any).forceLog(
+        `[后台同步 | ${syncId}] ✅ 同步完成! 共处理 ${totalAccounts} 个账户`,
+      );
+    } catch (error: any) {
+      const status = error.response?.status;
+      const metaError = error.response?.data?.error?.message || error.message;
+      console.error(
+        `[后台同步 | ${syncId}] 🚨 全局同步异常 (${status || "Unknown"}):`,
+        metaError,
+      );
+    }
+  });
 }
 
 async function cleanupMockData() {

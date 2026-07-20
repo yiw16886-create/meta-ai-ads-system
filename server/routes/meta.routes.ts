@@ -3,6 +3,7 @@ import prisma from "../../db/index.js";
 import { authenticateJWT, AuthenticatedRequest } from "../middlewares/auth.middleware.js";
 import axios from "axios";
 import { getMetaToken, extractMetaError, evaluateActivityStatus, syncSingleAccountAdData } from "../utils.js";
+import { logContext } from "../logger.js";
 
 const router = Router();
 
@@ -217,260 +218,266 @@ const handleSyncAds = async (req: AuthenticatedRequest, res: any) => {
     const isSilent = is_silent === 'true' || is_silent === true;
     const forceRefresh = force_refresh === 'true' || force_refresh === true;
 
-    const { format } = await import("date-fns");
-    const todayStr = format(new Date(), "yyyy-MM-dd");
-    const sDate = startDate || todayStr;
-    const eDate = endDate || todayStr;
+    await logContext.run({ is_silent: isSilent }, async () => {
+      const { format, subDays } = await import("date-fns");
+      const todayStr = format(new Date(), "yyyy-MM-dd");
+      const yesterdayStr = format(subDays(new Date(), 1), "yyyy-MM-dd");
 
-    const logDebug = (message: string, ...args: any[]) => {
-      if (!isSilent) {
-        console.log(message, ...args);
-      }
-    };
+      // Decoupled dates: silent background tasks force today & yesterday,
+      // while manual click synchronous requests use custom/selected dates.
+      const sDate = isSilent ? yesterdayStr : (startDate || todayStr);
+      const eDate = isSilent ? todayStr : (endDate || todayStr);
 
-    const token = await getMetaToken(userId);
-    if (!token) {
-      res.setHeader('Content-Type', 'application/json');
-      return res.status(400).json({ error: "Meta Token 未配置，请前往设置页面填写" });
-    }
-
-    // Fetch account list from Meta Graph API
-    let accounts: any[] = [];
-    try {
-      const accountsResponse = await axios.get(
-        `https://graph.facebook.com/v19.0/me/adaccounts`,
-        {
-          params: {
-            fields: "name,account_id,account_status,amount_spent",
-            limit: 1000,
-            access_token: token,
-          },
+      const logDebug = (message: string, ...args: any[]) => {
+        if (!isSilent) {
+          console.log(message, ...args);
         }
-      );
-      accounts = accountsResponse.data?.data || [];
-    } catch (apiErr: any) {
-      console.error("[Stream Sync Ads] Failed to fetch accounts from Meta API, fallback to mapped:", apiErr.message);
-    }
+      };
 
-    const dbMappings = await prisma.accountMapping.findMany();
-    const dbAdAccounts = await prisma.adAccount.findMany();
-    const allowedAccountIds = new Set<string>();
-    dbMappings.forEach(m => { if (m.fbAccountId) allowedAccountIds.add(m.fbAccountId.replace("act_", "")); });
-    dbAdAccounts.forEach(a => { if (a.fb_account_id) allowedAccountIds.add(a.fb_account_id.replace("act_", "")); });
-
-    const DORMANT_ACCOUNT_IDS = ["26380439", "341040412"];
-    const filteredAccounts = accounts.filter((a: any) => {
-      const rawId = (a.account_id || a.id || "").replace("act_", "");
-      return !DORMANT_ACCOUNT_IDS.includes(rawId);
-    });
-
-    // Merge allowed accounts
-    const existingAccountIds = new Set(filteredAccounts.map((a: any) => (a.account_id || a.id || "").replace("act_", "")));
-    for (const allowedId of allowedAccountIds) {
-      if (!existingAccountIds.has(allowedId) && !DORMANT_ACCOUNT_IDS.includes(allowedId)) {
-        filteredAccounts.push({ account_id: allowedId, account_status: 1 });
-      }
-    }
-
-    // Configure streaming headers
-    res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
-    res.setHeader('Transfer-Encoding', 'chunked');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-
-    console.log(`⏰ [Stream Sync Ads] 启动同步任务... (IsSilent: ${isSilent}, ForceRefresh: ${forceRefresh}, FilteredAccounts: ${filteredAccounts.length})`);
-
-    let processedCount = 0;
-    let activeCount = 0;
-    let skippedCount = 0;
-    const startTime = Date.now();
-
-    for (const account of filteredAccounts) {
-      processedCount++;
-      const accountId = account.account_id || account.id;
-      const cleanAccountId = accountId.replace("act_", "");
-
-      // 1. Get real-time spend from Meta response and evaluate activityStatus based on database history & intelligent resurrection
-      const realTimeSpend = account.amount_spent ? parseInt(account.amount_spent, 10) / 100 : 0;
-      let activityStatus = 4;
-      try {
-        activityStatus = await evaluateActivityStatus(accountId, account.account_status, token, realTimeSpend);
-      } catch (err: any) {
-        console.error(`[Stream Sync Ads] Error evaluating activity status for ${cleanAccountId}:`, err.message);
+      const token = await getMetaToken(userId);
+      if (!token) {
+        res.setHeader('Content-Type', 'application/json');
+        return res.status(400).json({ error: "Meta Token 未配置，请前往设置页面填写" });
       }
 
-      // Update in database safely (using upsert in case the account records do not exist yet)
+      // Fetch account list from Meta Graph API
+      let accounts: any[] = [];
       try {
-        let unassignedStore = await prisma.store.findUnique({
-          where: { name: "未分配" }
-        });
-        if (!unassignedStore) {
-          unassignedStore = await prisma.store.create({
-            data: {
-              name: "未分配",
-              platform: "shopline",
-              timezone: "America/Los_Angeles"
+        const accountsResponse = await axios.get(
+          `https://graph.facebook.com/v19.0/me/adaccounts`,
+          {
+            params: {
+              fields: "name,account_id,account_status,amount_spent",
+              limit: 1000,
+              access_token: token,
+            },
+          }
+        );
+        accounts = accountsResponse.data?.data || [];
+      } catch (apiErr: any) {
+        console.error("[Stream Sync Ads] Failed to fetch accounts from Meta API, fallback to mapped:", apiErr.message);
+      }
+
+      const dbMappings = await prisma.accountMapping.findMany();
+      const dbAdAccounts = await prisma.adAccount.findMany();
+      const allowedAccountIds = new Set<string>();
+      dbMappings.forEach(m => { if (m.fbAccountId) allowedAccountIds.add(m.fbAccountId.replace("act_", "")); });
+      dbAdAccounts.forEach(a => { if (a.fb_account_id) allowedAccountIds.add(a.fb_account_id.replace("act_", "")); });
+
+      const DORMANT_ACCOUNT_IDS = ["26380439", "341040412"];
+      const filteredAccounts = accounts.filter((a: any) => {
+        const rawId = (a.account_id || a.id || "").replace("act_", "");
+        return !DORMANT_ACCOUNT_IDS.includes(rawId);
+      });
+
+      // Merge allowed accounts
+      const existingAccountIds = new Set(filteredAccounts.map((a: any) => (a.account_id || a.id || "").replace("act_", "")));
+      for (const allowedId of allowedAccountIds) {
+        if (!existingAccountIds.has(allowedId) && !DORMANT_ACCOUNT_IDS.includes(allowedId)) {
+          filteredAccounts.push({ account_id: allowedId, account_status: 1 });
+        }
+      }
+
+      // Configure streaming headers
+      res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+      res.setHeader('Transfer-Encoding', 'chunked');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+
+      console.log(`⏰ [Stream Sync Ads] 启动同步任务... (IsSilent: ${isSilent}, ForceRefresh: ${forceRefresh}, FilteredAccounts: ${filteredAccounts.length})`);
+
+      let processedCount = 0;
+      let activeCount = 0;
+      let skippedCount = 0;
+      const startTime = Date.now();
+
+      for (const account of filteredAccounts) {
+        processedCount++;
+        const accountId = account.account_id || account.id;
+        const cleanAccountId = accountId.replace("act_", "");
+
+        // 1. Get real-time spend from Meta response and evaluate activityStatus based on database history & intelligent resurrection
+        const realTimeSpend = account.amount_spent ? parseInt(account.amount_spent, 10) / 100 : 0;
+        let activityStatus = 4;
+        try {
+          activityStatus = await evaluateActivityStatus(accountId, account.account_status, token, realTimeSpend);
+        } catch (err: any) {
+          console.error(`[Stream Sync Ads] Error evaluating activity status for ${cleanAccountId}:`, err.message);
+        }
+
+        // Update in database safely (using upsert in case the account records do not exist yet)
+        try {
+          let unassignedStore = await prisma.store.findUnique({
+            where: { name: "未分配" }
+          });
+          if (!unassignedStore) {
+            unassignedStore = await prisma.store.create({
+              data: {
+                name: "未分配",
+                platform: "shopline",
+                timezone: "America/Los_Angeles"
+              }
+            });
+          }
+
+          await prisma.adAccount.upsert({
+            where: { fb_account_id: cleanAccountId },
+            update: {
+              activityStatus,
+              fb_account_name: account.name || `Account ${cleanAccountId}`,
+              fb_access_token: token
+            },
+            create: {
+              fb_account_id: cleanAccountId,
+              fb_account_name: account.name || `Account ${cleanAccountId}`,
+              fb_access_token: token,
+              storeId: unassignedStore.id,
+              activityStatus
             }
           });
+
+          await prisma.metaAccountMonitoring.upsert({
+            where: { accountId: cleanAccountId },
+            update: {
+              activityStatus,
+              status: account.account_status,
+              accountName: account.name || `Account ${cleanAccountId}`,
+              amountSpent: realTimeSpend
+            },
+            create: {
+              accountId: cleanAccountId,
+              accountName: account.name || `Account ${cleanAccountId}`,
+              activityStatus,
+              status: account.account_status,
+              amountSpent: realTimeSpend
+            }
+          }).catch(() => {});
+        } catch (err: any) {
+          console.error(`[Stream Sync Ads] Error updating database records for ${cleanAccountId}:`, err.message);
         }
 
-        await prisma.adAccount.upsert({
-          where: { fb_account_id: cleanAccountId },
-          update: {
-            activityStatus,
-            fb_account_name: account.name || `Account ${cleanAccountId}`,
-            fb_access_token: token
-          },
-          create: {
-            fb_account_id: cleanAccountId,
-            fb_account_name: account.name || `Account ${cleanAccountId}`,
-            fb_access_token: token,
-            storeId: unassignedStore.id,
-            activityStatus
-          }
-        });
+        // Determine depth sync for Insights
+        let shouldDoDepthSync = false;
+        if (activityStatus === 1 || activityStatus === 2) {
+          shouldDoDepthSync = true;
+        } else if (activityStatus === 3) {
+          shouldDoDepthSync = !!forceRefresh;
+        } else {
+          shouldDoDepthSync = false;
+        }
 
-        await prisma.metaAccountMonitoring.upsert({
-          where: { accountId: cleanAccountId },
-          update: {
-            activityStatus,
-            status: account.account_status,
-            accountName: account.name || `Account ${cleanAccountId}`,
-            amountSpent: realTimeSpend
-          },
-          create: {
-            accountId: cleanAccountId,
-            accountName: account.name || `Account ${cleanAccountId}`,
-            activityStatus,
-            status: account.account_status,
-            amountSpent: realTimeSpend
-          }
-        }).catch(() => {});
-      } catch (err: any) {
-        console.error(`[Stream Sync Ads] Error updating database records for ${cleanAccountId}:`, err.message);
-      }
+        logDebug(`[Stream Sync Ads] Processing account ${cleanAccountId}: StatusLevel=${activityStatus}, DepthSync=${shouldDoDepthSync}`);
 
-      // Determine depth sync for Insights
-      let shouldDoDepthSync = false;
-      if (activityStatus === 1 || activityStatus === 2) {
-        shouldDoDepthSync = true;
-      } else if (activityStatus === 3) {
-        shouldDoDepthSync = !!forceRefresh;
-      } else {
-        shouldDoDepthSync = false;
-      }
-
-      logDebug(`[Stream Sync Ads] Processing account ${cleanAccountId}: StatusLevel=${activityStatus}, DepthSync=${shouldDoDepthSync}`);
-
-      if (!shouldDoDepthSync) {
-        skippedCount++;
-        // Skip depth sync: stream existing insights if present, else send stub
-        const dbData = await prisma.adInsight.findMany({
-          where: {
-            accountId: cleanAccountId,
-            date: {
-              gte: sDate,
-              lte: eDate
+        if (!shouldDoDepthSync) {
+          skippedCount++;
+          // Skip depth sync: stream existing insights if present, else send stub
+          const dbData = await prisma.adInsight.findMany({
+            where: {
+              accountId: cleanAccountId,
+              date: {
+                gte: sDate,
+                lte: eDate
+              }
             }
-          }
-        });
+          });
 
-        if (dbData.length > 0) {
+          if (dbData.length > 0) {
+            for (const row of dbData) {
+              res.write(JSON.stringify(row) + "\n");
+            }
+          } else {
+            res.write(JSON.stringify({
+              accountId: cleanAccountId,
+              accountName: account.name || `Account ${cleanAccountId}`,
+              date: sDate,
+              reach: 0,
+              impressions: 0,
+              clicks: 0,
+              spend: 0,
+              purchases: 0,
+              purchaseValue: 0,
+              ctr: 0,
+              cpc: 0,
+              roas: 0
+            }) + "\n");
+          }
+          continue;
+        }
+
+        activeCount++;
+        try {
+          // Sync the account's ad data to the database (without creatives)
+          await syncSingleAccountAdData(accountId, sDate, eDate, token);
+
+          // Fetch newly synced AdInsight records for this account from the database
+          const dbData = await prisma.adInsight.findMany({
+            where: {
+              accountId: cleanAccountId,
+              date: {
+                gte: sDate,
+                lte: eDate
+              }
+            }
+          });
+
+          // Write each synced record back to the response stream
           for (const row of dbData) {
             res.write(JSON.stringify(row) + "\n");
           }
-        } else {
+
+          // If no records were fetched, send a stub so frontend knows this account sync finished
+          if (dbData.length === 0) {
+            res.write(JSON.stringify({
+              accountId: cleanAccountId,
+              accountName: account.name || `Account ${cleanAccountId}`,
+              date: sDate,
+              reach: 0,
+              impressions: 0,
+              clicks: 0,
+              spend: 0,
+              purchases: 0,
+              purchaseValue: 0,
+              ctr: 0,
+              cpc: 0,
+              roas: 0
+            }) + "\n");
+          }
+        } catch (err: any) {
+          console.error(`[Stream Sync Ads] Error syncing account ${accountId}:`, err.message);
           res.write(JSON.stringify({
             accountId: cleanAccountId,
-            accountName: account.name || `Account ${cleanAccountId}`,
-            date: sDate,
-            reach: 0,
-            impressions: 0,
-            clicks: 0,
-            spend: 0,
-            purchases: 0,
-            purchaseValue: 0,
-            ctr: 0,
-            cpc: 0,
-            roas: 0
+            error: err.message || "Failed to sync account"
           }) + "\n");
         }
-        continue;
       }
 
-      activeCount++;
-      try {
-        // Sync the account's ad data to the database (without creatives)
-        await syncSingleAccountAdData(accountId, sDate, eDate, token);
+      (console as any).forceLog(`[✅ Meta Sync Summary] 自动轮询结束 | 共处理 ${processedCount} 个账户，活跃深度同步 ${activeCount} 个，跳过/一级更新 ${skippedCount} 个，耗时 ${Date.now() - startTime} ms`);
 
-        // Fetch newly synced AdInsight records for this account from the database
-        const dbData = await prisma.adInsight.findMany({
-          where: {
-            accountId: cleanAccountId,
-            date: {
-              gte: sDate,
-              lte: eDate
-            }
+      // Trigger post-sync alignment tasks in background (non-blocking, creative set to false!)
+      try {
+        const { ensureAdAccounts, syncMetaHierarchy } = await import("../services/meta-hierarchy-sync.service.js");
+        const { attributePurchases } = await import("../services/attribution.service.js");
+        const { aggregateData } = await import("../services/aggregation.service.js");
+
+        Promise.resolve().then(async () => {
+          try {
+            logDebug("[Stream Sync Background] Performing post-sync alignment (excluding creatives)...");
+            await ensureAdAccounts(token);
+            await syncMetaHierarchy(token, { syncCreative: false, forceRefreshCampaigns: forceRefresh });
+            await attributePurchases();
+            await aggregateData(sDate, eDate, { syncProduct: false, syncCreative: false });
+            logDebug("[Stream Sync Background] Completed background alignment.");
+          } catch (bgErr: any) {
+            console.error("[Stream Sync Background] Alignment error:", bgErr.message);
           }
         });
-
-        // Write each synced record back to the response stream
-        for (const row of dbData) {
-          res.write(JSON.stringify(row) + "\n");
-        }
-
-        // If no records were fetched, send a stub so frontend knows this account sync finished
-        if (dbData.length === 0) {
-          res.write(JSON.stringify({
-            accountId: cleanAccountId,
-            accountName: account.name || `Account ${cleanAccountId}`,
-            date: sDate,
-            reach: 0,
-            impressions: 0,
-            clicks: 0,
-            spend: 0,
-            purchases: 0,
-            purchaseValue: 0,
-            ctr: 0,
-            cpc: 0,
-            roas: 0
-          }) + "\n");
-        }
-      } catch (err: any) {
-        console.error(`[Stream Sync Ads] Error syncing account ${accountId}:`, err.message);
-        res.write(JSON.stringify({
-          accountId: cleanAccountId,
-          error: err.message || "Failed to sync account"
-        }) + "\n");
+      } catch (bgLoadErr: any) {
+        console.error("[Stream Sync Background] Load error:", bgLoadErr.message);
       }
-    }
 
-    console.log(`✅ [Stream Sync Ads] 同步完成。共处理 ${processedCount} 个账户，活跃深度同步 ${activeCount} 个，跳过/一级更新 ${skippedCount} 个，耗时 ${Date.now() - startTime} ms`);
-
-    // Trigger post-sync alignment tasks in background (non-blocking, creative set to false!)
-    try {
-      const { ensureAdAccounts, syncMetaHierarchy } = await import("../services/meta-hierarchy-sync.service.js");
-      const { attributePurchases } = await import("../services/attribution.service.js");
-      const { aggregateData } = await import("../services/aggregation.service.js");
-
-      Promise.resolve().then(async () => {
-        try {
-          logDebug("[Stream Sync Background] Performing post-sync alignment (excluding creatives)...");
-          await ensureAdAccounts(token);
-          await syncMetaHierarchy(token, { syncCreative: false, forceRefreshCampaigns: forceRefresh });
-          await attributePurchases();
-          await aggregateData(sDate, eDate, { syncProduct: false, syncCreative: false });
-          logDebug("[Stream Sync Background] Completed background alignment.");
-        } catch (bgErr: any) {
-          console.error("[Stream Sync Background] Alignment error:", bgErr.message);
-        }
-      });
-    } catch (bgLoadErr: any) {
-      console.error("[Stream Sync Background] Load error:", bgLoadErr.message);
-    }
-
-    res.write(JSON.stringify({ type: "SYNC_COMPLETE", timestamp: Date.now() }) + "\n");
-    res.end();
+      res.write(JSON.stringify({ type: "SYNC_COMPLETE", timestamp: Date.now() }) + "\n");
+      res.end();
+    });
   } catch (error: any) {
     console.error("[Stream Sync Ads] Global stream sync failure:", error.message);
     if (!res.headersSent) {
