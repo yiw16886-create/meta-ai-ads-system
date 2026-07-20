@@ -1,8 +1,9 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import prisma from "../../db/index.js";
+import { getJwtSecret } from "../security.js";
 
-const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret_here";
+const JWT_SECRET = getJwtSecret();
 
 export interface AuthenticatedRequest extends Request {
   user?: {
@@ -15,29 +16,18 @@ export interface AuthenticatedRequest extends Request {
 
 export async function ensureUserOrganization(userId: number, email: string) {
   try {
-    const user = await prisma.user.findUnique({
-      where: { id: userId }
-    });
-
+    const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) return null;
+    if (user.org_id) return user.org_id;
 
-    if (user.org_id) {
-      return user.org_id;
-    }
-
-    // Auto-create organization for this user (Scenario A auto-backfill / self-heal)
-    const orgName = `个人团队_${email || user.email}`;
     const org = await prisma.organization.create({
-      data: {
-        name: orgName
-      }
+      data: { name: `个人团队_${email || user.email}` }
     });
 
     await prisma.user.update({
       where: { id: userId },
       data: { org_id: org.id }
     });
-
     return org.id;
   } catch (error) {
     console.error("Failed to ensure organization for user:", userId, error);
@@ -47,49 +37,57 @@ export async function ensureUserOrganization(userId: number, email: string) {
 
 export function authenticateJWT(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) {
+    return res.status(401).json({ success: false, error: "Authorization requires a Bearer JWT" });
+  }
 
-  if (authHeader) {
-    const token = authHeader.split(" ")[1];
+  const token = authHeader.slice("Bearer ".length).trim();
+  if (!token) {
+    return res.status(401).json({ success: false, error: "Authorization requires a Bearer JWT" });
+  }
 
-    if (!token) {
-      return res.status(401).json({ success: false, error: "未提供授权 Token" });
+  jwt.verify(token, JWT_SECRET, async (err: any, decoded: any) => {
+    if (err || !decoded?.id) {
+      return res.status(401).json({ success: false, error: "JWT validation failed or token expired" });
     }
 
-    jwt.verify(token, JWT_SECRET, async (err: any, decoded: any) => {
-      if (err) {
-        return res.status(401).json({ success: false, error: "Token 验证失败或已过期" });
+    const userId = typeof decoded.id === "string" ? parseInt(decoded.id, 10) : decoded.id;
+    if (!Number.isInteger(userId)) {
+      return res.status(401).json({ success: false, error: "JWT does not contain a valid user identity" });
+    }
+
+    try {
+      const currentUser = await prisma.user.findUnique({ where: { id: userId } });
+      if (!currentUser) {
+        return res.status(401).json({ success: false, error: "JWT user no longer exists" });
       }
 
-      const userId = typeof decoded.id === "string" ? parseInt(decoded.id, 10) : decoded.id;
-      const email = decoded.email || "";
-      const role = decoded.role || "member";
-
-      const orgId = await ensureUserOrganization(userId, email);
-
+      const orgId = await ensureUserOrganization(userId, currentUser.email);
       req.user = {
-        id: userId,
-        email: email,
-        role: role,
+        id: currentUser.id,
+        email: currentUser.email,
+        role: currentUser.role,
         org_id: orgId || undefined
       };
       next();
-    });
-  } else {
-    // If no authorization header, check if x-user-id is set (for compatibility with existing queries)
-    const userIdStr = req.headers["x-user-id"] || req.query.userId;
-    if (userIdStr) {
-      const parsed = parseInt(String(userIdStr), 10);
-      if (!isNaN(parsed)) {
-        ensureUserOrganization(parsed, "").then((orgId) => {
-          req.user = { id: parsed, email: "", role: "member", org_id: orgId || undefined };
-          next();
-        }).catch(() => {
-          req.user = { id: parsed, email: "", role: "member" };
-          next();
-        });
-        return;
-      }
+    } catch (error) {
+      console.error("Failed to load the authenticated user:", error);
+      return res.status(503).json({ success: false, error: "Authentication service is unavailable" });
     }
-    return res.status(401).json({ success: false, error: "未授权，请提供 JWT Token" });
+  });
+}
+
+export function requireSuperAdmin(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  if (req.user?.role !== "SUPER_ADMIN" && req.user?.role !== "admin") {
+    return res.status(403).json({ success: false, error: "Super administrator access is required" });
   }
+  next();
+}
+
+export function temporarilyDisabled(_req: Request, res: Response) {
+  return res.status(503).json({
+    success: false,
+    code: "SECURITY_LOCKDOWN",
+    error: "This operation is temporarily disabled while its security controls are upgraded",
+  });
 }
