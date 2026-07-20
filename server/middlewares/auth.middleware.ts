@@ -2,7 +2,10 @@ import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import prisma from "../../db/index.js";
 
-const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret_here";
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error("CRITICAL SECURITY ERROR: JWT_SECRET environment variable is not defined!");
+}
 
 export interface AuthenticatedRequest extends Request {
   user?: {
@@ -48,14 +51,14 @@ export async function ensureUserOrganization(userId: number, email: string) {
 export function authenticateJWT(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
 
-  if (authHeader) {
-    const token = authHeader.split(" ")[1];
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const token = authHeader.substring(7);
 
-    if (!token) {
+    if (!token || token.trim() === "") {
       return res.status(401).json({ success: false, error: "未提供授权 Token" });
     }
 
-    jwt.verify(token, JWT_SECRET, async (err: any, decoded: any) => {
+    jwt.verify(token, JWT_SECRET, { algorithms: ["HS256"] }, async (err: any, decoded: any) => {
       if (err) {
         return res.status(401).json({ success: false, error: "Token 验证失败或已过期" });
       }
@@ -75,21 +78,6 @@ export function authenticateJWT(req: AuthenticatedRequest, res: Response, next: 
       next();
     });
   } else {
-    // If no authorization header, check if x-user-id is set (for compatibility with existing queries)
-    const userIdStr = req.headers["x-user-id"] || req.query.userId;
-    if (userIdStr) {
-      const parsed = parseInt(String(userIdStr), 10);
-      if (!isNaN(parsed)) {
-        ensureUserOrganization(parsed, "").then((orgId) => {
-          req.user = { id: parsed, email: "", role: "member", org_id: orgId || undefined };
-          next();
-        }).catch(() => {
-          req.user = { id: parsed, email: "", role: "member" };
-          next();
-        });
-        return;
-      }
-    }
     return res.status(401).json({ success: false, error: "未授权，请提供 JWT Token" });
   }
 }

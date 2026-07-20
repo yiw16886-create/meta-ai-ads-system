@@ -19,6 +19,14 @@ import { attributePurchases } from "./services/attribution.service.js";
 import { getMetaToken, evaluateActivityStatus, syncSingleAccountAdData } from "./utils.js";
 import { syncBmStatusAndHealth } from "./routes/bms.routes.js";
 
+// Enforce security environment variables check on startup
+if (!process.env.JWT_SECRET) {
+  throw new Error("CRITICAL SECURITY ERROR: JWT_SECRET environment variable is required but not defined!");
+}
+if (!process.env.ADMIN_PASSWORD && !process.env.VITE_ADMIN_SECRET) {
+  throw new Error("CRITICAL SECURITY ERROR: ADMIN_PASSWORD / VITE_ADMIN_SECRET environment variable is required but not defined!");
+}
+
 
 
 
@@ -186,7 +194,10 @@ async function checkDb() {
     }
 
     const defaultEmail = "administrator@GG.com";
-    const defaultPass = process.env.VITE_ADMIN_SECRET || "123456";
+    const defaultPass = process.env.ADMIN_PASSWORD || process.env.VITE_ADMIN_SECRET;
+    if (!defaultPass) {
+      throw new Error("CRITICAL SECURITY ERROR: ADMIN_PASSWORD / VITE_ADMIN_SECRET is required but not configured!");
+    }
     const hashedPass = await bcrypt.hash(defaultPass, 10);
 
     await prisma.user.upsert({
@@ -232,17 +243,7 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Global user context middleware for multi-user isolation
-app.use((req: any, res, next) => {
-  const userIdStr = req.headers["x-user-id"] || req.query.userId;
-  if (userIdStr) {
-    const parsed = parseInt(String(userIdStr), 10);
-    if (!isNaN(parsed)) {
-      req.user = { id: parsed };
-    }
-  }
-  next();
-});
+// All endpoints are now securely and individually protected via authenticateJWT middleware
 
 import routes from "./routes/index.js";
 app.use("/api", routes);

@@ -4,9 +4,13 @@ import prisma from "../../db/index.js";
 import axios from "axios";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
+import { authenticateJWT } from "../middlewares/auth.middleware.js";
 
 const router = Router();
-const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret_here";
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error("CRITICAL SECURITY ERROR: JWT_SECRET environment variable is not defined!");
+}
 
 router.post("/login", async (req, res) => {
   try {
@@ -463,7 +467,7 @@ router.get("/facebook/callback", async (req, res) => {
 });
 
 // POST /api/auth/facebook/disconnect
-router.post("/facebook/disconnect", async (req: any, res) => {
+router.post("/facebook/disconnect", authenticateJWT as any, async (req: any, res) => {
   try {
     const userId = req.user?.id;
     if (userId) {
@@ -490,7 +494,7 @@ router.post("/facebook/disconnect", async (req: any, res) => {
 });
 
 // POST /api/auth/facebook/delete-local - Local User Requested Data Deletion & Purge
-router.post("/facebook/delete-local", async (req: any, res) => {
+router.post("/facebook/delete-local", authenticateJWT as any, async (req: any, res) => {
   try {
     console.log("📥 Local unbind and data purge requested for Facebook integration");
     const userId = req.user?.id;
@@ -519,7 +523,7 @@ router.post("/facebook/delete-local", async (req: any, res) => {
 });
 
 // POST /api/auth/facebook/unbind - Standard Compliant Facebook Unbind & Data Purge (Meta App Review Compliant)
-router.post("/facebook/unbind", async (req: any, res) => {
+router.post("/facebook/unbind", authenticateJWT as any, async (req: any, res) => {
   try {
     console.log("📥 Compliant unbind and data purge requested for Facebook integration");
     const userId = req.user?.id;
@@ -684,7 +688,7 @@ router.post("/facebook/delete", async (req, res) => {
 });
 
 // GET /api/auth/facebook/profile-link - Fetch user's actual profile link dynamically
-router.get("/facebook/profile-link", async (req: any, res) => {
+router.get("/facebook/profile-link", authenticateJWT as any, async (req: any, res) => {
   try {
     const userId = req.user?.id;
     let userAccessToken = null;
