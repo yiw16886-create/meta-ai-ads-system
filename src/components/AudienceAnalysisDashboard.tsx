@@ -406,9 +406,10 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
         processedData.sort((a: any, b: any) => (b.purchases || 0) - (a.purchases || 0));
 
         setData(processedData);
-      } catch (err) {
+      } catch (err: any) {
         console.error(err);
-        toast.error("获取受众数据失败");
+        const errMsg = err.response?.data?.error || err.response?.data?.message || err.message || "获取受众数据失败";
+        toast.error(`同步失败: ${errMsg}`);
       } finally {
         setLoading(false);
       }

@@ -182,15 +182,6 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
               }
             }
 
-            if (!itemPurchases && parseFloat(stat.spend || '0') > 0) {
-              const inlineClicks = parseInt(stat.inline_link_clicks || stat.clicks || '0', 10);
-              const seedVal = parseInt(String(adId).slice(-4), 10) || 123;
-              itemPurchases = Math.floor(inlineClicks * (0.01 + (seedVal % 15) / 1000));
-            }
-            if (!itemPurchaseValue && itemPurchases > 0) {
-               itemPurchaseValue = itemPurchases * (40 + (parseInt(String(adId).slice(-2), 10) || 0)); 
-            }
-
             metrics.purchases += itemPurchases;
             metrics.purchaseValue += itemPurchaseValue;
           }
@@ -542,10 +533,6 @@ export async function getMaterialTrend(req: Request, res: Response) {
           const pv = row.action_values.find((a: any) => a.action_type === 'purchase' || a.action_type === 'offsite_conversion.fb_pixel_purchase');
           if (pv) fbPurchaseVal = parseFloat(pv.value || '0');
         }
-        if (!fbPurchases && fbClicks > 0 && parseFloat(row.spend || '0') > 0) fbPurchases = Math.floor(fbClicks * 0.012) || 1;
-        if (!fbPurchaseVal && fbPurchases > 0) fbPurchaseVal = fbPurchases * 45;
-        if (!fbAddToCart && fbClicks > 0) fbAddToCart = Math.floor(fbClicks * 0.1);
-        if (!fbIC && fbAddToCart > 0) fbIC = Math.floor(fbAddToCart * 0.5);
 
         dailyMap[d].purchases += Math.floor(fbPurchases * multiplier);
         dailyMap[d].purchaseValue += (fbPurchaseVal * multiplier);

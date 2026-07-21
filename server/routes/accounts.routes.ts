@@ -112,7 +112,7 @@ router.get("/:accountId/details", async (req: any, res) => {
       const fields = `name,status,effective_status,daily_budget,lifetime_budget${extraFields},insights.time_range(${timeRange}){${insightsFields}}`;
 
       const response = await axios.get(
-        `https://graph.facebook.com/v19.0/act_${accountId}/${targetLevel}`,
+        `https://graph.facebook.com/v19.0/act_${cleanAccId}/${targetLevel}`,
         {
           params: {
             fields,
@@ -276,6 +276,8 @@ router.get("/:accountId/audience-insights", async (req: any, res) => {
     const token = await getMetaToken(req.user?.id);
     if (!token) throw new Error("Meta Token missing, using dynamic locale-aware safe fallback representation");
 
+    const cleanAccId = accountId.replace("act_", "").trim();
+
     let breakdownsParam = "";
     if (breakdown === "gender_age") breakdownsParam = "age,gender";
     else if (breakdown === "country") breakdownsParam = "country";
@@ -283,7 +285,7 @@ router.get("/:accountId/audience-insights", async (req: any, res) => {
     else return res.status(400).json({ error: "Invalid breakdown type" });
 
     const response = await axios.get(
-      `https://graph.facebook.com/v19.0/act_${accountId}/insights`,
+      `https://graph.facebook.com/v19.0/act_${cleanAccId}/insights`,
       {
         params: {
           time_range: JSON.stringify({ since: startDate, until: endDate }),
@@ -297,119 +299,13 @@ router.get("/:accountId/audience-insights", async (req: any, res) => {
 
     return res.json(response.data.data || []);
   } catch (error: any) {
-    const errorDetails = error.response?.data?.error?.message || error.message || "";
-    console.log(
-      `[Audience Insights Fallback] Serving high-fidelity fallback presentation for act_${accountId} (${breakdown}) - reason: ${errorDetails.substring(0, 100)}`
-    );
-
-    // High-fidelity structured representation matching Facebook's breakdowns schema
-    const fallbackData: any[] = [];
-    
-    if (breakdown === "country") {
-      const countries = ["US", "GB", "DE", "FR", "JP", "AU", "CA", "CN", "HK", "TW"];
-      countries.forEach((country, index) => {
-        const seed = 10 - index;
-        const spend = 1200 * seed * 0.45;
-        const reach = 8000 * seed;
-        const impressions = reach * 1.35;
-        const clicks = reach * 0.045;
-        const purchases = Math.floor(seed * 2.5);
-        const addsToCart = purchases * 3.5;
-
-        fallbackData.push({
-          country,
-          spend: spend.toFixed(2),
-          reach: Math.floor(reach).toString(),
-          impressions: Math.floor(impressions).toString(),
-          clicks: Math.floor(clicks).toString(),
-          ctr: "3.5",
-          cpc: "0.85",
-          inline_link_clicks: Math.floor(clicks).toString(),
-          inline_link_click_ctr: "3.2",
-          cost_per_inline_link_click: "0.95",
-          actions: [
-            { action_type: "purchase", value: purchases.toString() },
-            { action_type: "add_to_cart", value: Math.floor(addsToCart).toString() }
-          ]
-        });
-      });
-    } else if (breakdown === "gender_age") {
-      const groups = [
-        { gender: "female", age: "25-34" },
-        { gender: "female", age: "35-44" },
-        { gender: "male", age: "25-34" },
-        { gender: "male", age: "35-44" },
-        { gender: "female", age: "18-24" },
-        { gender: "male", age: "18-24" },
-        { gender: "female", age: "45-54" },
-        { gender: "male", age: "45-54" }
-      ];
-      groups.forEach((g, index) => {
-        const seed = 8 - index;
-        const spend = 1000 * seed * 0.35;
-        const reach = 6000 * seed;
-        const impressions = reach * 1.4;
-        const clicks = reach * 0.05;
-        const purchases = Math.floor(seed * 2);
-        const addsToCart = purchases * 4;
-
-        fallbackData.push({
-          gender: g.gender,
-          age: g.age,
-          spend: spend.toFixed(2),
-          reach: Math.floor(reach).toString(),
-          impressions: Math.floor(impressions).toString(),
-          clicks: Math.floor(clicks).toString(),
-          ctr: "3.2",
-          cpc: "0.90",
-          inline_link_clicks: Math.floor(clicks).toString(),
-          inline_link_click_ctr: "2.9",
-          cost_per_inline_link_click: "1.05",
-          actions: [
-            { action_type: "purchase", value: purchases.toString() },
-            { action_type: "add_to_cart", value: Math.floor(addsToCart).toString() }
-          ]
-        });
-      });
-    } else if (breakdown === "placement") {
-      const placements = [
-        { publisher_platform: "facebook", platform_position: "feed" },
-        { publisher_platform: "instagram", platform_position: "feed" },
-        { publisher_platform: "instagram", platform_position: "reels" },
-        { publisher_platform: "facebook", platform_position: "reels" },
-        { publisher_platform: "audience_network", platform_position: "unknown" },
-        { publisher_platform: "messenger", platform_position: "messages" }
-      ];
-      placements.forEach((p, index) => {
-        const seed = 6 - index;
-        const spend = 800 * seed * 0.5;
-        const reach = 5000 * seed;
-        const impressions = reach * 1.5;
-        const clicks = reach * 0.04;
-        const purchases = Math.floor(seed * 1.8);
-        const addsToCart = purchases * 3;
-
-        fallbackData.push({
-          publisher_platform: p.publisher_platform,
-          platform_position: p.platform_position,
-          spend: spend.toFixed(2),
-          reach: Math.floor(reach).toString(),
-          impressions: Math.floor(impressions).toString(),
-          clicks: Math.floor(clicks).toString(),
-          ctr: "2.8",
-          cpc: "1.10",
-          inline_link_clicks: Math.floor(clicks).toString(),
-          inline_link_click_ctr: "2.5",
-          cost_per_inline_link_click: "1.25",
-          actions: [
-            { action_type: "purchase", value: purchases.toString() },
-            { action_type: "add_to_cart", value: Math.floor(addsToCart).toString() }
-          ]
-        });
-      });
-    }
-
-    return res.json(fallbackData);
+    const status = error.response?.status || 500;
+    const errorMsg = error.response?.data?.error?.message || error.message || "獲取受眾分析失敗";
+    return res.status(status).json({
+      success: false,
+      error: `Meta API 請求受限或驗證失敗: ${errorMsg}`,
+      code: status
+    });
   }
 });
 

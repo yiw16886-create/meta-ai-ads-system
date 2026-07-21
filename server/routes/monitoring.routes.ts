@@ -246,8 +246,10 @@ router.post("/accounts/:accountId/reset", async (req: any, res) => {
     const token = await getMetaToken(req.user?.id);
     if (!token) return res.status(400).json({ error: "Meta Token 未配置" });
 
+    const cleanAccId = accountId.replace("act_", "").trim();
+
     // Meta API: POST act_{id}?spend_cap_action=reset
-    await axios.post(`https://graph.facebook.com/v19.0/act_${accountId}`, null, {
+    await axios.post(`https://graph.facebook.com/v19.0/act_${cleanAccId}`, null, {
       params: {
         spend_cap_action: "reset",
         access_token: token

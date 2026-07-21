@@ -1,0 +1,242 @@
+diff --git a/.env.example b/.env.example
+index cef65ea..aaa7da2 100644
+--- a/.env.example
++++ b/.env.example
+@@ -1,19 +1,20 @@
+-# Admin Credentials (Frontend)
+-VITE_ADMIN_ID=admin
+-VITE_ADMIN_SECRET=123456
++# Admin Credentials (Server-side)
++ADMIN_PASSWORD=
+ 
+-# Meta API
++# Meta API Configuration
+ META_ACCESS_TOKEN=
+ FACEBOOK_CLIENT_ID=
+ FACEBOOK_CLIENT_SECRET=
+ FACEBOOK_CONFIG_ID=
+ 
+-# JWT Secret
+-JWT_SECRET=your_jwt_secret_here
++# JWT Secret (Server-side only)
++JWT_SECRET=
+ 
+-# Database (Use PostgreSQL string like Vercel Postgres or Supabase)
+-DATABASE_URL="postgresql://user:password@host/dbname?sslmode=require"
++# Database URL (PostgreSQL)
++DATABASE_URL=
+ 
+-# AI Studio
++# AI Studio (Gemini API Key)
+ GEMINI_API_KEY=
++
++# Application URL
+ APP_URL=
+diff --git a/server/middlewares/auth.middleware.ts b/server/middlewares/auth.middleware.ts
+index 2b14ec6..337afc9 100644
+--- a/server/middlewares/auth.middleware.ts
++++ b/server/middlewares/auth.middleware.ts
+@@ -2,7 +2,10 @@ import { Request, Response, NextFunction } from "express";
+ import jwt from "jsonwebtoken";
+ import prisma from "../../db/index.js";
+ 
+-const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret_here";
++const JWT_SECRET = process.env.JWT_SECRET;
++if (!JWT_SECRET) {
++  throw new Error("CRITICAL SECURITY ERROR: JWT_SECRET environment variable is not defined!");
++}
+ 
+ export interface AuthenticatedRequest extends Request {
+   user?: {
+@@ -48,14 +51,14 @@ export async function ensureUserOrganization(userId: number, email: string) {
+ export function authenticateJWT(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+   const authHeader = req.headers.authorization;
+ 
+-  if (authHeader) {
+-    const token = authHeader.split(" ")[1];
++  if (authHeader && authHeader.startsWith("Bearer ")) {
++    const token = authHeader.substring(7);
+ 
+-    if (!token) {
++    if (!token || token.trim() === "") {
+       return res.status(401).json({ success: false, error: "未提供授权 Token" });
+     }
+ 
+-    jwt.verify(token, JWT_SECRET, async (err: any, decoded: any) => {
++    jwt.verify(token, JWT_SECRET, { algorithms: ["HS256"] }, async (err: any, decoded: any) => {
+       if (err) {
+         return res.status(401).json({ success: false, error: "Token 验证失败或已过期" });
+       }
+@@ -75,21 +78,6 @@ export function authenticateJWT(req: AuthenticatedRequest, res: Response, next:
+       next();
+     });
+   } else {
+-    // If no authorization header, check if x-user-id is set (for compatibility with existing queries)
+-    const userIdStr = req.headers["x-user-id"] || req.query.userId;
+-    if (userIdStr) {
+-      const parsed = parseInt(String(userIdStr), 10);
+-      if (!isNaN(parsed)) {
+-        ensureUserOrganization(parsed, "").then((orgId) => {
+-          req.user = { id: parsed, email: "", role: "member", org_id: orgId || undefined };
+-          next();
+-        }).catch(() => {
+-          req.user = { id: parsed, email: "", role: "member" };
+-          next();
+-        });
+-        return;
+-      }
+-    }
+     return res.status(401).json({ success: false, error: "未授权，请提供 JWT Token" });
+   }
+ }
+diff --git a/server/routes/auth.routes.ts b/server/routes/auth.routes.ts
+index b404934..0489965 100644
+--- a/server/routes/auth.routes.ts
++++ b/server/routes/auth.routes.ts
+@@ -4,9 +4,13 @@ import prisma from "../../db/index.js";
+ import axios from "axios";
+ import crypto from "crypto";
+ import jwt from "jsonwebtoken";
++import { authenticateJWT } from "../middlewares/auth.middleware.js";
+ 
+ const router = Router();
+-const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret_here";
++const JWT_SECRET = process.env.JWT_SECRET;
++if (!JWT_SECRET) {
++  throw new Error("CRITICAL SECURITY ERROR: JWT_SECRET environment variable is not defined!");
++}
+ 
+ router.post("/login", async (req, res) => {
+   try {
+@@ -463,7 +467,7 @@ router.get("/facebook/callback", async (req, res) => {
+ });
+ 
+ // POST /api/auth/facebook/disconnect
+-router.post("/facebook/disconnect", async (req: any, res) => {
++router.post("/facebook/disconnect", authenticateJWT as any, async (req: any, res) => {
+   try {
+     const userId = req.user?.id;
+     if (userId) {
+@@ -490,7 +494,7 @@ router.post("/facebook/disconnect", async (req: any, res) => {
+ });
+ 
+ // POST /api/auth/facebook/delete-local - Local User Requested Data Deletion & Purge
+-router.post("/facebook/delete-local", async (req: any, res) => {
++router.post("/facebook/delete-local", authenticateJWT as any, async (req: any, res) => {
+   try {
+     console.log("📥 Local unbind and data purge requested for Facebook integration");
+     const userId = req.user?.id;
+@@ -519,7 +523,7 @@ router.post("/facebook/delete-local", async (req: any, res) => {
+ });
+ 
+ // POST /api/auth/facebook/unbind - Standard Compliant Facebook Unbind & Data Purge (Meta App Review Compliant)
+-router.post("/facebook/unbind", async (req: any, res) => {
++router.post("/facebook/unbind", authenticateJWT as any, async (req: any, res) => {
+   try {
+     console.log("📥 Compliant unbind and data purge requested for Facebook integration");
+     const userId = req.user?.id;
+@@ -684,7 +688,7 @@ router.post("/facebook/delete", async (req, res) => {
+ });
+ 
+ // GET /api/auth/facebook/profile-link - Fetch user's actual profile link dynamically
+-router.get("/facebook/profile-link", async (req: any, res) => {
++router.get("/facebook/profile-link", authenticateJWT as any, async (req: any, res) => {
+   try {
+     const userId = req.user?.id;
+     let userAccessToken = null;
+diff --git a/server/routes/index.ts b/server/routes/index.ts
+index 56c6e90..8e0f530 100644
+--- a/server/routes/index.ts
++++ b/server/routes/index.ts
+@@ -1,4 +1,5 @@
+ import { Router } from "express";
++import { authenticateJWT } from "../middlewares/auth.middleware.js";
+ import authRoutes from "./auth.routes.js";
+ import usersRoutes from "./users.routes.js";
+ import storesRoutes from "./stores.routes.js";
+@@ -19,20 +20,20 @@ import metaRoutes from "./meta.routes.js";
+ const routes = Router();
+ 
+ routes.use("/auth", authRoutes);
+-routes.use("/users", usersRoutes);
+-routes.use("/stores", storesRoutes);
+-routes.use("/intelligence", intelligenceRoutes);
+-routes.use("/accounts", accountsRoutes);
+-routes.use("/materials", materialRoutes);
+-routes.use("/bms", bmsRoutes);
+-routes.use("/", syncRoutes);
+-routes.use("/insights", insightsRoutes);
+-routes.use("/settings", settingsRoutes);
+-routes.use("/mappings", mappingsRoutes);
+-routes.use("/monitoring", monitoringRoutes);
+-routes.use("/pages", pageManageRoutes);
+-routes.use("/facebook", facebookRoutes);
+-routes.use("/admin/settings", adminSettingsRoutes);
+-routes.use("/meta", metaRoutes);
++routes.use("/users", authenticateJWT as any, usersRoutes);
++routes.use("/stores", authenticateJWT as any, storesRoutes);
++routes.use("/intelligence", authenticateJWT as any, intelligenceRoutes);
++routes.use("/accounts", authenticateJWT as any, accountsRoutes);
++routes.use("/materials", authenticateJWT as any, materialRoutes);
++routes.use("/bms", authenticateJWT as any, bmsRoutes);
++routes.use("/", authenticateJWT as any, syncRoutes);
++routes.use("/insights", authenticateJWT as any, insightsRoutes);
++routes.use("/settings", authenticateJWT as any, settingsRoutes);
++routes.use("/mappings", authenticateJWT as any, mappingsRoutes);
++routes.use("/monitoring", authenticateJWT as any, monitoringRoutes);
++routes.use("/pages", authenticateJWT as any, pageManageRoutes);
++routes.use("/facebook", authenticateJWT as any, facebookRoutes);
++routes.use("/admin/settings", authenticateJWT as any, adminSettingsRoutes);
++routes.use("/meta", authenticateJWT as any, metaRoutes);
+ 
+ export default routes;
+diff --git a/server/server.ts b/server/server.ts
+index d9b7f4f..08d830d 100644
+--- a/server/server.ts
++++ b/server/server.ts
+@@ -19,6 +19,14 @@ import { attributePurchases } from "./services/attribution.service.js";
+ import { getMetaToken, evaluateActivityStatus, syncSingleAccountAdData } from "./utils.js";
+ import { syncBmStatusAndHealth } from "./routes/bms.routes.js";
+ 
++// Enforce security environment variables check on startup
++if (!process.env.JWT_SECRET) {
++  throw new Error("CRITICAL SECURITY ERROR: JWT_SECRET environment variable is required but not defined!");
++}
++if (!process.env.ADMIN_PASSWORD && !process.env.VITE_ADMIN_SECRET) {
++  throw new Error("CRITICAL SECURITY ERROR: ADMIN_PASSWORD / VITE_ADMIN_SECRET environment variable is required but not defined!");
++}
++
+ 
+ 
+ 
+@@ -186,7 +194,10 @@ async function checkDb() {
+     }
+ 
+     const defaultEmail = "administrator@GG.com";
+-    const defaultPass = process.env.VITE_ADMIN_SECRET || "123456";
++    const defaultPass = process.env.ADMIN_PASSWORD || process.env.VITE_ADMIN_SECRET;
++    if (!defaultPass) {
++      throw new Error("CRITICAL SECURITY ERROR: ADMIN_PASSWORD / VITE_ADMIN_SECRET is required but not configured!");
++    }
+     const hashedPass = await bcrypt.hash(defaultPass, 10);
+ 
+     await prisma.user.upsert({
+@@ -232,17 +243,7 @@ const app = express();
+ app.use(express.json());
+ app.use(express.urlencoded({ extended: true }));
+ 
+-// Global user context middleware for multi-user isolation
+-app.use((req: any, res, next) => {
+-  const userIdStr = req.headers["x-user-id"] || req.query.userId;
+-  if (userIdStr) {
+-    const parsed = parseInt(String(userIdStr), 10);
+-    if (!isNaN(parsed)) {
+-      req.user = { id: parsed };
+-    }
+-  }
+-  next();
+-});
++// All endpoints are now securely and individually protected via authenticateJWT middleware
+ 
+ import routes from "./routes/index.js";
+ app.use("/api", routes);

@@ -195,9 +195,10 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
       }).filter((item: any) => item.spend > 0); // Hide items with no spend
 
       setData(processed);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      toast.error("获取数据失败");
+      const errMsg = err.response?.data?.error || err.response?.data?.message || err.message || "获取数据失败";
+      toast.error(`同步失败: ${errMsg}`);
       setData([]);
     } finally {
       setLoading(false);

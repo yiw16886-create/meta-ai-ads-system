@@ -180,4 +180,105 @@ router.post("/test-smtp", async (req, res) => {
   }
 });
 
+// Clean up dirty historical mock/dummy database records & caches
+router.post("/cleanup-dirty-data", async (req: any, res) => {
+  try {
+    console.log("🧹 Admin request: Cleaning up all mock/dummy database records...");
+
+    // 1. Delete AdInsights with mock/dummy accountIds
+    const deletedInsights = await prisma.adInsight.deleteMany({
+      where: {
+        OR: [
+          { accountId: { contains: "mock" } },
+          { accountId: { contains: "dummy" } },
+          { accountId: { contains: "fake" } },
+          { accountId: { contains: "sample" } }
+        ]
+      }
+    });
+
+    // 2. Delete Ads, AdSets, Campaigns with mock/dummy indicators
+    const deletedAds = await prisma.ad.deleteMany({
+      where: {
+        OR: [
+          { id: { contains: "mock" } },
+          { id: { contains: "dummy" } },
+          { name: { contains: "mock" } },
+          { name: { contains: "dummy" } },
+          { name: { contains: "sample" } },
+          { accountId: { contains: "mock" } },
+          { accountId: { contains: "dummy" } }
+        ]
+      }
+    });
+
+    const deletedAdSets = await prisma.adSet.deleteMany({
+      where: {
+        OR: [
+          { id: { contains: "mock" } },
+          { id: { contains: "dummy" } },
+          { name: { contains: "mock" } },
+          { name: { contains: "dummy" } },
+          { name: { contains: "sample" } },
+          { accountId: { contains: "mock" } },
+          { accountId: { contains: "dummy" } }
+        ]
+      }
+    });
+
+    const deletedCampaigns = await prisma.campaign.deleteMany({
+      where: {
+        OR: [
+          { id: { contains: "mock" } },
+          { id: { contains: "dummy" } },
+          { name: { contains: "mock" } },
+          { name: { contains: "dummy" } },
+          { name: { contains: "sample" } },
+          { accountId: { contains: "mock" } },
+          { accountId: { contains: "dummy" } }
+        ]
+      }
+    });
+
+    // 3. Clean up BMs which might have mock data in healthDetails
+    const bms = await prisma.facebookBusinessManager.findMany();
+    let updatedBmsCount = 0;
+    for (const bm of bms) {
+      if (bm.healthDetails && (bm.healthDetails.includes("mock") || bm.healthDetails.includes("dummy"))) {
+        const cleanHealth = JSON.stringify({
+          adAccounts: { total: 0, active: 0, disabled: 0, pendingReview: 0, details: [] },
+          pages: { total: 0, published: 0, unpublished: 0, details: [] },
+          pixels: { total: 0, details: [] },
+          lastSynced: new Date().toISOString()
+        });
+
+        await prisma.facebookBusinessManager.update({
+          where: { id: bm.id },
+          data: { healthDetails: cleanHealth }
+        });
+        updatedBmsCount++;
+      }
+    }
+
+    res.json({
+      success: true,
+      message: "成功清理數據庫中所有的歷史虛假與 Mock 數據！",
+      details: {
+        deletedInsightsCount: deletedInsights.count,
+        deletedCampaignsCount: deletedCampaigns.count,
+        deletedAdSetsCount: deletedAdSets.count,
+        deletedAdsCount: deletedAds.count,
+        updatedBmsCount
+      }
+    });
+  } catch (error: any) {
+    console.error("Failed to cleanup mock database records:", error);
+    res.status(500).json({
+      success: false,
+      error: "清理數據庫失敗",
+      details: error.message
+    });
+  }
+});
+
 export default router;
