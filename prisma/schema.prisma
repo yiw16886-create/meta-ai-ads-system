@@ -298,7 +298,7 @@ model FacebookBusinessManager {
   bmId            String   // Meta Business Manager ID
   name            String
   systemToken     String   // 系统用户 Token (System User Token)
-  status          String   @default("ACTIVE") // ACTIVE / RESTRICTED / DISABLED / UNKNOWN
+  status          String   @default("PENDING_SYNC") // PENDING_SYNC / ACTIVE / RESTRICTED / DISABLED / UNKNOWN
   verification    String   @default("UNVERIFIED") // VERIFIED / UNVERIFIED / IN_PROGRESS / UNKNOWN
   dailySpendLimit String   @default("UNKNOWN") // e.g. "$50", "$250", "UNLIMITED", "UNKNOWN"
   adAccountLimit  Int      @default(1)

@@ -501,7 +501,9 @@ async function cleanupMockData() {
         (bm.healthDetails.includes("广告账户 01") ||
          bm.healthDetails.includes("官方主页") ||
          bm.healthDetails.includes("101_") ||
-         bm.healthDetails.includes("102_"))
+         bm.healthDetails.includes("102_") ||
+         bm.healthDetails.includes("mock") ||
+         bm.healthDetails.includes("dummy"))
       ) {
         console.log(`🧹 Cleaning up mock healthDetails for BM ${bm.bmId} (${bm.name})`);
         const cleanHealth = JSON.stringify({
@@ -516,6 +518,22 @@ async function cleanupMockData() {
         });
       }
     }
+
+    // 3. Reset any BMs where status isDISABLED, RESTRICTED, or UNKNOWN but never successfully synced to PENDING_SYNC
+    const resetBms = await prisma.facebookBusinessManager.updateMany({
+      where: {
+        status: { in: ["DISABLED", "RESTRICTED", "UNKNOWN"] },
+        OR: [
+          { syncStatus: { not: "SUCCESS" } },
+          { syncError: { not: null } }
+        ]
+      },
+      data: {
+        status: "PENDING_SYNC"
+      }
+    });
+    console.log(`🧹 Reset ${resetBms.count} Business Managers with failed/pending sync to PENDING_SYNC status`);
+
     console.log("🧹 Database cleanup completed successfully!");
   } catch (error) {
     console.error("🧹 Error during database cleanup:", error);

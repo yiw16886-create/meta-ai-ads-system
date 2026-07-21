@@ -6,7 +6,7 @@ import axios from "axios";
 const router = Router();
 
 // Helper function to generate empty, clean health details structure (no mock data)
-function generateMockHealthDetails(status: string, name: string, bmId: string) {
+function generateCleanHealthDetails(status: string, name: string, bmId: string) {
   const lastSynced = new Date().toISOString();
   return JSON.stringify({
     adAccounts: {
@@ -43,29 +43,28 @@ function checkErrorForRestriction(e: any): "RESTRICTED" | "DISABLED" | null {
   if (subcode === 490 || subcode === 1815107 || code === 490) {
     return "RESTRICTED";
   }
-  // 190 通常表示 Token 已经过期、失效或该系统用户账号已被彻底禁用
-  if (code === 190) {
+
+  // Token errors (190), auth issues, and general server or connectivity errors are NOT BM status failures.
+  if (code === 190 || errMsg.includes("token") || errMsg.includes("session") || errMsg.includes("auth") || errMsg.includes("network") || errMsg.includes("timeout")) {
+    return null;
+  }
+
+  // Check for explicit BM disabled message
+  if (
+    errMsg.includes("business account is disabled") ||
+    errMsg.includes("business is disabled") ||
+    errMsg.includes("business manager is disabled") ||
+    errMsg.includes("business has been deactivated") ||
+    errMsg.includes("business_manager_disabled")
+  ) {
     return "DISABLED";
   }
 
-  // 匹配常见的英文和中文错误提示关键字
   if (
-    errMsg.includes("restricted") ||
-    errMsg.includes("disable") ||
-    errMsg.includes("banned") ||
-    errMsg.includes("policy") ||
-    errMsg.includes("violation") ||
-    errMsg.includes("advertising access") ||
-    errMsg.includes("advertising_access") ||
-    errMsg.includes("compliance") ||
-    errMsg.includes("unusual activity") ||
-    errMsg.includes("受限") ||
-    errMsg.includes("封禁") ||
-    errMsg.includes("禁用")
+    errMsg.includes("business account is restricted") ||
+    errMsg.includes("business is restricted") ||
+    errMsg.includes("business manager is restricted")
   ) {
-    if (errMsg.includes("disabled") || errMsg.includes("deactivated") || errMsg.includes("banned") || errMsg.includes("封禁") || errMsg.includes("禁用")) {
-      return "DISABLED";
-    }
     return "RESTRICTED";
   }
 
@@ -96,10 +95,10 @@ async function getUserIdForToken(token: string) {
 
 // 核心同步逻辑：同步单个 BM 的健康状态与子资产，并更新数据库 (两步走分步安全抓取，拒绝嵌套，try-catch 独立捕获隔离)
 export async function syncBmStatusAndHealth(bm: any) {
-  let status = bm.status || "ACTIVE"; // Keep existing status if API fails
+  let status = bm.status || "PENDING_SYNC"; // Keep existing status, default to PENDING_SYNC (no fake DISABLED default!)
   let verification = bm.verification || "UNVERIFIED";
-  const adAccountLimit = bm.adAccountLimit || 1;
-  const dailySpendLimit = bm.dailySpendLimit || "UNKNOWN";
+  let adAccountLimit = bm.adAccountLimit || 1;
+  let dailySpendLimit = bm.dailySpendLimit || "UNKNOWN";
   let verifiedName = bm.name;
   const role = bm.role || "ADMIN";
 
@@ -139,6 +138,31 @@ export async function syncBmStatusAndHealth(bm: any) {
       }
       
       status = "ACTIVE";
+    }
+
+    // Try fetching extended_credits to get the limit dynamically
+    try {
+      console.log(`[Meta BM Sync] Fetching extended credits for BM ${bm.bmId}`);
+      const creditsRes = await axios.get(
+        `https://graph.facebook.com/v20.0/${bm.bmId}/extended_credits`,
+        {
+          params: {
+            fields: "id,credit_limit",
+            access_token: bm.systemToken,
+          },
+          timeout: 5000,
+        }
+      ).catch(() => null);
+      if (creditsRes?.data?.data && creditsRes.data.data.length > 0) {
+        const credit = creditsRes.data.data[0];
+        if (credit.credit_limit) {
+          const limitAmount = credit.credit_limit.amount;
+          const currency = credit.credit_limit.currency || "USD";
+          dailySpendLimit = `${currency} ${limitAmount}`;
+        }
+      }
+    } catch (err: any) {
+      console.log(`[Meta BM Sync] No extended credits or unauthorized: ${err.message}`);
     }
 
     // Now, fetch actual sub-assets from Meta API - 100% real, no mocking!
@@ -360,7 +384,7 @@ router.post("/", async (req: any, res) => {
     let verification = "UNVERIFIED";
     const adAccountLimit = 1;
     const dailySpendLimit = "UNKNOWN";
-    let status = "ACTIVE";
+    let status = "PENDING_SYNC";
     const role = "ADMIN";
 
     try {
@@ -390,10 +414,10 @@ router.post("/", async (req: any, res) => {
     } catch (fbErr: any) {
       const errMsg = fbErr.response?.data?.error?.message || fbErr.message;
       console.log(`[Meta API Verification] Notice: Verification failed (${errMsg}). Proceeding with offline fallback.`);
-      status = "UNKNOWN";
+      status = "PENDING_SYNC";
     }
 
-    const healthDetails = generateMockHealthDetails(status, verifiedName, bmId);
+    const healthDetails = generateCleanHealthDetails(status, verifiedName, bmId);
 
     // 写入数据库
     let newBm = await prisma.facebookBusinessManager.upsert({
@@ -507,7 +531,7 @@ router.post("/batch-import", async (req: any, res) => {
 
     try {
       let verification = "UNVERIFIED";
-      let status = "ACTIVE";
+      let status = "PENDING_SYNC";
       let role = "ADMIN";
       let dailySpendLimit = "UNKNOWN";
       let adAccountLimit = 1;
@@ -525,13 +549,14 @@ router.post("/batch-import", async (req: any, res) => {
         );
         if (fbRes.data) {
           verification = fbRes.data.verification_status || "UNVERIFIED";
+          status = "ACTIVE";
         }
       } catch (fbErr) {
         // 安静处理 API 异常，保留默认值
-        status = "UNKNOWN";
+        status = "PENDING_SYNC";
       }
 
-      const healthDetails = generateMockHealthDetails(status, name, bmId);
+      const healthDetails = generateCleanHealthDetails(status, name, bmId);
 
       let imported = await prisma.facebookBusinessManager.upsert({
         where: {
@@ -726,7 +751,7 @@ router.post("/:id/manual-update", async (req: any, res) => {
       return res.status(404).json({ error: "找不到指定的 BM 或无权操作" });
     }
 
-    const healthDetails = generateMockHealthDetails(status, name, `manual_${id}`);
+    const healthDetails = generateCleanHealthDetails(status, name, `manual_${id}`);
 
     const updatedBm = await prisma.facebookBusinessManager.update({
       where: { id: existingBm.id },

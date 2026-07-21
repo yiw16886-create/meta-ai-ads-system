@@ -260,6 +260,20 @@ router.post("/cleanup-dirty-data", async (req: any, res) => {
       }
     }
 
+    // 4. 把数据库里所有尚未经过 Meta API 验证、却被误标记为 DISABLED / RESTRICTED / UNKNOWN 的 BM 状态批量重置为 PENDING_SYNC
+    const resetBms = await prisma.facebookBusinessManager.updateMany({
+      where: {
+        status: { in: ["DISABLED", "RESTRICTED", "UNKNOWN"] },
+        OR: [
+          { syncStatus: { not: "SUCCESS" } },
+          { syncError: { not: null } }
+        ]
+      },
+      data: {
+        status: "PENDING_SYNC"
+      }
+    });
+
     res.json({
       success: true,
       message: "成功清理數據庫中所有的歷史虛假與 Mock 數據！",
@@ -268,7 +282,8 @@ router.post("/cleanup-dirty-data", async (req: any, res) => {
         deletedCampaignsCount: deletedCampaigns.count,
         deletedAdSetsCount: deletedAdSets.count,
         deletedAdsCount: deletedAds.count,
-        updatedBmsCount
+        updatedBmsCount,
+        resetBmsCount: resetBms.count
       }
     });
   } catch (error: any) {

@@ -26,7 +26,8 @@ import {
   FileCode,
   Settings,
   Edit3,
-  Server
+  Server,
+  Clock
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -193,11 +194,17 @@ export function BusinessManagerDashboard() {
     try {
       const res = await axios.post(`/api/bms/${id}/sync`);
       if (res.data.success) {
-        toast.success(`"${res.data.bm.name}" 同步成功`, { id: singleToast });
+        const bm = res.data.bm;
+        if (bm.syncStatus === "FAILED") {
+          toast.error(`"${bm.name}" 同步失败: ${bm.syncError || "未知接口错误"}`, { id: singleToast });
+        } else {
+          toast.success(`"${bm.name}" 同步成功`, { id: singleToast });
+        }
         fetchBms();
       }
     } catch (e: any) {
-      toast.error("同步 BM 失败，请检查系统用户 Token 是否过期", { id: singleToast });
+      const errMsg = e.response?.data?.error || e.response?.data?.details || e.message;
+      toast.error(`同步 BM 失败: ${errMsg}`, { id: singleToast });
     }
   };
 
@@ -516,8 +523,9 @@ export function BusinessManagerDashboard() {
     const active = bms.filter((b) => b.status === "ACTIVE").length;
     const restricted = bms.filter((b) => b.status === "RESTRICTED").length;
     const disabled = bms.filter((b) => b.status === "DISABLED").length;
+    const pendingSync = bms.filter((b) => b.status === "PENDING_SYNC" || b.status === "UNKNOWN" || !b.status).length;
 
-    return { total, verified, active, restricted, disabled };
+    return { total, verified, active, restricted, disabled, pendingSync };
   }, [bms]);
 
   return (
@@ -931,8 +939,8 @@ export function BusinessManagerDashboard() {
       {/* 内容区域 */}
       {activeSubTab === "monitor" && (
         <div className="space-y-6">
-          {/* 四格数据卡片 */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          {/* 五格数据卡片 */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
             <Card className="border border-gray-100 shadow-sm bg-white">
               <CardContent className="p-4">
                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
@@ -979,6 +987,18 @@ export function BusinessManagerDashboard() {
                 <div className="flex items-baseline gap-2 mt-1">
                   <p className="text-3xl font-black text-red-600">{bmStats.disabled}</p>
                   <span className="text-xs text-red-500 font-bold">已封禁</span>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="border border-gray-100 shadow-sm bg-white">
+              <CardContent className="p-4">
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                  未同步/未知 (Pending)
+                </p>
+                <div className="flex items-baseline gap-2 mt-1">
+                  <p className="text-3xl font-black text-slate-600">{bmStats.pendingSync}</p>
+                  <span className="text-xs text-slate-500 font-semibold">待系统更新</span>
                 </div>
               </CardContent>
             </Card>
@@ -1074,10 +1094,16 @@ export function BusinessManagerDashboard() {
                             禁用 (Disabled)
                             <Info className="w-3.5 h-3.5 text-red-400 ml-0.5" />
                           </span>
+                        ) : bm.status === "PENDING_SYNC" ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-700 border border-slate-200" title="请点击右上角批量更新以同步状态">
+                            <Clock className="w-3.5 h-3.5 text-slate-500 animate-pulse" />
+                            ⏳ 未同步 (Pending Sync)
+                            <Info className="w-3.5 h-3.5 text-slate-400 ml-0.5" />
+                          </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-gray-50 text-gray-600 border border-gray-200">
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-gray-100 text-gray-600 border border-gray-200" title="请点击右上角批量更新以同步状态">
                             <HelpCircle className="w-3.5 h-3.5 text-gray-400" />
-                            未检验 (Unknown)
+                            ❓ 未知状态 (Unknown)
                             <Info className="w-3.5 h-3.5 text-gray-400 ml-0.5" />
                           </span>
                         )}
@@ -1863,6 +1889,10 @@ export function BusinessManagerDashboard() {
                     ) : healthBm.status === "RESTRICTED" ? (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-yellow-100 text-yellow-700">
                         受限 (Restricted)
+                      </span>
+                    ) : healthBm.status === "PENDING_SYNC" ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
+                        待同步 (Pending Sync)
                       </span>
                     ) : (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700">
