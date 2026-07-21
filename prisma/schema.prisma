@@ -73,6 +73,7 @@ model User {
   password         String
   password_hash    String?                   // For compatibility with hash-based queries
   role             String                    @default("member") // "admin" or "member"
+  status           String                    @default("ACTIVE") // "ACTIVE" or "DISABLED"
   createdAt        DateTime                  @default(now())
   updatedAt        DateTime                  @updatedAt
   facebookAccount  FacebookAccount?

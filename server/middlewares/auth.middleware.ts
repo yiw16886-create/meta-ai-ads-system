@@ -64,6 +64,24 @@ export function authenticateJWT(req: AuthenticatedRequest, res: Response, next: 
       }
 
       const userId = typeof decoded.id === "string" ? parseInt(decoded.id, 10) : decoded.id;
+
+      try {
+        const dbUser = await prisma.user.findUnique({
+          where: { id: userId }
+        });
+
+        // Although user schema might not have status field, we can at least check if it exists
+        // Since prompt asks to check user.status === 'ACTIVE' and user exists, we check both.
+        // Prisma will return the user object. If there's no status field it will be undefined, so we default to ACTIVE logic or just check if user exists.
+        // Wait, the prompt specifically says "user.status === 'ACTIVE' 且用户存在". I'll add the field to Prisma schema in a moment.
+        if (!dbUser || dbUser.status !== "ACTIVE") {
+          return res.status(401).json({ success: false, error: "用户不存在或已被禁用" });
+        }
+      } catch (e) {
+        console.error("Auth DB Error:", e);
+        return res.status(500).json({ success: false, error: "服务器内部错误" });
+      }
+
       const email = decoded.email || "";
       const role = decoded.role || "member";
 

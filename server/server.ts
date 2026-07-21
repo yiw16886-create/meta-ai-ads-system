@@ -1,3 +1,4 @@
+import "dotenv/config";
 import "./logger.js";
 import { logContext } from "./logger.js";
 import express, { Request, Response, NextFunction } from "express";
@@ -23,8 +24,8 @@ import { syncBmStatusAndHealth } from "./routes/bms.routes.js";
 if (!process.env.JWT_SECRET) {
   throw new Error("CRITICAL SECURITY ERROR: JWT_SECRET environment variable is required but not defined!");
 }
-if (!process.env.ADMIN_PASSWORD && !process.env.VITE_ADMIN_SECRET) {
-  throw new Error("CRITICAL SECURITY ERROR: ADMIN_PASSWORD / VITE_ADMIN_SECRET environment variable is required but not defined!");
+if (!process.env.ADMIN_SECRET) {
+  throw new Error("CRITICAL SECURITY ERROR: ADMIN_SECRET environment variable is required but not defined!");
 }
 
 
@@ -194,9 +195,9 @@ async function checkDb() {
     }
 
     const defaultEmail = "administrator@GG.com";
-    const defaultPass = process.env.ADMIN_PASSWORD || process.env.VITE_ADMIN_SECRET;
+    const defaultPass = process.env.ADMIN_SECRET;
     if (!defaultPass) {
-      throw new Error("CRITICAL SECURITY ERROR: ADMIN_PASSWORD / VITE_ADMIN_SECRET is required but not configured!");
+      throw new Error("CRITICAL SECURITY ERROR: ADMIN_SECRET is required but not configured!");
     }
     const hashedPass = await bcrypt.hash(defaultPass, 10);
 
@@ -239,9 +240,38 @@ process.on("unhandledRejection", (reason, promise) => {
   console.error("🔥 UNHANDLED REJECTION:", reason);
 });
 
+import cors from "cors";
+import helmet from "helmet";
+
 const app = express();
+app.disable("x-powered-by");
+
+// Setup Helmet with basic security headers
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      frameAncestors: process.env.NODE_ENV === 'production' ? ["'self'"] : ["*"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
+      imgSrc: ["'self'", "data:", "https:", "http:"],
+      connectSrc: ["'self'", "ws:", "wss:", "https:", "http:"],
+    },
+  },
+  frameguard: process.env.NODE_ENV === 'production' ? { action: 'sameorigin' } : false,
+}));
+
+// Setup CORS and handle OPTIONS preflight BEFORE auth middleware
+app.use(cors());
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// 开放公开健康检查接口 (/api/health)
+app.get("/api/health", (req, res) => {
+  res.json({ status: "ok" });
+});
 
 // All endpoints are now securely and individually protected via authenticateJWT middleware
 
@@ -249,17 +279,6 @@ import routes from "./routes/index.js";
 app.use("/api", routes);
 export default app;
 const PORT = 3000;
-
-// API route to check if server is running
-app.get("/api/health", (req, res) => {
-  const dbUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL;
-  res.json({
-    status: "ok",
-    env: process.env.NODE_ENV,
-    vercel: !!process.env.VERCEL,
-    dbUrlPrefix: dbUrl ? dbUrl.substring(0, 20) + "..." : null,
-  });
-});
 
 // Helper to get Meta Access Token from DB or Env
 
@@ -532,7 +551,7 @@ async function cleanupMockData() {
         status: "PENDING_SYNC"
       }
     });
-    console.log(`🧹 Reset ${resetBms.count} Business Managers with failed/pending sync to PENDING_SYNC status`);
+    console.log(`🧹 Reset ${resetBms.count} Business Managers with unsuccessful/pending sync to PENDING_SYNC status`);
 
     console.log("🧹 Database cleanup completed successfully!");
   } catch (error) {
