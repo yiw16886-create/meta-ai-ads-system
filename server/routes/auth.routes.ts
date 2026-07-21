@@ -54,77 +54,39 @@ router.post("/verify-token", async (req, res) => {
 });
 
 router.post("/register", async (req, res) => {
-  const { token, password, email } = req.body;
+  const { token, password } = req.body;
   
-  // 1. Direct registration with email/password (Scenario A: Independent registration)
-  if (email && password) {
-    try {
-      const existing = await prisma.user.findUnique({ where: { email } });
-      if (existing) {
-        return res.status(400).json({ success: false, error: "该邮箱已被注册" });
-      }
-
-      // Initialize/Create a brand new Organization
-      const orgName = `个人团队_${email}`;
-      const organization = await prisma.organization.create({
-        data: {
-          name: orgName
-        }
-      });
-
-      const hashedPass = await bcrypt.hash(password, 10);
-      const user = await prisma.user.create({
-        data: {
-          email,
-          password: hashedPass,
-          password_hash: hashedPass, // set both for compatibility
-          role: "SUPER_ADMIN", // set to Super Admin as they are the company creator
-          org_id: organization.id
-        }
-      });
-
-      const userToken = jwt.sign(
-        { id: user.id, email: user.email, role: user.role, org_id: user.org_id },
-        JWT_SECRET,
-        { expiresIn: "7d" }
-      );
-
-      return res.json({
-        success: true,
-        token: userToken,
-        user: { id: user.id, email: user.email, role: user.role, org_id: user.org_id }
-      });
-    } catch (e: any) {
-      console.error("Direct registration failed", e);
-      return res.status(500).json({ success: false, error: "注册失败" });
-    }
+  // 1. Direct registration without a token is strictly forbidden
+  if (!token || !password) {
+    return res.status(400).json({ success: false, error: "注册必须提供合法的服务器邀请码/令牌" });
   }
 
-  // 2. Original token/invitation-based registration (Scenario B: Invited join)
-  if (!token || !password) return res.status(400).json({ error: "Missing data" });
-  
   try {
     const invitation = await prisma.invitation.findUnique({ where: { token } });
     if (!invitation || invitation.expiresAt < new Date()) {
-      return res.status(400).json({ error: "邀请失效或已过期" });
+      return res.status(400).json({ success: false, error: "邀请失效或已过期" });
     }
 
     const hashedPass = await bcrypt.hash(password, 10);
     
-    // Resolve organization ID from invitation. If legacy invitation has no org_id, create one as fallback
+    // Resolve organization ID from invitation.
     let orgId = invitation.org_id;
     if (!orgId) {
-      const orgName = `个人团队_${invitation.email}`;
+      const orgName = `团队_${invitation.email}`;
       const organization = await prisma.organization.create({
         data: { name: orgName }
       });
       orgId = organization.id;
     }
 
+    // Role is strictly determined by invitation. Never allow client-provided role.
+    // Fallback to "member" if empty.
+    const assignedRole = invitation.role || "member";
+
     const user = await prisma.user.upsert({
       where: { email: invitation.email },
-      update: { password: hashedPass, password_hash: hashedPass, role: invitation.role, org_id: orgId },
-      create: { email: invitation.email, password: hashedPass, password_hash: hashedPass, role: invitation.role, org_id: orgId }
+      update: { password: hashedPass, password_hash: hashedPass, role: assignedRole, org_id: orgId },
+      create: { email: invitation.email, password: hashedPass, password_hash: hashedPass, role: assignedRole, org_id: orgId }
     });
 
     await prisma.invitation.delete({ where: { token } });
@@ -135,43 +97,52 @@ router.post("/register", async (req, res) => {
       { expiresIn: "7d" }
     );
 
-    res.json({ 
+    return res.json({ 
       success: true, 
       token: userToken,
       user: { id: user.id, email: user.email, role: user.role, org_id: user.org_id } 
     });
-  } catch (e) {
-    console.error("Registration failed", e);
-    res.status(500).json({ error: "注册失败" });
+  } catch (e: any) {
+    console.error("Registration failed:", e);
+    return res.status(500).json({ success: false, error: "注册失败" });
   }
 });
 
-// 忘记密码/重置密码接口
-router.post("/reset-password", async (req, res) => {
+// 忘记密码/重置密码接口 - 已紧急修复为【仅限登录后的验证用户在提供旧密码的情况下修改密码】
+router.post("/reset-password", authenticateJWT as any, async (req: any, res) => {
   try {
-    const { email, new_password } = req.body;
-    if (!email || !new_password) {
-      return res.status(400).json({ success: false, error: "参数不完整，请提供邮箱和新密码" });
+    const { old_password, new_password } = req.body;
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ success: false, error: "未授权，请先登录" });
+    }
+    if (!old_password || !new_password) {
+      return res.status(400).json({ success: false, error: "参数不完整，请提供旧密码和新密码" });
     }
 
-    const user = await prisma.user.findUnique({ where: { email } });
+    const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
       return res.status(404).json({ success: false, error: "用户不存在" });
     }
 
+    const isMatch = await bcrypt.compare(old_password, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ success: false, error: "旧密码错误" });
+    }
+
     const hashedPass = await bcrypt.hash(new_password, 10);
     await prisma.user.update({
-      where: { email },
+      where: { id: userId },
       data: {
         password: hashedPass,
         password_hash: hashedPass
       }
     });
 
-    return res.json({ success: true, message: "密码重置成功" });
+    return res.json({ success: true, message: "密码修改成功" });
   } catch (error: any) {
-    console.error("Password reset failed:", error);
-    return res.status(500).json({ success: false, error: "重置密码系统异常" });
+    console.error("Password change failed:", error);
+    return res.status(500).json({ success: false, error: "修改密码系统异常" });
   }
 });
 
@@ -301,22 +272,34 @@ router.get("/facebook/callback", async (req, res) => {
       console.warn("⚠️ Could not debug token permissions via /me/permissions:", permErr.response?.data || permErr.message);
     }
 
-    // 4. Securely store long-lived token, expiry, and user ID in database
+    // 4. Securely verify and decode long-lived token, expiry, and user ID from the signed JWT state
     const stateVal = state;
-    let userId = stateVal ? parseInt(String(stateVal), 10) : null;
-    if (!userId || isNaN(userId)) {
-      const firstUser = await prisma.user.findFirst();
-      if (firstUser) {
-        userId = firstUser.id;
-        console.log(`⚠️ Fallback to first user ID in DB: ${userId}`);
-      } else {
-        throw new Error("No users in system to link Facebook account to.");
+    if (!stateVal) {
+      return res.status(400).send("OAuth state parameter is missing");
+    }
+
+    let userId: number;
+    try {
+      const decoded = jwt.verify(String(stateVal), JWT_SECRET) as { userId: number; purpose?: string };
+      if (decoded.purpose !== "facebook-oauth") {
+        return res.status(403).send("Invalid token purpose in OAuth state");
       }
+      userId = decoded.userId;
+    } catch (jwtErr: any) {
+      console.error("Facebook OAuth State JWT verification failed:", jwtErr.message);
+      return res.status(401).send(`OAuth state verification failed: ${jwtErr.message || "token expired or invalid"}`);
+    }
+
+    if (!userId || isNaN(userId)) {
+      return res.status(401).send("Invalid user reference in OAuth state");
     }
 
     // Save isolated Facebook Account details for this user
     const userToLink = await prisma.user.findUnique({ where: { id: userId } });
-    const userOrgId = userToLink?.org_id;
+    if (!userToLink) {
+      return res.status(404).send("OAuth reference user does not exist in the database");
+    }
+    const userOrgId = userToLink.org_id;
 
     await prisma.facebookAccount.upsert({
       where: { userId },
@@ -375,22 +358,37 @@ router.get("/facebook/callback", async (req, res) => {
       });
     }
 
-    // Update all AdAccounts where token is different, null, or has no associated userId
+    // Update ONLY the AdAccounts belonging to users in the same organization to prevent cross-user/cross-org leakage!
+    let userIdsToUpdate = [userId];
+    if (userOrgId) {
+      const orgUsers = await prisma.user.findMany({
+        where: { org_id: userOrgId },
+        select: { id: true }
+      });
+      userIdsToUpdate = orgUsers.map(u => u.id);
+    }
+
     await prisma.adAccount.updateMany({
       where: {
+        userId: { in: userIdsToUpdate },
         OR: [
           { fb_access_token: { not: longLivedToken } },
-          { fb_access_token: null },
-          { userId: null }
+          { fb_access_token: null }
         ]
       },
       data: {
         fb_access_token: longLivedToken,
-        userId: userId,
+        userId: userId
       }
     });
 
     console.log("Facebook OAuth configuration saved. Returning custom redirection response.");
+
+    // Retrieve and normalize target origin for postMessage
+    let targetOrigin = process.env.APP_URL || "https://1-eight-azure.vercel.app";
+    if (targetOrigin.endsWith("/")) {
+      targetOrigin = targetOrigin.slice(0, -1);
+    }
 
     // Return popup postMessage template to auto-close and notify parent window
     return res.status(200).send(`
@@ -410,11 +408,11 @@ router.get("/facebook/callback", async (req, res) => {
             <p>已成功获取 Meta 60 天长效访问令牌并同步系统！窗口正在关闭并刷新画布...</p>
           </div>
           <script>
-            // 1. 通知父窗口（看板主页面）刷新数据或改变状态
+            // 1. 通知父窗口（看板主页面）刷新数据或改变状态，采用具体的 APP_URL 明确 origin
             if (window.opener) {
               try {
-                window.opener.postMessage({ type: 'FB_AUTH_SUCCESS' }, '*');
-                window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS' }, '*');
+                window.opener.postMessage({ type: 'FB_AUTH_SUCCESS' }, ${JSON.stringify(targetOrigin)});
+                window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS' }, ${JSON.stringify(targetOrigin)});
               } catch (e) {
                 console.error("Failed to postMessage to opener:", e);
               }
@@ -432,6 +430,12 @@ router.get("/facebook/callback", async (req, res) => {
     const errMsg = error.response?.data?.error?.message || error.message || "Unknown callback exception";
     console.error(`Facebook OAuth callback handling exception: ${errMsg}`);
     
+    // Retrieve and normalize target origin for postMessage
+    let targetOrigin = process.env.APP_URL || "https://1-eight-azure.vercel.app";
+    if (targetOrigin.endsWith("/")) {
+      targetOrigin = targetOrigin.slice(0, -1);
+    }
+
     return res.status(500).send(`
       <html>
         <head>
@@ -451,7 +455,7 @@ router.get("/facebook/callback", async (req, res) => {
           <script>
             if (window.opener) {
               try {
-                window.opener.postMessage({ type: 'FB_AUTH_ERROR', message: ${JSON.stringify(errMsg)} }, '*');
+                window.opener.postMessage({ type: 'FB_AUTH_ERROR', message: ${JSON.stringify(errMsg)} }, ${JSON.stringify(targetOrigin)});
               } catch (e) {
                 console.error("Failed to postMessage to opener:", e);
               }

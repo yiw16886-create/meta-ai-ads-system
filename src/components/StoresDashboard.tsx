@@ -1,11 +1,17 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import { Plus, Store, Link as LinkIcon, Trash2, RefreshCw } from "lucide-react";
+import { Plus, Store, Link as LinkIcon, Trash2, RefreshCw, X, Check, Globe, Clock, Key, Eye, EyeOff } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+
+const getPlatformSuffix = (platform: string): string => {
+  if (platform === "shopify") return ".myshopify.com";
+  if (platform === "shoplazza") return ".myshoplaza.com";
+  return ".myshopline.com"; // default is shopline
+};
 
 export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endDate?: Date }) {
   const navigate = useNavigate();
@@ -40,6 +46,16 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
   const [deletingStoreId, setDeletingStoreId] = useState<number | null>(null);
   const [deleteStoreName, setDeleteStoreName] = useState("");
   const [deleteLoading, setDeleteLoading] = useState(false);
+
+  // States for adding store modal
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [newStoreName, setNewStoreName] = useState("");
+  const [selectedPlatform, setSelectedPlatform] = useState<"shopline" | "shoplazza" | "shopify">("shopline");
+  const [domainPrefix, setDomainPrefix] = useState("");
+  const [accessToken, setAccessToken] = useState("");
+  const [timezone, setTimezone] = useState("GMT+8");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showToken, setShowToken] = useState(false);
 
   const handleSyncStore = async () => {
     setSyncing(true);
@@ -103,6 +119,85 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
     }
   };
 
+  const handleDomainChange = (val: string) => {
+    let sub = val.trim();
+    sub = sub.replace(/^https?:\/\//i, "").replace(/\/.*$/, "");
+    sub = sub.replace(/\.myshopline\.com$/i, "").replace(/\.myshopline$/i, "")
+             .replace(/\.myshopify\.com$/i, "").replace(/\.myshopify$/i, "")
+             .replace(/\.myshoplazz\.com$/i, "").replace(/\.myshoplazz$/i, "")
+             .replace(/\.myshoplazza\.com$/i, "").replace(/\.myshoplazza$/i, "")
+             .replace(/\.myshoplaza\.com$/i, "").replace(/\.myshoplaza$/i, "");
+    setDomainPrefix(sub);
+  };
+
+  const handleCreateStore = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    const userString = localStorage.getItem("user");
+    const userRole = userString ? JSON.parse(userString).role : "";
+    const isAdmin = userRole === "admin" || userRole === "SUPER_ADMIN";
+
+    if (!isAdmin) {
+      toast.error("仅管理员可修改店铺配置");
+      return;
+    }
+
+    if (!newStoreName.trim()) {
+      toast.error("请输入店铺名称");
+      return;
+    }
+
+    if (!domainPrefix.trim()) {
+      toast.error("请输入域名前缀");
+      return;
+    }
+
+    if (!accessToken.trim()) {
+      toast.error("请输入 API Access Token");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const suffix = getPlatformSuffix(selectedPlatform);
+      const fullDomain = `${domainPrefix.trim()}${suffix}`;
+
+      const payload: any = {
+        name: newStoreName.trim(),
+        platform: selectedPlatform,
+        domain: fullDomain,
+        timezone: timezone,
+        visitors: 0
+      };
+
+      if (selectedPlatform === "shopify") {
+        payload.shopify_token = accessToken.trim();
+      } else if (selectedPlatform === "shoplazza") {
+        payload.shoplazza_token = accessToken.trim();
+      } else {
+        payload.shopline_token = accessToken.trim();
+      }
+
+      const res = await axios.post("/api/stores", payload);
+      toast.success("店铺保存成功");
+
+      // Reset form & close modal
+      setNewStoreName("");
+      setDomainPrefix("");
+      setAccessToken("");
+      setSelectedPlatform("shopline");
+      setIsAddModalOpen(false);
+
+      // Refresh stores list
+      fetchStores();
+    } catch (err: any) {
+      console.error(err);
+      toast.error(err.response?.data?.error || "保存失败");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   return (
     <div className="flex-1 overflow-y-auto space-y-6 pb-12">
       <div className="flex justify-between items-center bg-white p-6 rounded-[12px] shadow-sm border border-[#e5e7eb]">
@@ -122,7 +217,7 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
             <RefreshCw className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
             同步店铺数据
           </Button>
-          <Button onClick={() => navigate("/store/new")}>添加店铺</Button>
+          <Button onClick={() => setIsAddModalOpen(true)}>添加店铺</Button>
         </div>
       </div>
 
@@ -190,7 +285,7 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
             <p className="text-sm text-gray-500 mb-4">
               请添加一个新的店铺以关联广告账户
             </p>
-            <Button onClick={() => navigate("/store/new")}>
+            <Button onClick={() => setIsAddModalOpen(true)}>
               <Plus className="h-4 w-4 mr-2" />
               添加第一个店铺
             </Button>
@@ -318,6 +413,181 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
                 {deleteLoading ? "正在删除..." : "确认删除"}
               </Button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 添加新店铺 Modal */}
+      {isAddModalOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 transition-opacity duration-300 animate-in fade-in">
+          <div className="bg-white rounded-xl shadow-2xl border border-slate-100 max-w-2xl w-full overflow-hidden transform scale-100 transition-transform duration-300 flex flex-col">
+            
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 shrink-0">
+              <div className="flex items-center gap-2">
+                <div className="h-8 w-8 bg-blue-50 text-meta-blue flex items-center justify-center rounded-lg">
+                  <Store className="h-4 w-4 text-meta-blue" />
+                </div>
+                <h3 className="text-lg font-bold text-slate-900">添加新店铺</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAddModalOpen(false);
+                  setNewStoreName("");
+                  setDomainPrefix("");
+                  setAccessToken("");
+                  setSelectedPlatform("shopline");
+                }}
+                className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Form Content */}
+            <form onSubmit={handleCreateStore} className="p-6 space-y-6 flex-1 overflow-y-auto">
+              {/* Store Platform Radio Group */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">
+                  店铺平台 <span className="text-red-500">*</span>
+                </label>
+                <div className="grid grid-cols-3 gap-3">
+                  {[
+                    { id: "shopline" as const, name: "SHOPLINE", icon: "🛒", activeColor: "border-blue-600 bg-blue-50/50 text-blue-600 shadow-sm ring-2 ring-blue-500/20" },
+                    { id: "shoplazza" as const, name: "Shoplazza", icon: "🛍️", activeColor: "border-blue-600 bg-blue-50/50 text-blue-600 shadow-sm ring-2 ring-blue-500/20" },
+                    { id: "shopify" as const, name: "Shopify", icon: "🔌", activeColor: "border-blue-600 bg-blue-50/50 text-blue-600 shadow-sm ring-2 ring-blue-500/20" }
+                  ].map((p) => {
+                    const isSelected = selectedPlatform === p.id;
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => setSelectedPlatform(p.id)}
+                        className={cn(
+                          "flex flex-col items-center justify-center p-3 rounded-xl border-2 transition-all cursor-pointer relative",
+                          isSelected
+                            ? p.activeColor
+                            : "border-slate-200 bg-slate-50/50 hover:border-slate-300 text-slate-700"
+                        )}
+                      >
+                        <div className="text-2xl mb-1 flex items-center justify-center w-6 h-6">{p.icon}</div>
+                        <div className="text-sm font-semibold whitespace-nowrap">{p.name}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  {/* Store Name */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-700 block">
+                      店铺名称 <span className="text-red-500">*</span>
+                    </label>
+                    <div className="relative flex items-center rounded-lg border border-slate-200 bg-white focus-within:border-meta-blue focus-within:ring-1 focus-within:ring-meta-blue h-10 overflow-hidden transition-colors">
+                      <div className="pl-3 text-slate-400 shrink-0">
+                        <Store className="h-4 w-4" />
+                      </div>
+                      <input
+                        type="text"
+                        value={newStoreName}
+                        onChange={(e) => setNewStoreName(e.target.value)}
+                        placeholder="例如: Kolaich"
+                        required
+                        className="flex-1 min-w-0 h-full px-3 text-sm border-0 bg-transparent focus:outline-none focus:ring-0 text-slate-800 placeholder:text-slate-400 font-medium"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Access Token */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-700 block">
+                      API Access Token <span className="text-red-500">*</span>
+                    </label>
+                    <div className="relative flex items-center rounded-lg border border-slate-200 bg-white focus-within:border-meta-blue focus-within:ring-1 focus-within:ring-meta-blue h-10 overflow-hidden transition-colors">
+                      <div className="pl-3 text-slate-400 shrink-0">
+                        <Key className="h-4 w-4" />
+                      </div>
+                      <input
+                        type={showToken ? "text" : "password"}
+                        value={accessToken}
+                        onChange={(e) => setAccessToken(e.target.value)}
+                        placeholder={`填入 ${selectedPlatform === "shopify" ? "Shopify" : selectedPlatform === "shoplazza" ? "Shoplazza" : "SHOPLINE"} 秘钥`}
+                        required
+                        className="flex-1 min-w-0 h-full px-3 text-sm border-0 bg-transparent focus:outline-none focus:ring-0 text-slate-800 placeholder:text-slate-400 font-medium"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowToken(!showToken)}
+                        className="pr-3 text-slate-400 hover:text-slate-600 transition-colors shrink-0 outline-none"
+                      >
+                        {showToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Domain */}
+                <div className="col-span-2 space-y-1.5">
+                  <label className="text-xs font-bold text-slate-700 block">
+                    <span>店铺域名 <span className="text-red-500">*</span></span>
+                  </label>
+                  <div className="flex items-center rounded-lg border border-slate-200 bg-white focus-within:border-meta-blue focus-within:ring-1 focus-within:ring-meta-blue h-10 transition-colors">
+                    <input
+                      type="text"
+                      value={domainPrefix}
+                      onChange={(e) => handleDomainChange(e.target.value)}
+                      placeholder="例如: datevance"
+                      required
+                      className="flex-1 min-w-0 h-full px-3 text-sm border-0 bg-transparent focus:outline-none focus:ring-0 text-right font-semibold text-slate-800 placeholder:text-slate-400"
+                    />
+                    <div className="h-full flex items-center bg-[#f1f5f9] px-4 border-l border-slate-200 text-slate-700 text-sm select-none shrink-0 font-bold">
+                      {getPlatformSuffix(selectedPlatform)}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Timezone */}
+                <div className="col-span-2 space-y-1.5">
+                  <label className="text-xs font-bold text-slate-700 block">
+                    店铺时区
+                  </label>
+                  <div className="flex h-10 w-full items-center rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 gap-2 cursor-not-allowed">
+                    <Globe className="h-4 w-4 text-slate-400 shrink-0" />
+                    <span className="truncate">(GMT+08:00) 北京, 上海, 香港, 台北</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Actions Footer */}
+              <div className="flex justify-end gap-3 border-t border-slate-100 pt-4 mt-4">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setIsAddModalOpen(false);
+                    setNewStoreName("");
+                    setDomainPrefix("");
+                    setAccessToken("");
+                    setSelectedPlatform("shopline");
+                  }}
+                  className="px-5 py-2.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium h-auto"
+                  disabled={isSubmitting}
+                >
+                  取消
+                </Button>
+                <Button
+                  type="submit"
+                  className="px-6 py-2.5 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 shadow-md shadow-blue-500/20 active:scale-95 h-auto"
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting ? "正在保存..." : "保存并创建"}
+                </Button>
+              </div>
+            </form>
+
           </div>
         </div>
       )}

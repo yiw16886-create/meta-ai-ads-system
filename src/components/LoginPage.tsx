@@ -213,79 +213,128 @@ export function LoginPage({ onLogin }: LoginPageProps) {
         </CardHeader>
         
         <CardContent className="pt-8 pb-10 bg-white">
-          <form onSubmit={handleSubmit} className="space-y-5">
-            {!isInvitedRegister && (
+          {mode === "register" && !token ? (
+            <div className="space-y-6 text-center py-4">
+              <div className="mx-auto w-12 h-12 bg-red-50 rounded-full flex items-center justify-center">
+                <Lock className="text-red-500 w-6 h-6" />
+              </div>
               <div className="space-y-2">
-                <label className="text-sm font-bold text-gray-700">账户邮箱</label>
+                <h3 className="text-base font-bold text-gray-900">公开注册已被禁用</h3>
+                <p className="text-xs text-gray-500 leading-relaxed px-2">
+                  系统已通过最新的线上生产级安全审计，禁止任何未经授权的公开账号注册与角色提升。
+                </p>
+                <div className="p-3 bg-slate-50 border border-slate-100 rounded-lg text-[11px] text-slate-600 font-medium text-left mt-3">
+                  💡 <strong>如何加入系统？</strong><br />
+                  请联系系统超级管理员在系统后台为您生成专门的 <strong>激活邀请链接 (Activation Token)</strong>，通过专属链接访问即可一键设置您的登录密码并安全入驻团队。
+                </div>
+              </div>
+              <Button 
+                type="button" 
+                onClick={() => setMode("login")}
+                className="w-full h-12 bg-meta-blue hover:bg-blue-600 text-white font-black text-sm"
+              >
+                返回登录页面
+              </Button>
+            </div>
+          ) : mode === "reset" ? (
+            <div className="space-y-6 text-center py-4">
+              <div className="mx-auto w-12 h-12 bg-amber-50 rounded-full flex items-center justify-center">
+                <KeyRound className="text-amber-500 w-6 h-6" />
+              </div>
+              <div className="space-y-2">
+                <h3 className="text-base font-bold text-gray-900">自助密码重置已禁用</h3>
+                <p className="text-xs text-gray-500 leading-relaxed px-2">
+                  为防止暴力破解、凭据冒用和任意密码接管等严重安全隐患，系统已全面禁用非登录状态下的公开密码重置接口。
+                </p>
+                <div className="p-3 bg-amber-50/50 border border-amber-100 rounded-lg text-[11px] text-amber-800 font-medium text-left mt-3 space-y-1">
+                  <div>🔐 <strong>已登录的用户：</strong></div>
+                  <div className="text-amber-700 pl-3">可在进入系统后，点击「个人设置」提供旧密码进行高强度密码修改。</div>
+                  <div className="mt-2">🚨 <strong>忘记当前密码的用户：</strong></div>
+                  <div className="text-amber-700 pl-3">请联系您团队的超级管理员或系统开发人员，由系统后台管理员进行密码重置与安全验证。</div>
+                </div>
+              </div>
+              <Button 
+                type="button" 
+                onClick={() => setMode("login")}
+                className="w-full h-12 bg-meta-blue hover:bg-blue-600 text-white font-black text-sm"
+              >
+                返回登录页面
+              </Button>
+            </div>
+          ) : (
+            <form onSubmit={handleSubmit} className="space-y-5">
+              {!isInvitedRegister && (
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-gray-700">账户邮箱</label>
+                  <div className="relative">
+                    <Input 
+                      type="email"
+                      placeholder="请输入您的邮箱地址" 
+                      value={email} 
+                      onChange={(e) => setEmail(e.target.value)} 
+                      required
+                      className="h-12 bg-gray-50 border-gray-200 focus:bg-white focus:border-meta-blue focus:ring-meta-blue transition-all"
+                    />
+                  </div>
+                </div>
+              )}
+              
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-gray-700">
+                  {mode === "register" ? "账户密码" : "访问密码"}
+                </label>
                 <div className="relative">
                   <Input 
-                    type="email"
-                    placeholder="请输入您的邮箱地址" 
-                    value={email} 
-                    onChange={(e) => setEmail(e.target.value)} 
+                    type={showSecret ? "text" : "password"} 
+                    placeholder={mode === "register" ? "设置至少 6 位数的密码" : "请输入您的密码"} 
+                    value={password} 
+                    onChange={(e) => setPassword(e.target.value)} 
+                    required
+                    className="h-12 bg-gray-50 pr-12 border-gray-200 focus:bg-white focus:border-meta-blue focus:ring-meta-blue transition-all"
+                  />
+                  <button 
+                    type="button" 
+                    onClick={() => setShowSecret(!showSecret)}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-meta-blue transition-colors cursor-pointer"
+                  >
+                    {showSecret ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                  </button>
+                </div>
+              </div>
+
+              {mode !== "login" && (
+                <motion.div 
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  className="space-y-2"
+                >
+                  <label className="text-sm font-bold text-gray-700">再次确认密码</label>
+                  <Input 
+                    type={showSecret ? "text" : "password"} 
+                    placeholder="请再次输入以确认" 
+                    value={confirmPassword} 
+                    onChange={(e) => setConfirmPassword(e.target.value)} 
                     required
                     className="h-12 bg-gray-50 border-gray-200 focus:bg-white focus:border-meta-blue focus:ring-meta-blue transition-all"
                   />
-                </div>
-              </div>
-            )}
-            
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-gray-700">
-                {mode === "register" ? "账户密码" : mode === "reset" ? "设置新密码" : "访问密码"}
-              </label>
-              <div className="relative">
-                <Input 
-                  type={showSecret ? "text" : "password"} 
-                  placeholder={mode === "register" ? "设置至少 6 位数的密码" : mode === "reset" ? "设置至少 6 位数的新密码" : "请输入您的密码"} 
-                  value={password} 
-                  onChange={(e) => setPassword(e.target.value)} 
-                  required
-                  className="h-12 bg-gray-50 pr-12 border-gray-200 focus:bg-white focus:border-meta-blue focus:ring-meta-blue transition-all"
-                />
-                <button 
-                  type="button"
-                  onClick={() => setShowSecret(!showSecret)}
-                  className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-meta-blue transition-colors cursor-pointer"
-                >
-                  {showSecret ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                </button>
-              </div>
-            </div>
-
-            {mode !== "login" && (
-              <motion.div 
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: "auto", opacity: 1 }}
-                className="space-y-2"
-              >
-                <label className="text-sm font-bold text-gray-700">再次确认密码</label>
-                <Input 
-                  type={showSecret ? "text" : "password"} 
-                  placeholder="请再次输入以确认" 
-                  value={confirmPassword} 
-                  onChange={(e) => setConfirmPassword(e.target.value)} 
-                  required
-                  className="h-12 bg-gray-50 border-gray-200 focus:bg-white focus:border-meta-blue focus:ring-meta-blue transition-all"
-                />
-              </motion.div>
-            )}
-
-            <Button 
-              type="submit" 
-              className={`w-full h-12 ${btnColor} text-white font-black text-lg shadow-xl shadow-blue-500/10 transition-all active:scale-[0.98] mt-4`} 
-              disabled={loading}
-            >
-              {loading ? (
-                <RefreshCcw className="animate-spin w-5 h-5 mr-2" />
-              ) : (
-                mode === "register" ? "注 册" : mode === "reset" ? "重置密码" : "登 录"
+                </motion.div>
               )}
-            </Button>
-            
-            {/* Front-end mode toggling links */}
-            {mode === "login" && (
-              <div className="flex items-center justify-between mt-4 text-xs font-semibold text-gray-500">
+
+              <Button 
+                type="submit" 
+                className={`w-full h-12 ${btnColor} text-white font-black text-lg shadow-xl shadow-blue-500/10 transition-all active:scale-[0.98] mt-4`} 
+                disabled={loading}
+              >
+                {loading ? (
+                  <RefreshCcw className="animate-spin w-5 h-5 mr-2" />
+                ) : (
+                  mode === "register" ? "注 册" : "登 录"
+                )}
+              </Button>
+              
+              {/* Front-end mode toggling links */}
+              {mode === "login" && (
+                <div className="flex items-center justify-between mt-4 text-xs font-semibold text-gray-500">
                 <button
                   type="button"
                   onClick={() => {
@@ -333,6 +382,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
               </p>
             </div>
           </form>
+          )}
         </CardContent>
       </Card>
     </div>

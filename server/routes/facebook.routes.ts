@@ -1,11 +1,18 @@
 import { Router } from "express";
 import prisma from "../../db/index.js";
 import { authenticateJWT, AuthenticatedRequest } from "../middlewares/auth.middleware.js";
+import jwt from "jsonwebtoken";
 
 const router = Router();
+const JWT_SECRET = process.env.JWT_SECRET || "fallback_secret_for_state_signing_only";
 
-router.get("/auth-url", async (req: any, res) => {
+router.get("/auth-url", authenticateJWT as any, async (req: AuthenticatedRequest, res) => {
   try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "未授权操作，请先登录" });
+    }
+
     const systemConfig = await prisma.systemSetting.findFirst();
     if (!systemConfig || !systemConfig.meta_config_id || !systemConfig.meta_client_id) {
       return res.status(500).json({ error: "系统未配置 Meta 基础应用凭证，请联系超级管理员" });
@@ -18,7 +25,14 @@ router.get("/auth-url", async (req: any, res) => {
     const redirectUriVal = "https://1-eight-azure.vercel.app/api/auth/facebook/callback";
     const redirectUri = encodeURIComponent(redirectUriVal);
 
-    const authUrl = `https://www.facebook.com/v20.0/dialog/oauth?client_id=${clientId}&redirect_uri=${redirectUri}&config_id=${configId}&response_type=code&scope=business_management,ads_management,email,public_profile`;
+    // Generate a signed state JWT token with 10-minute expiry to protect against CSRF and identify current user securely
+    const stateToken = jwt.sign(
+      { userId, purpose: "facebook-oauth" },
+      JWT_SECRET,
+      { expiresIn: "10m" }
+    );
+
+    const authUrl = `https://www.facebook.com/v20.0/dialog/oauth?client_id=${clientId}&redirect_uri=${redirectUri}&config_id=${configId}&response_type=code&scope=business_management,ads_management,email,public_profile&state=${encodeURIComponent(stateToken)}`;
 
     return res.json({ url: authUrl });
   } catch (error: any) {

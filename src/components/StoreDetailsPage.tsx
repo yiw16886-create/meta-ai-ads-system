@@ -18,6 +18,12 @@ import {
   AlertTriangle,
   ShoppingBag,
   Search,
+  Check,
+  X,
+  Clock,
+  Globe,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -92,6 +98,7 @@ export function StoreDetailsPage({
   const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
   const [isSyncingData, setIsSyncingData] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   const [dashboardSummary, setDashboardSummary] = useState<any>({
     totalSpend: 0,
@@ -125,6 +132,8 @@ export function StoreDetailsPage({
     } catch (e) {}
     return subDays(new Date(), 1);
   });
+
+  const [showToken, setShowToken] = useState(false);
 
   useEffect(() => {
     if (startDate) {
@@ -519,6 +528,7 @@ export function StoreDetailsPage({
       const payload = { ...storeData };
       const res = await axios.post("/api/stores", payload);
       toast.success("店铺保存成功");
+      setIsSettingsOpen(false);
       if (isNew) {
         navigate(`/store/${res.data.id}`);
       } else {
@@ -593,31 +603,30 @@ export function StoreDetailsPage({
 
           <div className="flex items-center gap-4">
             {isAdmin && !isNew && (
-              <Dialog>
+              <Dialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
                 <DialogTrigger render={<Button variant="outline" className="text-blue-600 border-blue-600 hover:bg-blue-50" />}>
                   <Settings className="w-4 h-4 mr-2" /> 设置
                 </DialogTrigger>
-                <DialogContent className="max-w-2xl rounded-xl bg-white p-6 shadow-xl border border-slate-100">
-                  <DialogHeader className="border-b pb-3 mb-4">
+                <DialogContent className="max-w-2xl rounded-xl bg-white p-0 shadow-xl border border-slate-100 overflow-hidden">
+                  <DialogHeader className="px-6 py-4 border-b border-slate-100 flex flex-row items-center justify-between shrink-0">
                     <DialogTitle className="flex items-center gap-2 text-slate-800 font-bold text-base">
-                      <span className="p-1 rounded bg-blue-50 text-meta-blue">
-                        <Settings className="w-4 h-4" />
+                      <span className="p-1.5 rounded-lg bg-blue-50 text-meta-blue flex items-center justify-center">
+                        <Settings className="w-4 h-4 text-meta-blue" />
                       </span>
                       店铺基础配置
                     </DialogTitle>
                   </DialogHeader>
-                  <div className="space-y-6">
+                  <div className="p-6 space-y-6">
                     {/* Platform Selection */}
-                    <div className="space-y-2 pb-4 border-b">
-                      <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                        <span>店铺所属平台 (Store Platform)</span>
-                        <span className="text-xs text-slate-400 font-normal">切换店铺所处的独立站平台</span>
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">
+                        店铺平台 <span className="text-red-500">*</span>
                       </label>
                       <div className="grid grid-cols-3 gap-3">
                         {[
-                          { id: "shopline", name: "SHOPLINE", color: "bg-[#0051ff]", desc: "应用 SHOPLINE 订单拉取", icon: "💎" },
-                          { id: "shoplazza", name: "Shoplazza (店匠)", color: "bg-[#10b981]", desc: "应用 Shoplazza 订单拉取", icon: "🌐" },
-                          { id: "shopify", name: "Shopify", color: "bg-[#95bf47]", desc: "应用 Shopify 订单拉取", icon: "🛍️" },
+                          { id: "shopline" as const, name: "SHOPLINE", icon: "🛒", activeColor: "border-blue-600 bg-blue-50/50 text-blue-600 shadow-sm ring-2 ring-blue-500/20" },
+                          { id: "shoplazza" as const, name: "Shoplazza", icon: "🛍️", activeColor: "border-blue-600 bg-blue-50/50 text-blue-600 shadow-sm ring-2 ring-blue-500/20" },
+                          { id: "shopify" as const, name: "Shopify", icon: "🔌", activeColor: "border-blue-600 bg-blue-50/50 text-blue-600 shadow-sm ring-2 ring-blue-500/20" }
                         ].map((p) => {
                           const isSelected = (storeData.platform || "shopline") === p.id;
                           return (
@@ -634,162 +643,141 @@ export function StoreDetailsPage({
                                 });
                               }}
                               className={cn(
-                                "flex items-start gap-2.5 p-2.5 rounded-xl border text-left transition-all cursor-pointer relative overflow-hidden",
+                                "flex flex-col items-center justify-center p-3 rounded-xl border-2 transition-all cursor-pointer relative",
                                 isSelected
-                                  ? "border-meta-blue bg-blue-50/40 ring-2 ring-meta-blue/20"
-                                  : "border-slate-200 hover:border-slate-300 hover:bg-slate-50/50 bg-white"
+                                  ? p.activeColor
+                                  : "border-slate-200 bg-slate-50/50 hover:border-slate-300 text-slate-700"
                               )}
                             >
-                              <span className="text-xl mt-0.5">{p.icon}</span>
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-1.5 mb-0.5">
-                                  <span className={cn("w-1.5 h-1.5 rounded-full", p.color)} />
-                                  <span className="text-xs font-bold text-slate-800">{p.name}</span>
-                                </div>
-                                <span className="text-[10px] text-slate-400 leading-tight block truncate">{p.desc}</span>
-                              </div>
-                              {isSelected && (
-                                <div className="absolute top-1 right-1 w-2.5 h-2.5 bg-meta-blue rounded-full flex items-center justify-center">
-                                  <span className="text-[7px] text-white">✓</span>
-                                </div>
-                              )}
+                              <div className="text-2xl mb-1 flex items-center justify-center w-6 h-6">{p.icon}</div>
+                              <div className="text-sm font-semibold whitespace-nowrap">{p.name}</div>
                             </button>
                           );
                         })}
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      {/* Left Column */}
-                      <div className="space-y-4">
-                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider border-b pb-1">基本属性</h4>
-                        
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-1.5">
-                           <label className="text-xs font-bold text-slate-700">店铺名称</label>
-                          <Input
-                            value={storeData.name || ""}
-                            onChange={(e) => setStoreData({ ...storeData, name: e.target.value })}
-                            placeholder="例如: Kolaich"
-                            className="h-9 text-sm border-slate-200 focus:border-meta-blue focus:ring-meta-blue rounded-lg"
-                          />
-                        </div>
-                        
-                        <div className="space-y-1.5">
-                          <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
-                            <span>域名</span>
-                            <span className="text-[10px] text-slate-400 font-normal">
-                              (请使用 {storeData.platform === "shoplazza" ? "Shoplazza" : storeData.platform === "shopify" ? "Shopify" : "SHOPLINE"} 内部域名)
-                            </span>
+                          <label className="text-xs font-bold text-slate-700 block">
+                            店铺名称 <span className="text-red-500">*</span>
                           </label>
-                          <div className="flex items-center rounded-lg border border-slate-250 bg-white focus-within:border-meta-blue focus-within:ring-1 focus-within:ring-meta-blue h-9 overflow-hidden transition-colors">
+                          <div className="relative flex items-center rounded-lg border border-slate-200 bg-white focus-within:border-meta-blue focus-within:ring-1 focus-within:ring-meta-blue h-10 overflow-hidden transition-colors">
+                            <div className="pl-3 text-slate-400 shrink-0">
+                              <Store className="h-4 w-4" />
+                            </div>
                             <input
                               type="text"
-                              value={getSubdomainOnly(storeData.domain || "", storeData.platform || "shopline")}
-                              onChange={(e) => {
-                                let sub = e.target.value.trim();
-                                sub = sub.replace(/^https?:\/\//i, "").replace(/\/.*$/, "");
-                                sub = sub.replace(/\.myshopline\.com$/i, "").replace(/\.myshopline$/i, "")
-                                         .replace(/\.myshopify\.com$/i, "").replace(/\.myshopify$/i, "")
-                                         .replace(/\.myshoplazz\.com$/i, "").replace(/\.myshoplazz$/i, "")
-                                         .replace(/\.myshoplazza\.com$/i, "").replace(/\.myshoplazza$/i, "")
-                                         .replace(/\.myshoplaza\.com$/i, "").replace(/\.myshoplaza$/i, "");
-                                const suffix = getPlatformSuffix(storeData.platform || "shopline");
-                                setStoreData({
-                                  ...storeData,
-                                  domain: sub ? `${sub}${suffix}` : ""
-                                });
-                              }}
-                              placeholder="例如: xxxx"
-                              className="flex-1 h-full px-3 text-sm border-0 bg-transparent focus:outline-none focus:ring-0 text-right font-medium text-slate-800 placeholder:text-slate-400 placeholder:font-normal"
+                              value={storeData.name || ""}
+                              onChange={(e) => setStoreData({ ...storeData, name: e.target.value })}
+                              placeholder="例如: Kolaich"
+                              required
+                              className="flex-1 min-w-0 h-full px-3 text-sm border-0 bg-transparent focus:outline-none focus:ring-0 text-slate-800 placeholder:text-slate-400 font-medium"
                             />
-                            <span className="h-full flex items-center bg-slate-50 px-3 border-l border-slate-200 text-slate-500 font-mono text-xs select-none shrink-0 font-medium">
-                              {getPlatformSuffix(storeData.platform || "shopline")}
-                            </span>
                           </div>
                         </div>
 
                         <div className="space-y-1.5">
-                          <label className="text-xs font-bold text-slate-700">店铺时区</label>
-                          <div className="flex h-9 w-full items-center rounded-md border border-slate-100 bg-slate-50 px-3 py-1 text-xs text-slate-400 font-medium">
-                            自动同步 (连接连接成功后自动获取)
+                          <label className="text-xs font-bold text-slate-700 block">
+                            API Access Token <span className="text-red-500">*</span>
+                          </label>
+                          <div className="relative flex items-center rounded-lg border border-slate-200 bg-white focus-within:border-meta-blue focus-within:ring-1 focus-within:ring-meta-blue h-10 overflow-hidden transition-colors">
+                            <div className="pl-3 text-slate-400 shrink-0">
+                              <Key className="h-4 w-4" />
+                            </div>
+                            <input
+                              type={showToken ? "text" : "password"}
+                              value={
+                                storeData.platform === "shopify"
+                                  ? storeData.shopify_token || ""
+                                  : storeData.platform === "shoplazza"
+                                  ? storeData.shoplazza_token || ""
+                                  : storeData.shopline_token || ""
+                              }
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                if (storeData.platform === "shopify") {
+                                  setStoreData({ ...storeData, shopify_token: val });
+                                } else if (storeData.platform === "shoplazza") {
+                                  setStoreData({ ...storeData, shoplazza_token: val });
+                                } else {
+                                  setStoreData({ ...storeData, shopline_token: val });
+                                }
+                              }}
+                              placeholder={`填入 ${storeData.platform === "shopify" ? "Shopify" : storeData.platform === "shoplazza" ? "Shoplazza" : "SHOPLINE"} 秘钥`}
+                              required
+                              className="flex-1 min-w-0 h-full px-3 text-sm border-0 bg-transparent focus:outline-none focus:ring-0 text-slate-800 placeholder:text-slate-400 font-medium"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowToken(!showToken)}
+                              className="pr-3 text-slate-400 hover:text-slate-600 transition-colors shrink-0 outline-none"
+                            >
+                              {showToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                            </button>
                           </div>
                         </div>
                       </div>
 
-                      {/* Right Column */}
-                      <div className="space-y-4">
-                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider border-b pb-1">API & 其它参数</h4>
-
-                         {(!storeData.platform || storeData.platform === "shopline") && (
-                          <div className="space-y-1.5">
-                            <label className="text-xs font-bold text-slate-700">SHOPLINE Access Token</label>
-                            <Input
-                              type="password"
-                              value={storeData.shopline_token || ""}
-                              onChange={(e) =>
-                                setStoreData({
-                                  ...storeData,
-                                  shopline_token: e.target.value,
-                                })
-                              }
-                              placeholder="填入 SHOPLINE Access Token"
-                              className="h-9 text-sm border-slate-200 focus:border-meta-blue focus:ring-meta-blue rounded-lg"
-                            />
-                          </div>
-                        )}
-
-                        {storeData.platform === "shoplazza" && (
-                          <div className="space-y-1.5">
-                            <label className="text-xs font-bold text-slate-700">Shoplazza Access Token</label>
-                            <Input
-                              type="password"
-                              value={storeData.shoplazza_token || ""}
-                              onChange={(e) =>
-                                setStoreData({
-                                  ...storeData,
-                                  shoplazza_token: e.target.value,
-                                })
-                              }
-                              placeholder="填入 Shoplazza Access Token"
-                              className="h-9 text-sm border-slate-200 focus:border-meta-blue focus:ring-meta-blue rounded-lg"
-                            />
-                          </div>
-                        )}
-
-                        {storeData.platform === "shopify" && (
-                          <div className="space-y-1.5">
-                            <label className="text-xs font-bold text-slate-700">Shopify Access Token</label>
-                            <Input
-                              type="password"
-                              value={storeData.shopify_token || ""}
-                              onChange={(e) =>
-                                setStoreData({
-                                  ...storeData,
-                                  shopify_token: e.target.value,
-                                })
-                              }
-                              placeholder="填入 Shopify Access Token"
-                              className="h-9 text-sm border-slate-200 focus:border-meta-blue focus:ring-meta-blue rounded-lg"
-                            />
-                          </div>
-                        )}
-
-                        <div className="space-y-1.5">
-                          <label className="text-xs font-bold text-slate-700">预设访客数</label>
-                          <Input
-                            type="number"
-                            value={storeData.visitors ?? ""}
-                            onChange={(e) => setStoreData({ ...storeData, visitors: parseInt(e.target.value) || 0 })}
-                            placeholder="0"
-                            className="h-9 text-sm border-slate-200 focus:border-meta-blue focus:ring-meta-blue rounded-lg"
+                      <div className="col-span-2 space-y-1.5">
+                        <label className="text-xs font-bold text-slate-700 block">
+                          <span>店铺域名 <span className="text-red-500">*</span></span>
+                        </label>
+                        <div className="flex items-center rounded-lg border border-slate-200 bg-white focus-within:border-meta-blue focus-within:ring-1 focus-within:ring-meta-blue h-10 transition-colors">
+                          <input
+                            type="text"
+                            value={getSubdomainOnly(storeData.domain || "", storeData.platform || "shopline")}
+                            onChange={(e) => {
+                              let sub = e.target.value.trim();
+                              sub = sub.replace(/^https?:\/\//i, "").replace(/\/.*$/, "");
+                              sub = sub.replace(/\.myshopline\.com$/i, "").replace(/\.myshopline$/i, "")
+                                       .replace(/\.myshopify\.com$/i, "").replace(/\.myshopify$/i, "")
+                                       .replace(/\.myshoplazz\.com$/i, "").replace(/\.myshoplazz$/i, "")
+                                       .replace(/\.myshoplazza\.com$/i, "").replace(/\.myshoplazza$/i, "")
+                                       .replace(/\.myshoplaza\.com$/i, "").replace(/\.myshoplaza$/i, "");
+                              const suffix = getPlatformSuffix(storeData.platform || "shopline");
+                              setStoreData({
+                                ...storeData,
+                                domain: sub ? `${sub}${suffix}` : ""
+                              });
+                            }}
+                            placeholder="例如: datevance"
+                            className="flex-1 min-w-0 h-full px-3 text-sm border-0 bg-transparent focus:outline-none focus:ring-0 text-right font-semibold text-slate-800 placeholder:text-slate-400"
                           />
+                          <div className="h-full flex items-center bg-[#f1f5f9] px-4 border-l border-slate-200 text-slate-700 text-sm select-none shrink-0 font-bold">
+                            {getPlatformSuffix(storeData.platform || "shopline")}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="col-span-2 space-y-1.5">
+                        <label className="text-xs font-bold text-slate-700 block">
+                          店铺时区
+                        </label>
+                        <div className="flex h-10 w-full items-center rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 gap-2 cursor-not-allowed">
+                          <Globe className="h-4 w-4 text-slate-400 shrink-0" />
+                          <span className="truncate">(GMT+08:00) 北京, 上海, 香港, 台北</span>
                         </div>
                       </div>
                     </div>
 
-                    <div className="pt-4 border-t flex justify-end gap-2">
-                      <Button onClick={handleSaveStore} disabled={saving} className="w-full h-10 bg-meta-blue hover:bg-meta-blue/90 flex items-center justify-center gap-1.5 text-sm font-semibold text-white rounded-lg shadow-sm">
-                        <Save className="w-4 h-4" /> 保存偏好配置
+                    <div className="pt-4 border-t border-slate-100 flex justify-end gap-3 mt-4">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setIsSettingsOpen(false)}
+                        className="px-5 py-2.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium h-auto"
+                        disabled={saving}
+                      >
+                        取消
+                      </Button>
+                      <Button
+                        onClick={handleSaveStore}
+                        disabled={saving}
+                        className="px-6 py-2.5 rounded-lg bg-blue-600 text-white font-medium hover:bg-blue-700 shadow-md shadow-blue-500/20 active:scale-95 h-auto"
+                      >
+                        {saving ? "正在保存..." : "保存偏好配置"}
                       </Button>
                     </div>
                   </div>
@@ -1417,32 +1405,31 @@ export function StoreDetailsPage({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
                   {/* Left Column: Store Details */}
                   <div className="space-y-4">
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 border-b pb-1.5 flex items-center gap-1.5">
-                      <Settings className="w-3.5 h-3.5 text-slate-400" /> 基本属性
-                    </h3>
-                    
                     <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
+                      <label className="text-xs font-bold text-slate-700 flex items-center gap-1 block">
                         店铺名称 <span className="text-red-500">*</span>
                       </label>
-                      <Input
+                      <input
+                        type="text"
                         value={storeData.name || ""}
-                        onChange={(e) =>
-                          setStoreData({ ...storeData, name: e.target.value })
-                        }
+                        onChange={(e) => setStoreData({ ...storeData, name: e.target.value })}
                         placeholder="例如: Kolaich"
-                        className="h-10 text-sm border-slate-200 focus:border-meta-blue focus:ring-meta-blue rounded-lg"
+                        required
+                        className="w-full h-10 px-3 text-sm rounded-lg border border-slate-200 bg-white text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-meta-blue focus:ring-1 focus:ring-meta-blue transition-colors font-medium"
                       />
                     </div>
 
                     <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
-                        <span>域名 <span className="text-xs text-slate-400 font-normal">(建议内部域名)</span></span>
+                      <label className="text-xs font-bold text-slate-700 block">
+                        <span>域名 <span className="text-red-500">*</span></span>
+                        <span className="text-[10px] text-slate-400 font-normal ml-2">
+                          ({storeData.platform === "shoplazza" ? "Shoplazza" : storeData.platform === "shopify" ? "Shopify" : "SHOPLINE"} 内部域名)
+                        </span>
                       </label>
-                      <div className="flex items-center rounded-lg border border-slate-200 bg-white focus-within:border-meta-blue focus-within:ring-1 focus-within:ring-meta-blue h-10 overflow-hidden transition-colors">
+                      <div className="flex items-center rounded-lg border border-slate-200 bg-white focus-within:border-meta-blue focus-within:ring-1 focus-within:ring-meta-blue h-10 transition-colors">
                         <input
                           type="text"
                           value={getSubdomainOnly(storeData.domain || "", storeData.platform || "shopline")}
@@ -1461,123 +1448,70 @@ export function StoreDetailsPage({
                             });
                           }}
                           placeholder="例如: xxxx"
-                          className="flex-1 h-full px-3 text-sm border-0 bg-transparent focus:outline-none focus:ring-0 text-right font-medium text-slate-850 placeholder:text-slate-400 placeholder:font-normal"
+                          className="flex-1 min-w-0 h-full px-3 text-sm border-0 bg-transparent focus:outline-none focus:ring-0 text-right font-semibold text-slate-800 placeholder:text-slate-400 placeholder:font-normal"
                         />
-                        <span className="h-full flex items-center bg-slate-50 px-3 border-l border-slate-200 text-slate-500 font-mono text-sm select-none shrink-0 font-medium">
+                        <div className="h-full flex items-center bg-slate-50 px-3 border-l border-slate-200 text-slate-500 font-mono text-xs select-none shrink-0 font-bold overflow-hidden text-ellipsis whitespace-nowrap">
                           {getPlatformSuffix(storeData.platform || "shopline")}
-                        </span>
+                        </div>
                       </div>
                     </div>
 
-                     <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-slate-700 block">
                         店铺时区
                       </label>
-                      <div className="flex h-10 w-full items-center rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-sm text-slate-500 font-medium">
-                        自动解析为店铺后台时区 (当前: {storeData.timezone || "America/Los_Angeles"})
+                      <div className="flex h-10 w-full items-center rounded-lg border border-slate-100 bg-slate-50 px-3 text-xs text-slate-500 font-medium gap-2">
+                        <Clock className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                        <span className="truncate">默认 GMT+8 (连接成功后自动解析)</span>
                       </div>
-                      <p className="text-[10px] text-slate-400">
-                        * 已取消手动自定义。系统将根据接口授权自动与您的店匠/SHOPLINE/Shopify后台时区保持100%同步。
-                      </p>
-                      {storeData.timezone_fallback_warning && (
-                        <div className="mt-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-2 text-amber-800 text-[11px] leading-relaxed">
-                          <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                          <div>
-                            <span className="font-bold block mb-0.5" id="store-timezone-warning">时区同步风险警告 (Timezone Sync Risk)</span>
-                            平台店铺 API 获取时区失败，目前已退回到默认时区 ({storeData.timezone || "America/Los_Angeles"})。这可能会导致小部分订单的付款日期统计存在偏差，建议检查 API 授权配置并在重新保存域或 Token 属性后重新激活。
-                          </div>
-                        </div>
-                      )}
                     </div>
                   </div>
 
                   {/* Right Column: Authentication & Metrics */}
                   <div className="space-y-4">
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 border-b pb-1.5 flex items-center gap-1.5">
-                      <Key className="w-3.5 h-3.5 text-slate-400" /> API授权配置
-                    </h3>
-
-                    {(!storeData.platform || storeData.platform === "shopline") && (
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
-                          SHOPLINE Access Token <span className="text-xs text-slate-400 font-normal">(用于增量拉单)</span>
-                        </label>
-                        <Input
-                          type="password"
-                          value={storeData.shopline_token || ""}
-                          onChange={(e) =>
-                            setStoreData({
-                              ...storeData,
-                              shopline_token: e.target.value,
-                            })
-                          }
-                          placeholder="填入 SHOPLINE 秘钥 Access Token"
-                          className="h-10 text-sm border-slate-200 focus:border-meta-blue focus:ring-meta-blue rounded-lg"
-                        />
-                      </div>
-                    )}
-
-                    {storeData.platform === "shoplazza" && (
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
-                          Shoplazza Access Token <span className="text-xs text-slate-400 font-normal">(用于店匠拉单)</span>
-                        </label>
-                        <Input
-                          type="password"
-                          value={storeData.shoplazza_token || ""}
-                          onChange={(e) =>
-                            setStoreData({
-                              ...storeData,
-                              shoplazza_token: e.target.value,
-                            })
-                          }
-                          placeholder="填入 Shoplazza 秘钥 Access Token"
-                          className="h-10 text-sm border-slate-200 focus:border-meta-blue focus:ring-meta-blue rounded-lg"
-                        />
-                      </div>
-                    )}
-
-                    {storeData.platform === "shopify" && (
-                      <div className="space-y-1.5">
-                        <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
-                          Shopify Access Token <span className="text-xs text-slate-400 font-normal">(用于 Shopify 拉单)</span>
-                        </label>
-                        <Input
-                          type="password"
-                          value={storeData.shopify_token || ""}
-                          onChange={(e) =>
-                            setStoreData({
-                              ...storeData,
-                              shopify_token: e.target.value,
-                            })
-                          }
-                          placeholder="填入 Shopify Access Token"
-                          className="h-10 text-sm border-slate-200 focus:border-meta-blue focus:ring-meta-blue rounded-lg"
-                        />
-                      </div>
-                    )}
-
                     <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-slate-700 flex items-center gap-1">
-                        预设访客数 <span className="text-xs text-slate-400 font-normal">(默认首期展示)</span>
+                      <label className="text-xs font-bold text-slate-700 block">
+                        API Access Token <span className="text-red-500">*</span>
                       </label>
-                      <Input
-                        type="number"
-                        value={storeData.visitors ?? ""}
-                        onChange={(e) =>
-                          setStoreData({
-                            ...storeData,
-                            visitors: parseInt(e.target.value) || 0,
-                          })
-                        }
-                        placeholder="0"
-                        className="h-10 text-sm border-slate-200 focus:border-meta-blue focus:ring-meta-blue rounded-lg"
-                      />
+                      <div className="relative flex items-center rounded-lg border border-slate-200 bg-white focus-within:border-meta-blue focus-within:ring-1 focus-within:ring-meta-blue h-10 overflow-hidden transition-colors">
+                        <div className="pl-3 text-slate-400 shrink-0">
+                          <Key className="h-4 w-4" />
+                        </div>
+                        <input
+                          type="password"
+                          value={
+                            storeData.platform === "shopify"
+                              ? storeData.shopify_token || ""
+                              : storeData.platform === "shoplazza"
+                              ? storeData.shoplazza_token || ""
+                              : storeData.shopline_token || ""
+                          }
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (storeData.platform === "shopify") {
+                              setStoreData({ ...storeData, shopify_token: val });
+                            } else if (storeData.platform === "shoplazza") {
+                              setStoreData({ ...storeData, shoplazza_token: val });
+                            } else {
+                              setStoreData({ ...storeData, shopline_token: val });
+                            }
+                          }}
+                          placeholder={`填入 ${
+                            storeData.platform === "shopify"
+                              ? "Shopify"
+                              : storeData.platform === "shoplazza"
+                              ? "Shoplazza"
+                              : "SHOPLINE"
+                          } 秘钥 Access Token`}
+                          required
+                          className="flex-1 min-w-0 h-full px-3 text-sm border-0 bg-transparent focus:outline-none focus:ring-0 text-slate-800 placeholder:text-slate-400 placeholder:font-normal font-medium"
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                <div className="pt-4 border-t flex items-center justify-end gap-3 bg-slate-50/50 -mx-6 -mb-6 p-4">
+                <div className="pt-4 border-t border-slate-100 flex items-center justify-end gap-3 mt-4">
                   <Button
                     variant="outline"
                     onClick={() => navigate("/stores")}
