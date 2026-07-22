@@ -201,7 +201,7 @@ async function checkDb() {
     }
     const hashedPass = await bcrypt.hash(defaultPass, 10);
 
-    await prisma.user.upsert({
+    const adminUser = await prisma.user.upsert({
       where: { email: defaultEmail },
       update: { role: "SUPER_ADMIN" }, 
       create: {
@@ -210,7 +210,20 @@ async function checkDb() {
         role: "SUPER_ADMIN"
       }
     });
-    console.log(`👤 Verified/Restored admin user: ${defaultEmail}`);
+    console.log(`👤 Verified/Restored admin user: ${defaultEmail} (ID: ${adminUser.id})`);
+
+    // One-time self-healing: Bind all Stores where userId is NULL to the Super Admin user
+    const nullUserStores = await prisma.store.findMany({
+      where: { userId: null }
+    });
+    if (nullUserStores.length > 0) {
+      console.log(`🧹 [Self-Healing] Found ${nullUserStores.length} stores with NULL userId. Binding to Admin User ID: ${adminUser.id}`);
+      await prisma.store.updateMany({
+        where: { userId: null },
+        data: { userId: adminUser.id }
+      });
+      console.log(`🧹 [Self-Healing] Successfully restored and bound ${nullUserStores.length} stores.`);
+    }
 
     const users = await prisma.user.findMany();
     
@@ -497,67 +510,6 @@ async function runBackgroundSync() {
   });
 }
 
-async function cleanupMockData() {
-  try {
-    console.log("🧹 Running startup database cleanup for mock BM data...");
-    
-    // 1. Delete all FacebookBusinessManager records whose name starts with "BM New" or specific ID
-    const deleteBms = await prisma.facebookBusinessManager.deleteMany({
-      where: {
-        OR: [
-          { name: { startsWith: "BM New" } },
-          { bmId: "100462942944183" } // The specific BM ID requested: 100462942944183
-        ]
-      }
-    });
-    console.log(`🧹 Deleted ${deleteBms.count} Business Managers matching "BM New" or target ID`);
-
-    // 2. For any remaining Business Managers, reset/clean up healthDetails containing mock markers
-    const allBms = await prisma.facebookBusinessManager.findMany();
-    for (const bm of allBms) {
-      if (
-        bm.healthDetails &&
-        (bm.healthDetails.includes("广告账户 01") ||
-         bm.healthDetails.includes("官方主页") ||
-         bm.healthDetails.includes("101_") ||
-         bm.healthDetails.includes("102_") ||
-         bm.healthDetails.includes("mock") ||
-         bm.healthDetails.includes("dummy"))
-      ) {
-        console.log(`🧹 Cleaning up mock healthDetails for BM ${bm.bmId} (${bm.name})`);
-        const cleanHealth = JSON.stringify({
-          adAccounts: { total: 0, active: 0, disabled: 0, pendingReview: 0, details: [] },
-          pages: { total: 0, published: 0, unpublished: 0, details: [] },
-          pixels: { total: 0, details: [] },
-          lastSynced: new Date().toISOString()
-        });
-        await prisma.facebookBusinessManager.update({
-          where: { id: bm.id },
-          data: { healthDetails: cleanHealth }
-        });
-      }
-    }
-
-    // 3. Reset any BMs where status isDISABLED, RESTRICTED, or UNKNOWN but never successfully synced to PENDING_SYNC
-    const resetBms = await prisma.facebookBusinessManager.updateMany({
-      where: {
-        status: { in: ["DISABLED", "RESTRICTED", "UNKNOWN"] },
-        OR: [
-          { syncStatus: { not: "SUCCESS" } },
-          { syncError: { not: null } }
-        ]
-      },
-      data: {
-        status: "PENDING_SYNC"
-      }
-    });
-    console.log(`🧹 Reset ${resetBms.count} Business Managers with unsuccessful/pending sync to PENDING_SYNC status`);
-
-    console.log("🧹 Database cleanup completed successfully!");
-  } catch (error) {
-    console.error("🧹 Error during database cleanup:", error);
-  }
-}
 
 app.use("/api", (req, res) => {
   res
@@ -570,9 +522,6 @@ async function startServer() {
     console.log("🚀 Starting server startup sequence...");
     // Run database connection check asynchronously so the Express server binds and serves the app instantly
     checkDb()
-      .then(async () => {
-        await cleanupMockData();
-      })
       .catch((err) => {
         console.error("❌ Asynchronous database check failed:", err);
       });

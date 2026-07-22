@@ -351,10 +351,24 @@ export async function syncBmStatusAndHealth(bm: any) {
 // 1. 获取所有 BM 列表（直接从数据库读取，极速响应）
 router.get("/", async (req: any, res) => {
   try {
-    const userId = req.user?.id;
+    const userId = Number(req.user?.id);
     if (!userId) {
       return res.json([]);
     }
+
+    // Check if the user has an active Facebook token
+    const userBinding = await prisma.userFacebookBinding.findUnique({
+      where: { user_id: userId }
+    });
+    const fbAccount = await prisma.facebookAccount.findUnique({
+      where: { userId }
+    });
+    const hasFbToken = !!(userBinding?.access_token?.trim() || fbAccount?.accessToken?.trim());
+
+    if (!hasFbToken) {
+      return res.json([]);
+    }
+
     const bms = await prisma.facebookBusinessManager.findMany({
       where: { userId },
       orderBy: { createdAt: "desc" },

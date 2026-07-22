@@ -2,20 +2,25 @@ import { Router } from "express";
 import prisma from "../../db/index.js";
 import axios from "axios";
 import { getTimezoneOffsetStr, mapOffsetToIana } from "../utils.js";
+import { isSafeUrl } from "../ssrf.util.js";
 
 const getBrowserHeaders = (extraHeaders?: Record<string, string>) => {
   return {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'application/json, text/plain, */*',
-    'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7',
-    'Cache-Control': 'no-cache',
-    'Pragma': 'no-cache',
-    ...extraHeaders
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    Accept: "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7",
+    "Cache-Control": "no-cache",
+    Pragma: "no-cache",
+    ...extraHeaders,
   };
 };
 
 const getCleanDomain = (domain: string): string => {
-  let clean = domain.replace(/^https?:\/\//, "").replace(/\/$/, "").replace(/\/admin\/.*$/, "");
+  let clean = domain
+    .replace(/^https?:\/\//, "")
+    .replace(/\/$/, "")
+    .replace(/\/admin\/.*$/, "");
   if (clean.endsWith(".myshopline")) {
     clean = clean + ".com";
   } else if (clean.endsWith(".myshoplazz")) {
@@ -41,12 +46,32 @@ const getCleanDomain = (domain: string): string => {
 const router = Router();
 const shoplineCache = new Map<string, { data: any; expiry: number }>();
 
-router.get("/", async (req, res) => {
+router.get("/", async (req: any, res) => {
   try {
+    const userId = Number(req.user?.id);
+    if (!userId) {
+      return res.json([]);
+    }
     const stores = await prisma.store.findMany({
+      where: { userId },
       include: { accounts: true },
     });
-    res.json(stores);
+
+    // Data desensitization
+    const desensitizedStores = stores.map((s: any) => {
+      s.shopify_token = s.shopify_token ? "••••••••••••••••" : null;
+      s.shopline_token = s.shopline_token ? "••••••••••••••••" : null;
+      s.shoplazza_token = s.shoplazza_token ? "••••••••••••••••" : null;
+      if (s.accounts) {
+        s.accounts = s.accounts.map((acc: any) => {
+          delete acc.fb_access_token;
+          return acc;
+        });
+      }
+      return s;
+    });
+
+    res.json(desensitizedStores);
   } catch (error: any) {
     res
       .status(500)
@@ -57,12 +82,12 @@ router.get("/", async (req, res) => {
 function getOffsetByIana(ianaName: string): string {
   try {
     const date = new Date();
-    const formatter = new Intl.DateTimeFormat('en-US', {
+    const formatter = new Intl.DateTimeFormat("en-US", {
       timeZone: ianaName,
-      timeZoneName: 'longOffset'
+      timeZoneName: "longOffset",
     });
     const parts = formatter.formatToParts(date);
-    const offsetPart = parts.find(p => p.type === 'timeZoneName');
+    const offsetPart = parts.find((p) => p.type === "timeZoneName");
     if (offsetPart) {
       const val = offsetPart.value; // e.g. "GMT-05:00", "GMT+08:00", "GMT"
       if (val === "GMT") return "UTC";
@@ -82,7 +107,10 @@ function getOffsetByIana(ianaName: string): string {
       }
     }
   } catch (e: any) {
-    console.error("[Tz Detection] Error formatting timezone using Intl", e.message);
+    console.error(
+      "[Tz Detection] Error formatting timezone using Intl",
+      e.message,
+    );
   }
   return "GMT+8";
 }
@@ -91,7 +119,7 @@ async function detectStoreTimezone(
   platform: string,
   domain: string,
   token: string,
-  existingTimezone?: string | null
+  existingTimezone?: string | null,
 ): Promise<{ timezone: string; isFallback: boolean }> {
   const cleanDomain = getCleanDomain(domain);
 
@@ -108,10 +136,10 @@ async function detectStoreTimezone(
       try {
         const response = await axios.get(url, {
           headers: getBrowserHeaders({
-            'Access-Token': token,
-            'Content-Type': 'application/json'
+            "Access-Token": token,
+            "Content-Type": "application/json",
           }),
-          timeout: 5000
+          timeout: 5000,
         });
         const shopTz = response.data?.shop?.timezone;
         if (shopTz) {
@@ -127,13 +155,16 @@ async function detectStoreTimezone(
   // 2. Shopify API
   if (platform === "shopify") {
     try {
-      const response = await axios.get(`https://${cleanDomain}/admin/api/2024-01/shop.json`, {
-        headers: getBrowserHeaders({
-          'X-Shopify-Access-Token': token,
-          'Content-Type': 'application/json'
-        }),
-        timeout: 5000
-      });
+      const response = await axios.get(
+        `https://${cleanDomain}/admin/api/2024-01/shop.json`,
+        {
+          headers: getBrowserHeaders({
+            "X-Shopify-Access-Token": token,
+            "Content-Type": "application/json",
+          }),
+          timeout: 5000,
+        },
+      );
       const ianaTz = response.data?.shop?.iana_timezone;
       if (ianaTz && ianaTz.includes("/")) {
         return { timezone: ianaTz, isFallback: false };
@@ -156,19 +187,20 @@ async function detectStoreTimezone(
       `https://${cleanDomain}/admin/openapi/v20220101/shop.json`,
       `https://${cleanDomain}/admin/openapi/shop.json`,
       `https://${cleanDomain}/admin/api/v20200901/shop.json`,
-      `https://${cleanDomain}/admin/api/shop.json`
+      `https://${cleanDomain}/admin/api/shop.json`,
     ];
 
     for (const url of shoplineCandidates) {
       try {
         const response = await axios.get(url, {
           headers: getBrowserHeaders({
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
           }),
-          timeout: 4000
+          timeout: 4000,
         });
-        const shopTz = response.data?.data?.timezone || response.data?.shop?.timezone;
+        const shopTz =
+          response.data?.data?.timezone || response.data?.shop?.timezone;
         if (shopTz) {
           return { timezone: mapOffsetToIana(shopTz), isFallback: false };
         }
@@ -176,37 +208,53 @@ async function detectStoreTimezone(
         // quiet continue
       }
     }
-    console.log(`[Tz Detection Info] Shopline Shop API candidates completed. Falling back to order inspection or other methods.`);
+    console.log(
+      `[Tz Detection Info] Shopline Shop API candidates completed. Falling back to order inspection or other methods.`,
+    );
   }
 
   // 4. Fallback: Try order matching logic
   try {
     let orders: any[] = [];
     if (platform === "shopify") {
-      const response = await axios.get(`https://${cleanDomain}/admin/api/2024-01/orders.json?limit=1`, {
-        headers: getBrowserHeaders({ 'X-Shopify-Access-Token': token }),
-        timeout: 5000
-      });
+      const response = await axios.get(
+        `https://${cleanDomain}/admin/api/2024-01/orders.json?limit=1`,
+        {
+          headers: getBrowserHeaders({ "X-Shopify-Access-Token": token }),
+          timeout: 5000,
+        },
+      );
       orders = response.data?.orders || [];
     } else if (platform === "shopline") {
-      const response = await axios.get(`https://${cleanDomain}/admin/openapi/v20240301/orders.json?limit=1`, {
-        headers: getBrowserHeaders({ 'Authorization': `Bearer ${token}` }),
-        timeout: 5000
-      });
+      const response = await axios.get(
+        `https://${cleanDomain}/admin/openapi/v20240301/orders.json?limit=1`,
+        {
+          headers: getBrowserHeaders({ Authorization: `Bearer ${token}` }),
+          timeout: 5000,
+        },
+      );
       orders = response.data?.data || response.data?.orders || [];
     } else if (platform === "shoplazza") {
-      const response = await axios.get(`https://${cleanDomain}/openapi/2022-01/orders?limit=1`, {
-        headers: getBrowserHeaders({ 'Access-Token': token }),
-        timeout: 5000
-      });
+      const response = await axios.get(
+        `https://${cleanDomain}/openapi/2022-01/orders?limit=1`,
+        {
+          headers: getBrowserHeaders({ "Access-Token": token }),
+          timeout: 5000,
+        },
+      );
       orders = response.data?.orders || [];
     }
 
     if (orders && orders.length > 0) {
       const firstOrder = orders[0];
-      const stamp = firstOrder.created_at || firstOrder.updated_at || firstOrder.processed_at;
+      const stamp =
+        firstOrder.created_at ||
+        firstOrder.updated_at ||
+        firstOrder.processed_at;
       if (stamp && typeof stamp === "string") {
-        console.log(`[Tz Detection] Found timezone from fallback orders inspect: ${stamp}`);
+        console.log(
+          `[Tz Detection] Found timezone from fallback orders inspect: ${stamp}`,
+        );
         return { timezone: mapOffsetToIana(stamp), isFallback: false };
       }
     }
@@ -220,84 +268,163 @@ async function detectStoreTimezone(
   }
 
   // 6. Last resort default standard compliant
-  console.log(`[Tz Detection Info] All methods finished. Defaulting to America/Los_Angeles.`);
+  console.log(
+    `[Tz Detection Info] All methods finished. Defaulting to America/Los_Angeles.`,
+  );
   return { timezone: "America/Los_Angeles", isFallback: true };
 }
 
-router.post("/", async (req, res) => {
-  const { id, name, platform, shopline_token, shopify_token, shoplazza_token, domain, visitors, timezone } = req.body;
+router.post("/", async (req: any, res) => {
+  const {
+    id,
+    name,
+    platform,
+    shopline_token,
+    shopify_token,
+    shoplazza_token,
+    domain,
+    visitors,
+    timezone,
+  } = req.body;
   try {
     let resolvedTimezone = "America/Los_Angeles";
     let isFallback = false;
     const actualPlatform = platform || "shopline";
-    const token = actualPlatform === "shopify" ? shopify_token : (actualPlatform === "shoplazza" ? shoplazza_token : shopline_token);
+
+    const isMaskedOrEmpty = (t: any) => {
+      if (!t) return true;
+      const str = String(t).trim();
+      return str === "" || str.includes("•") || str.includes("*");
+    };
+
+    // Find if there is an existing store (either by id or matching by unique name)
+    let existingStore = null;
+    if (id) {
+      existingStore = await prisma.store.findFirst({
+        where: { id: parseInt(id, 10), userId: Number(req.user.id) },
+      });
+      if (!existingStore) {
+        return res.status(403).json({ error: "Store not found or access denied" });
+      }
+    } else if (name) {
+      existingStore = await prisma.store.findFirst({
+        where: { name }
+      });
+    }
+
+    let finalShoplineToken = shopline_token;
+    let finalShopifyToken = shopify_token;
+    let finalShoplazzaToken = shoplazza_token;
+
+    if (existingStore) {
+      if (isMaskedOrEmpty(shopline_token)) finalShoplineToken = existingStore.shopline_token;
+      if (isMaskedOrEmpty(shopify_token)) finalShopifyToken = existingStore.shopify_token;
+      if (isMaskedOrEmpty(shoplazza_token)) finalShoplazzaToken = existingStore.shoplazza_token;
+    }
+
+    const token =
+      actualPlatform === "shopify"
+        ? finalShopifyToken
+        : actualPlatform === "shoplazza"
+          ? finalShoplazzaToken
+          : finalShoplineToken;
 
     if (token && domain) {
       let existingTz = "America/Los_Angeles";
-      if (id) {
-        const existing = await prisma.store.findUnique({ where: { id: parseInt(id, 10) } });
-        existingTz = existing?.timezone || "America/Los_Angeles";
+      if (existingStore) {
+        existingTz = existingStore.timezone || "America/Los_Angeles";
       }
-      const tzResult = await detectStoreTimezone(actualPlatform, domain, token, existingTz);
+      const tzResult = await detectStoreTimezone(
+        actualPlatform,
+        domain,
+        token,
+        existingTz,
+      );
       resolvedTimezone = tzResult.timezone;
       isFallback = tzResult.isFallback;
     } else if (timezone) {
       resolvedTimezone = mapOffsetToIana(timezone);
       isFallback = false;
-    } else if (id) {
-      const existing = await prisma.store.findUnique({ where: { id: parseInt(id, 10) } });
-      resolvedTimezone = existing?.timezone || "America/Los_Angeles";
-      isFallback = existing?.timezone_fallback_warning || false;
+    } else if (existingStore) {
+      resolvedTimezone = existingStore.timezone || "America/Los_Angeles";
+      isFallback = existingStore.timezone_fallback_warning || false;
     }
 
     if (id) {
       const updatedStore = await prisma.store.update({
         where: { id: parseInt(id, 10) },
-        data: { 
-          name, 
+        data: {
+          name,
           platform: actualPlatform,
-          shopline_token, 
-          shopify_token, 
-          shoplazza_token,
+          shopline_token: finalShoplineToken,
+          shopify_token: finalShopifyToken,
+          shoplazza_token: finalShoplazzaToken,
           domain,
           timezone: resolvedTimezone,
           timezone_fallback_warning: isFallback,
-          visitors: visitors !== undefined ? parseInt(visitors, 10) : undefined
+          visitors: visitors !== undefined ? parseInt(visitors, 10) : undefined,
         },
       });
       res.json(updatedStore);
     } else {
-      const newStore = await prisma.store.create({
-        data: { 
-          name, 
-          platform: actualPlatform,
-          shopline_token, 
-          shopify_token, 
-          shoplazza_token,
-          domain,
-          timezone: resolvedTimezone,
-          timezone_fallback_warning: isFallback,
-          visitors: visitors !== undefined ? parseInt(visitors, 10) : 0
-        },
-      });
-      res.json(newStore);
+      if (existingStore) {
+        // Safe self-healing: update configuration and bind it to the current user
+        const updatedStore = await prisma.store.update({
+          where: { id: existingStore.id },
+          data: {
+            platform: actualPlatform,
+            shopline_token: finalShoplineToken,
+            shopify_token: finalShopifyToken,
+            shoplazza_token: finalShoplazzaToken,
+            domain: domain || existingStore.domain,
+            timezone: resolvedTimezone,
+            timezone_fallback_warning: isFallback,
+            visitors: visitors !== undefined ? parseInt(visitors, 10) : existingStore.visitors,
+            userId: Number(req.user.id),
+          },
+        });
+        res.json(updatedStore);
+      } else {
+        const newStore = await prisma.store.create({
+          data: {
+            name,
+            platform: actualPlatform,
+            shopline_token: finalShoplineToken,
+            shopify_token: finalShopifyToken,
+            shoplazza_token: finalShoplazzaToken,
+            domain,
+            timezone: resolvedTimezone,
+            timezone_fallback_warning: isFallback,
+            visitors: visitors !== undefined ? parseInt(visitors, 10) : 0,
+            userId: Number(req.user.id),
+          },
+        });
+        res.json(newStore);
+      }
     }
   } catch (error: any) {
+    console.error("🚨 Error in POST /api/stores:", error);
     res
       .status(500)
       .json({ error: "Failed to save store", details: error.message });
   }
 });
 
-router.get("/all-dashboard-summary", async (req, res) => {
+router.get("/all-dashboard-summary", async (req: any, res) => {
   const { startDate, endDate } = req.query;
   try {
-    const stores = await prisma.store.findMany();
+    const stores = await prisma.store.findMany({
+      where: { userId: req.user.id },
+    });
     const result: Record<string, any> = {};
 
     for (const store of stores) {
-      const isConfigured = !!(store.shopify_token || store.shopline_token || store.shoplazza_token);
-      
+      const isConfigured = !!(
+        store.shopify_token ||
+        store.shopline_token ||
+        store.shoplazza_token
+      );
+
       const tzOffset = getTimezoneOffsetStr(store.timezone);
 
       let storeStart = new Date();
@@ -344,14 +471,18 @@ router.get("/all-dashboard-summary", async (req, res) => {
       });
 
       const ordersForSales = orders.filter(
-        (o) => o.createdAt >= storeStart && o.createdAt <= storeEnd
+        (o) => o.createdAt >= storeStart && o.createdAt <= storeEnd,
       );
 
       const ordersForRefunds = orders.filter(
         (o) =>
           o.refunded &&
-          ((o.refundedAt && o.refundedAt >= storeStart && o.refundedAt <= storeEnd) ||
-            (!o.refundedAt && o.createdAt >= storeStart && o.createdAt <= storeEnd))
+          ((o.refundedAt &&
+            o.refundedAt >= storeStart &&
+            o.refundedAt <= storeEnd) ||
+            (!o.refundedAt &&
+              o.createdAt >= storeStart &&
+              o.createdAt <= storeEnd)),
       );
 
       let totalSales = 0;
@@ -365,7 +496,10 @@ router.get("/all-dashboard-summary", async (req, res) => {
           if (!seenOrderIds.has(uniqueKey)) {
             seenOrderIds.add(uniqueKey);
             ordersCount++;
-            totalSales += (o.orderTotal != null && o.orderTotal > 0) ? o.orderTotal : (o.revenue || 0);
+            totalSales +=
+              o.orderTotal != null && o.orderTotal > 0
+                ? o.orderTotal
+                : o.revenue || 0;
           }
         }
 
@@ -374,7 +508,10 @@ router.get("/all-dashboard-summary", async (req, res) => {
           const uniqueKey = o.orderId || o.createdAt.toISOString();
           if (!seenRefundOrderIds.has(uniqueKey)) {
             seenRefundOrderIds.add(uniqueKey);
-            totalRefunded += (o.orderTotal != null && o.orderTotal > 0) ? o.orderTotal : (o.revenue || 0);
+            totalRefunded +=
+              o.orderTotal != null && o.orderTotal > 0
+                ? o.orderTotal
+                : o.revenue || 0;
           }
         }
       } else {
@@ -387,11 +524,11 @@ router.get("/all-dashboard-summary", async (req, res) => {
             if (o.orderTotal != null && o.orderTotal > 0) {
               totalSales += o.orderTotal;
             } else {
-              totalSales += (o.revenue || 0);
+              totalSales += o.revenue || 0;
             }
           } else {
             if (o.orderTotal == null || o.orderTotal === 0) {
-              totalSales += (o.revenue || 0);
+              totalSales += o.revenue || 0;
             }
           }
         }
@@ -404,11 +541,11 @@ router.get("/all-dashboard-summary", async (req, res) => {
             if (o.orderTotal != null && o.orderTotal > 0) {
               totalRefunded += o.orderTotal;
             } else {
-              totalRefunded += (o.revenue || 0);
+              totalRefunded += o.revenue || 0;
             }
           } else {
             if (o.orderTotal == null || o.orderTotal === 0) {
-              totalRefunded += (o.revenue || 0);
+              totalRefunded += o.revenue || 0;
             }
           }
         }
@@ -427,11 +564,14 @@ router.get("/all-dashboard-summary", async (req, res) => {
   } catch (error: any) {
     res
       .status(500)
-      .json({ error: "Failed to fetch store summaries", details: error.message });
+      .json({
+        error: "Failed to fetch store summaries",
+        details: error.message,
+      });
   }
 });
 
-router.get("/:id/dashboard-summary", async (req, res) => {
+router.get("/:id/dashboard-summary", async (req: any, res) => {
   const { id } = req.params;
   const { startDate, endDate } = req.query;
 
@@ -439,7 +579,7 @@ router.get("/:id/dashboard-summary", async (req, res) => {
     const isNumeric = !isNaN(parseInt(id, 10)) && /^\d+$/.test(id);
     let store;
     if (isNumeric) {
-      store = await prisma.store.findUnique({
+      store = await prisma.store.findFirst({
         where: { id: parseInt(id, 10) },
         include: { accounts: true },
       });
@@ -466,8 +606,14 @@ router.get("/:id/dashboard-summary", async (req, res) => {
     if (endDate && typeof endDate === "string") {
       end = new Date(`${endDate}T23:59:59.999${tzOffset}`);
     }
-    const startStr = (startDate && typeof startDate === "string") ? startDate : start.toISOString().split("T")[0];
-    const endStr = (endDate && typeof endDate === "string") ? endDate : end.toISOString().split("T")[0];
+    const startStr =
+      startDate && typeof startDate === "string"
+        ? startDate
+        : start.toISOString().split("T")[0];
+    const endStr =
+      endDate && typeof endDate === "string"
+        ? endDate
+        : end.toISOString().split("T")[0];
 
     const orders = await prisma.order.findMany({
       where: {
@@ -479,7 +625,7 @@ router.get("/:id/dashboard-summary", async (req, res) => {
       },
     });
 
-    const accountIds = store.accounts.map(a => a.fb_account_id);
+    const accountIds = store.accounts.map((a) => a.fb_account_id);
     const adInsights = await prisma.adInsight.findMany({
       where: {
         accountId: { in: accountIds },
@@ -487,12 +633,12 @@ router.get("/:id/dashboard-summary", async (req, res) => {
           gte: startStr,
           lte: endStr,
         },
-      }
+      },
     });
 
     let totalSales = 0;
     let totalOrders = 0;
-    
+
     if (store.platform === "shoplazza") {
       const seenOrderIds = new Set();
       for (const o of orders) {
@@ -500,7 +646,10 @@ router.get("/:id/dashboard-summary", async (req, res) => {
         if (!seenOrderIds.has(uniqueKey)) {
           seenOrderIds.add(uniqueKey);
           totalOrders++;
-          totalSales += (o.orderTotal != null && o.orderTotal > 0) ? o.orderTotal : (o.revenue || 0);
+          totalSales +=
+            o.orderTotal != null && o.orderTotal > 0
+              ? o.orderTotal
+              : o.revenue || 0;
         }
       }
     } else {
@@ -513,26 +662,27 @@ router.get("/:id/dashboard-summary", async (req, res) => {
           if (o.orderTotal != null && o.orderTotal > 0) {
             totalSales += o.orderTotal;
           } else {
-            totalSales += (o.revenue || 0);
+            totalSales += o.revenue || 0;
           }
         } else {
           if (o.orderTotal == null || o.orderTotal === 0) {
-            totalSales += (o.revenue || 0);
+            totalSales += o.revenue || 0;
           }
         }
       }
     }
 
     const totalSpend = adInsights.reduce((sum, ad) => sum + (ad.spend || 0), 0);
-    
+
     // totalROAS
-    const totalROAS = totalSpend > 0 ? (totalSales / totalSpend) : 0;
-    
+    const totalROAS = totalSpend > 0 ? totalSales / totalSpend : 0;
+
     // visitors handling (just based on store total visitors, or average? We'll approximate for now or just return store.visitors)
     const totalVisitors = store.visitors || 0;
-    
+
     // avgConversionRate
-    const avgConversionRate = totalVisitors > 0 ? ((totalOrders / totalVisitors) * 100) : 0;
+    const avgConversionRate =
+      totalVisitors > 0 ? (totalOrders / totalVisitors) * 100 : 0;
 
     res.json({
       summary: {
@@ -544,40 +694,57 @@ router.get("/:id/dashboard-summary", async (req, res) => {
         avgConversionRate,
       },
       shopline: {
-        isConfigured: !!(store.shopline_token || store.shopify_token || store.shoplazza_token),
+        isConfigured: !!(
+          store.shopline_token ||
+          store.shopify_token ||
+          store.shoplazza_token
+        ),
         error: null,
         errorMessage: "",
-      }
+      },
     });
   } catch (error: any) {
-    res.status(500).json({ error: "Failed to fetch dashboard summary", details: error.message });
+    res
+      .status(500)
+      .json({
+        error: "Failed to fetch dashboard summary",
+        details: error.message,
+      });
   }
 });
 
-router.post("/test-shoplazza-connection", async (req, res) => {
+router.post("/test-shoplazza-connection", async (req: any, res) => {
   const { domain, token } = req.body;
   if (!domain || !token) {
-    return res.status(400).json({ error: "域名 (domain) 和授权秘钥 (Access-Token) 不能为空" });
+    return res
+      .status(400)
+      .json({ error: "域名 (domain) 和授权秘钥 (Access-Token) 不能为空" });
   }
 
   const cleanDomain = getCleanDomain(domain);
+  if (!(await isSafeUrl(`https://${cleanDomain}`))) {
+    return res
+      .status(403)
+      .json({ error: "Security Error: Invalid or prohibited store domain." });
+  }
+
   const headers = getBrowserHeaders({
-    'Access-Token': token,
-    'Content-Type': 'application/json'
+    "Access-Token": token,
+    "Content-Type": "application/json",
   });
 
   const productCandidates = [
     `https://${cleanDomain}/openapi/2022-01/products?limit=10`,
     `https://${cleanDomain}/openapi/2020-01/products?limit=10`,
     `https://${cleanDomain}/openapi/2022-01/products.json?limit=10`,
-    `https://${cleanDomain}/openapi/2020-01/products.json?limit=10`
+    `https://${cleanDomain}/openapi/2020-01/products.json?limit=10`,
   ];
 
   const orderCandidates = [
     `https://${cleanDomain}/openapi/2022-01/orders?limit=10`,
     `https://${cleanDomain}/openapi/2020-01/orders?limit=10`,
     `https://${cleanDomain}/openapi/2022-01/orders.json?limit=10`,
-    `https://${cleanDomain}/openapi/2020-01/orders.json?limit=10`
+    `https://${cleanDomain}/openapi/2020-01/orders.json?limit=10`,
   ];
 
   let successfulProductResponse: any = null;
@@ -594,14 +761,20 @@ router.post("/test-shoplazza-connection", async (req, res) => {
         break;
       }
     } catch (prodErr: any) {
-      console.warn(`[Shoplazza Test HTTP] Product candidate failed: ${url}. Status/Error: ${prodErr.response?.status || prodErr.message}`);
+      console.warn(
+        `[Shoplazza Test HTTP] Product candidate failed: ${url}. Status/Error: ${prodErr.response?.status || prodErr.message}`,
+      );
       productsError = prodErr;
     }
   }
 
   if (successfulProductResponse) {
     const productsData = successfulProductResponse.data;
-    const products = productsData.products || productsData.data?.products || (Array.isArray(productsData.data) ? productsData.data : []) || [];
+    const products =
+      productsData.products ||
+      productsData.data?.products ||
+      (Array.isArray(productsData.data) ? productsData.data : []) ||
+      [];
     const fetchedList = products.map((p: any) => ({
       id: p.id,
       title: p.title || p.name,
@@ -623,14 +796,18 @@ router.post("/test-shoplazza-connection", async (req, res) => {
     });
   }
 
-  console.log(`[Shoplazza Test HTTP] All product endpoints failed or returned error. Trying Fallback Orders URLs...`);
+  console.log(
+    `[Shoplazza Test HTTP] All product endpoints failed or returned error. Trying Fallback Orders URLs...`,
+  );
 
   let successfulOrderResponse: any = null;
   let ordersUrlUsed = "";
   let ordersError: any = null;
 
   for (const url of orderCandidates) {
-    console.log(`[Shoplazza Test HTTP] Trying Order Fallback Candidate URL: ${url}`);
+    console.log(
+      `[Shoplazza Test HTTP] Trying Order Fallback Candidate URL: ${url}`,
+    );
     try {
       const response = await axios.get(url, { headers, timeout: 6000 });
       if (response.status === 200 && response.data) {
@@ -639,14 +816,20 @@ router.post("/test-shoplazza-connection", async (req, res) => {
         break;
       }
     } catch (ordErr: any) {
-      console.warn(`[Shoplazza Test HTTP] Order candidate failed: ${url}. Status/Error: ${ordErr.response?.status || ordErr.message}`);
+      console.warn(
+        `[Shoplazza Test HTTP] Order candidate failed: ${url}. Status/Error: ${ordErr.response?.status || ordErr.message}`,
+      );
       ordersError = ordErr;
     }
   }
 
   if (successfulOrderResponse) {
     const ordersData = successfulOrderResponse.data;
-    const orders = ordersData.orders || ordersData.data?.orders || (Array.isArray(ordersData.data) ? ordersData.data : []) || [];
+    const orders =
+      ordersData.orders ||
+      ordersData.data?.orders ||
+      (Array.isArray(ordersData.data) ? ordersData.data : []) ||
+      [];
     const fetchedList: any[] = [];
     const seenProductIds = new Set();
 
@@ -681,9 +864,14 @@ router.post("/test-shoplazza-connection", async (req, res) => {
   }
 
   const lastErr = productsError || ordersError;
-  console.error(`[Shoplazza Test HTTP Error] All candidates failed. Last error:`, lastErr?.response?.data || lastErr?.message);
-  const errorDetails = lastErr?.response?.data 
-    ? typeof lastErr.response.data === "object" ? JSON.stringify(lastErr.response.data) : String(lastErr.response.data)
+  console.error(
+    `[Shoplazza Test HTTP Error] All candidates failed. Last error:`,
+    lastErr?.response?.data || lastErr?.message,
+  );
+  const errorDetails = lastErr?.response?.data
+    ? typeof lastErr.response.data === "object"
+      ? JSON.stringify(lastErr.response.data)
+      : String(lastErr.response.data)
     : lastErr?.message || "网络请求失败";
 
   return res.status(500).json({
@@ -693,16 +881,24 @@ router.post("/test-shoplazza-connection", async (req, res) => {
   });
 });
 
-router.post("/test-shopify-connection", async (req, res) => {
+router.post("/test-shopify-connection", async (req: any, res) => {
   const { domain, token } = req.body;
   if (!domain || !token) {
-    return res.status(400).json({ error: "域名 (domain) 和授权秘钥 (Access-Token) 不能为空" });
+    return res
+      .status(400)
+      .json({ error: "域名 (domain) 和授权秘钥 (Access-Token) 不能为空" });
   }
 
   const cleanDomain = getCleanDomain(domain);
+  if (!(await isSafeUrl(`https://${cleanDomain}`))) {
+    return res
+      .status(403)
+      .json({ error: "Security Error: Invalid or prohibited store domain." });
+  }
+
   const headers = getBrowserHeaders({
-    'X-Shopify-Access-Token': token,
-    'Content-Type': 'application/json'
+    "X-Shopify-Access-Token": token,
+    "Content-Type": "application/json",
   });
 
   const url = `https://${cleanDomain}/admin/api/2024-01/products.json?limit=10`;
@@ -736,8 +932,10 @@ router.post("/test-shopify-connection", async (req, res) => {
       });
     }
   } catch (error: any) {
-    const errorDetails = error.response?.data 
-      ? typeof error.response.data === "object" ? JSON.stringify(error.response.data) : String(error.response.data)
+    const errorDetails = error.response?.data
+      ? typeof error.response.data === "object"
+        ? JSON.stringify(error.response.data)
+        : String(error.response.data)
       : error.message || "网络请求失败";
     console.error(`[Shopify Test HTTP Error] Failed: ${errorDetails}`);
     return res.status(500).json({
@@ -748,16 +946,24 @@ router.post("/test-shopify-connection", async (req, res) => {
   }
 });
 
-router.post("/test-shopline-connection", async (req, res) => {
+router.post("/test-shopline-connection", async (req: any, res) => {
   const { domain, token } = req.body;
   if (!domain || !token) {
-    return res.status(400).json({ error: "域名 (domain) 和授权秘钥 (Access-Token) 不能为空" });
+    return res
+      .status(400)
+      .json({ error: "域名 (domain) 和授权秘钥 (Access-Token) 不能为空" });
   }
 
   const cleanDomain = getCleanDomain(domain);
+  if (!(await isSafeUrl(`https://${cleanDomain}`))) {
+    return res
+      .status(403)
+      .json({ error: "Security Error: Invalid or prohibited store domain." });
+  }
+
   const headers = getBrowserHeaders({
-    'Authorization': `Bearer ${token}`,
-    'Content-Type': 'application/json'
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
   });
 
   const productCandidates = [
@@ -778,7 +984,7 @@ router.post("/test-shopline-connection", async (req, res) => {
     `https://${cleanDomain}/admin/openapi/products.json?limit=10`,
     `https://${cleanDomain}/admin/openapi/products?limit=10`,
     `https://${cleanDomain}/admin/api/v20200901/products.json?limit=10`,
-    `https://${cleanDomain}/admin/api/products.json?limit=10`
+    `https://${cleanDomain}/admin/api/products.json?limit=10`,
   ];
 
   const orderCandidates = [
@@ -798,7 +1004,7 @@ router.post("/test-shopline-connection", async (req, res) => {
     `https://${cleanDomain}/admin/openapi/orders.json?limit=10`,
     `https://${cleanDomain}/admin/openapi/orders?limit=10`,
     `https://${cleanDomain}/admin/api/v20200901/orders.json?limit=10`,
-    `https://${cleanDomain}/admin/api/orders.json?limit=10`
+    `https://${cleanDomain}/admin/api/orders.json?limit=10`,
   ];
 
   let successfulProductResponse: any = null;
@@ -815,14 +1021,20 @@ router.post("/test-shopline-connection", async (req, res) => {
         break;
       }
     } catch (prodErr: any) {
-      console.warn(`[Shopline Test HTTP] Product candidate failed: ${url}. Status/Error: ${prodErr.response?.status || prodErr.message}`);
+      console.warn(
+        `[Shopline Test HTTP] Product candidate failed: ${url}. Status/Error: ${prodErr.response?.status || prodErr.message}`,
+      );
       productsError = prodErr;
     }
   }
 
   if (successfulProductResponse) {
     const productsData = successfulProductResponse.data;
-    const products = productsData.products || productsData.data?.products || (Array.isArray(productsData.data) ? productsData.data : []) || [];
+    const products =
+      productsData.products ||
+      productsData.data?.products ||
+      (Array.isArray(productsData.data) ? productsData.data : []) ||
+      [];
     const fetchedList = products.map((p: any) => ({
       id: p.id,
       title: p.title || p.name,
@@ -844,14 +1056,18 @@ router.post("/test-shopline-connection", async (req, res) => {
     });
   }
 
-  console.log(`[Shopline Test HTTP] All product endpoints failed or returned error. Trying Fallback Orders URLs...`);
-  
+  console.log(
+    `[Shopline Test HTTP] All product endpoints failed or returned error. Trying Fallback Orders URLs...`,
+  );
+
   let successfulOrderResponse: any = null;
   let ordersUrlUsed = "";
   let ordersError: any = null;
 
   for (const url of orderCandidates) {
-    console.log(`[Shopline Test HTTP] Trying Order Fallback Candidate URL: ${url}`);
+    console.log(
+      `[Shopline Test HTTP] Trying Order Fallback Candidate URL: ${url}`,
+    );
     try {
       const response = await axios.get(url, { headers, timeout: 6000 });
       if (response.status === 200 && response.data) {
@@ -860,14 +1076,20 @@ router.post("/test-shopline-connection", async (req, res) => {
         break;
       }
     } catch (ordErr: any) {
-      console.warn(`[Shopline Test HTTP] Order candidate failed: ${url}. Status/Error: ${ordErr.response?.status || ordErr.message}`);
+      console.warn(
+        `[Shopline Test HTTP] Order candidate failed: ${url}. Status/Error: ${ordErr.response?.status || ordErr.message}`,
+      );
       ordersError = ordErr;
     }
   }
 
   if (successfulOrderResponse) {
     const ordersData = successfulOrderResponse.data;
-    const orders = ordersData.orders || ordersData.data?.orders || (Array.isArray(ordersData.data) ? ordersData.data : []) || [];
+    const orders =
+      ordersData.orders ||
+      ordersData.data?.orders ||
+      (Array.isArray(ordersData.data) ? ordersData.data : []) ||
+      [];
     const fetchedList: any[] = [];
     const seenProductIds = new Set();
 
@@ -903,9 +1125,14 @@ router.post("/test-shopline-connection", async (req, res) => {
 
   // If we reach here, both products and orders endpoints have failed.
   const lastErr = productsError || ordersError;
-  console.error(`[Shopline Test HTTP Error] All candidates failed. Last error:`, lastErr?.response?.data || lastErr?.message);
-  const errorDetails = lastErr?.response?.data 
-    ? typeof lastErr.response.data === "object" ? JSON.stringify(lastErr.response.data) : String(lastErr.response.data)
+  console.error(
+    `[Shopline Test HTTP Error] All candidates failed. Last error:`,
+    lastErr?.response?.data || lastErr?.message,
+  );
+  const errorDetails = lastErr?.response?.data
+    ? typeof lastErr.response.data === "object"
+      ? JSON.stringify(lastErr.response.data)
+      : String(lastErr.response.data)
     : lastErr?.message || "网络请求失败";
 
   return res.status(500).json({
@@ -915,13 +1142,13 @@ router.post("/test-shopline-connection", async (req, res) => {
   });
 });
 
-router.get("/:id", async (req, res) => {
+router.get("/:id", async (req: any, res) => {
   const { id } = req.params;
   try {
     const isNumeric = !isNaN(parseInt(id, 10)) && /^\d+$/.test(id);
     let store;
     if (isNumeric) {
-      store = await prisma.store.findUnique({
+      store = await prisma.store.findFirst({
         where: { id: parseInt(id, 10) },
         include: { accounts: true },
       });
@@ -935,17 +1162,30 @@ router.get("/:id", async (req, res) => {
     if (!store) {
       return res.status(404).json({ error: "Store not found" });
     }
-    res.json(store);
+
+    // Data desensitization
+    const s = store as any;
+    s.shopify_token = s.shopify_token ? "••••••••••••••••" : null;
+    s.shopline_token = s.shopline_token ? "••••••••••••••••" : null;
+    s.shoplazza_token = s.shoplazza_token ? "••••••••••••••••" : null;
+    if (s.accounts) {
+      s.accounts = s.accounts.map((acc: any) => {
+        delete acc.fb_access_token;
+        return acc;
+      });
+    }
+
+    res.json(s);
   } catch (error: any) {
     res.status(500).json({ error: "Failed to fetch store" });
   }
 });
 
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", async (req: any, res) => {
   const { id } = req.params;
   try {
-    await prisma.store.delete({
-      where: { id: parseInt(id, 10) },
+    await prisma.store.deleteMany({
+      where: { id: parseInt(id, 10), userId: req.user.id },
     });
     res.json({ success: true });
   } catch (error: any) {
@@ -955,44 +1195,87 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
-router.post("/:id/accounts", async (req, res) => {
+router.post("/:id/accounts", async (req: any, res) => {
   const { id } = req.params;
   const { fb_account_id, fb_account_name, fb_access_token } = req.body;
+  const userId = Number(req.user?.id);
+
+  if (!userId) {
+    return res.status(401).json({ error: "用户未登录" });
+  }
+
+  if (!fb_account_id) {
+    return res.status(400).json({ error: "fb_account_id is required" });
+  }
 
   try {
+    const cleanId = String(fb_account_id).replace("act_", "").trim();
+    const storeIdNum = parseInt(id, 10);
+
     const account = await prisma.adAccount.upsert({
-      where: { fb_account_id },
+      where: { fb_account_id: cleanId },
       update: {
-        fb_account_name,
-        fb_access_token,
-        storeId: parseInt(id, 10),
+        fb_account_name: fb_account_name ? String(fb_account_name).trim() : cleanId,
+        fb_access_token: fb_access_token || null,
+        storeId: storeIdNum,
+        userId: userId,
       },
       create: {
-        fb_account_id,
-        fb_account_name,
-        fb_access_token,
-        storeId: parseInt(id, 10),
+        fb_account_id: cleanId,
+        fb_account_name: fb_account_name ? String(fb_account_name).trim() : cleanId,
+        fb_access_token: fb_access_token || null,
+        storeId: storeIdNum,
+        userId: userId,
       },
     });
 
+    try {
+      await prisma.accountMapping.upsert({
+        where: { fbAccountId: cleanId },
+        update: {
+          storeId: storeIdNum,
+          userId: userId,
+        },
+        create: {
+          fbAccountId: cleanId,
+          storeId: storeIdNum,
+          userId: userId,
+        },
+      });
+    } catch (mErr) {
+      console.warn("AccountMapping sync failed:", mErr);
+    }
+
     res.json(account);
   } catch (error: any) {
+    console.error("Failed to allocate account:", error);
     res
       .status(500)
       .json({ error: "Failed to allocate account", details: error.message });
   }
 });
 
-router.delete("/:id/accounts/:accountId", async (req, res) => {
+router.delete("/:id/accounts/:accountId", async (req: any, res) => {
   const { accountId } = req.params;
+  const userId = Number(req.user?.id);
+
+  if (!userId) {
+    return res.status(401).json({ error: "用户未登录" });
+  }
 
   try {
-    await prisma.adAccount.delete({
-      where: { fb_account_id: accountId },
+    const cleanId = String(accountId).replace("act_", "").trim();
+    await prisma.adAccount.deleteMany({
+      where: { fb_account_id: cleanId, userId },
+    });
+    await prisma.accountMapping.updateMany({
+      where: { fbAccountId: cleanId, userId },
+      data: { storeId: null },
     });
 
     res.json({ success: true });
   } catch (error: any) {
+    console.error("Failed to remove account:", error);
     res
       .status(500)
       .json({ error: "Failed to remove account", details: error.message });

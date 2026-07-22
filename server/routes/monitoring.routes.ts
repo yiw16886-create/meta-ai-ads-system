@@ -8,13 +8,43 @@ const router = Router();
 router.get("/accounts", async (req: any, res) => {
   try {
     const { refresh } = req.query;
-    const token = await getMetaToken(req.user?.id);
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.json({
+        accounts: [],
+        stats: { total: 0, active: 0, hasSpend: 0 }
+      });
+    }
+
+    // Check if the user has an active Facebook token
+    const userBinding = await prisma.userFacebookBinding.findUnique({
+      where: { user_id: Number(userId) }
+    });
+    const fbAccount = await prisma.facebookAccount.findUnique({
+      where: { userId: Number(userId) }
+    });
+    const hasFbToken = !!(userBinding?.access_token?.trim() || fbAccount?.accessToken?.trim());
+
+    if (!hasFbToken) {
+      return res.json({
+        accounts: [],
+        stats: { total: 0, active: 0, hasSpend: 0 }
+      });
+    }
+
+    const token = await getMetaToken(userId);
     if (!token) {
       return res.status(400).json({ error: "Meta Token 未配置" });
     }
 
-    // 1. Fetch persistent cache or refresh if requested
-    let cachedAccounts = await prisma.metaAccountMonitoring.findMany();
+    // 1. Fetch persistent cache or refresh if requested (Filtered by current user's mapped accounts)
+    let cachedAccounts = await prisma.metaAccountMonitoring.findMany({
+      where: {
+        adAccount: {
+          userId: Number(userId)
+        }
+      }
+    });
     
     if (refresh === "true" || cachedAccounts.length === 0) {
       console.log("🔄 Refreshing Meta Account Monitoring data from API...");
@@ -56,8 +86,16 @@ router.get("/accounts", async (req: any, res) => {
         )
       );
       
-      cachedAccounts = await prisma.metaAccountMonitoring.findMany();
+      cachedAccounts = await prisma.metaAccountMonitoring.findMany({
+        where: {
+          adAccount: {
+            userId: Number(userId)
+          }
+        }
+      });
     }
+
+    const userAccountIds = cachedAccounts.map(acc => acc.accountId);
 
     // 2. Filter logic based on AdInsight (Last 30 days and 7 days)
     const thirtyDaysAgo = new Date();
@@ -67,6 +105,7 @@ router.get("/accounts", async (req: any, res) => {
     const activeAccounts = await prisma.adInsight.groupBy({
       by: ["accountId"],
       where: {
+        accountId: { in: userAccountIds },
         date: { gte: thirtyDaysAgoStr },
         spend: { gt: 0 }
       },
@@ -81,6 +120,7 @@ router.get("/accounts", async (req: any, res) => {
     const weeklySpend = await prisma.adInsight.groupBy({
       by: ["accountId"],
       where: {
+        accountId: { in: userAccountIds },
         date: { 
           gte: sevenDaysAgoStr,
           lt: todayStr // 排除今天，取过去 7 个完整自然日的数据
@@ -154,6 +194,7 @@ router.get("/accounts", async (req: any, res) => {
     const latestSpendDates = await prisma.adInsight.groupBy({
       by: ["accountId"],
       where: {
+        accountId: { in: userAccountIds },
         spend: { gt: 0 }
       },
       _max: {
@@ -195,7 +236,10 @@ router.get("/accounts", async (req: any, res) => {
     });
 
     // 将计算结果同步更新到 AdAccount 广告账户表以及 MetaAccountMonitoring 关系监控缓存表
-    const activeAdAccounts = await prisma.adAccount.findMany({ select: { fb_account_id: true } });
+    const activeAdAccounts = await prisma.adAccount.findMany({
+      where: { userId: Number(userId) },
+      select: { fb_account_id: true }
+    });
     const activeAccountIdsInDb = new Set(activeAdAccounts.map(a => a.fb_account_id));
     
     await Promise.all(

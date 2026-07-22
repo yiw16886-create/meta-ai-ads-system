@@ -2379,7 +2379,7 @@ function SettingsPage() {
   const reloadSettings = async () => {
     try {
       const settingsRes = await axios.get("/api/settings");
-      if (settingsRes.data.META_ACCESS_TOKEN) {
+      if (settingsRes.data.FB_AUTHORIZED_USER_ID || settingsRes.data.hasMetaToken === "true") {
         setHasMetaToken(true);
       } else {
         setHasMetaToken(false);
@@ -2423,7 +2423,7 @@ function SettingsPage() {
     const init = async () => {
       try {
         const settingsRes = await axios.get("/api/settings");
-        if (settingsRes.data.META_ACCESS_TOKEN) {
+        if (settingsRes.data.FB_AUTHORIZED_USER_ID || settingsRes.data.hasMetaToken === "true") {
           setHasMetaToken(true);
         } else {
           setHasMetaToken(false);

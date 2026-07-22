@@ -2,16 +2,12 @@ import axios from 'axios';
 import prisma from '../../db/index.js';
 
 export class MetaPageManagerService {
-  static async fetchAndSyncPages() {
-    const setting = await prisma.setting.findUnique({
-      where: { key: "meta_access_token" },
-    });
-
-    const token = setting?.value || process.env.META_ACCESS_TOKEN;
-
-    if (!token) {
-      throw new Error("全局 Meta Token 未配置");
+  static async fetchAndSyncPages(accessToken: string, userId?: number) {
+    if (!accessToken || !accessToken.trim()) {
+      throw new Error("未提供有效的 Facebook 授权 Token，请先完成账号绑定");
     }
+
+    const token = accessToken.trim();
 
     try {
       let url: string | null = `https://graph.facebook.com/v20.0/me/accounts`;

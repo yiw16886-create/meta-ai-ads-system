@@ -258,8 +258,8 @@ const handleSyncAds = async (req: AuthenticatedRequest, res: any) => {
         console.error("[Stream Sync Ads] Failed to fetch accounts from Meta API, fallback to mapped:", apiErr.message);
       }
 
-      const dbMappings = await prisma.accountMapping.findMany();
-      const dbAdAccounts = await prisma.adAccount.findMany();
+      const dbMappings = await prisma.accountMapping.findMany({ where: { userId } });
+      const dbAdAccounts = await prisma.adAccount.findMany({ where: { userId } });
       const allowedAccountIds = new Set<string>();
       dbMappings.forEach(m => { if (m.fbAccountId) allowedAccountIds.add(m.fbAccountId.replace("act_", "")); });
       dbAdAccounts.forEach(a => { if (a.fb_account_id) allowedAccountIds.add(a.fb_account_id.replace("act_", "")); });
@@ -508,6 +508,7 @@ const handleSyncCreatives = async (req: AuthenticatedRequest, res: any) => {
     const eDate = endDate || todayStr;
 
     const accounts = await prisma.adAccount.findMany({
+      where: { userId },
       include: { store: true }
     });
 

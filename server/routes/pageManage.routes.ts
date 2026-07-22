@@ -3,6 +3,8 @@ import { PageCommentController } from "../controllers/pageComment.controller.js"
 import { MetaPageManagerService } from "../services/metaPageManager.service.js";
 import { createPagePost, createPostComment, deletePagePost } from "../controllers/page.controller.js";
 import prisma from "../../db/index.js";
+import { authenticateJWT } from "../middlewares/auth.middleware.js";
+import { getMetaToken } from "../utils.js";
 
 const router = Router();
 
@@ -27,9 +29,14 @@ router.get("/", async (req, res) => {
 });
 
 // Fetch and sync pages from Meta API using system user token
-router.post("/fetch-pages", async (req, res) => {
+router.post("/fetch-pages", authenticateJWT as any, async (req: any, res) => {
   try {
-    const pages = await MetaPageManagerService.fetchAndSyncPages();
+    const userId = req.user?.id;
+    const token = await getMetaToken(userId);
+    if (!token) {
+      return res.status(400).json({ success: false, code: "FB_NOT_CONNECTED", message: "未绑定 Facebook 账号或 Token 已失效，请前往配置页面绑定" });
+    }
+    const pages = await MetaPageManagerService.fetchAndSyncPages(token, userId);
     res.json({ success: true, count: pages.length });
   } catch (error: any) {
     if (error.message.includes("401") || error.message.includes("OAuth") || error.message.includes("token")) {
@@ -40,9 +47,14 @@ router.post("/fetch-pages", async (req, res) => {
 });
 
 // Alias endpoint for frontend compatibility
-router.post("/sync", async (req, res) => {
+router.post("/sync", authenticateJWT as any, async (req: any, res) => {
   try {
-    const pages = await MetaPageManagerService.fetchAndSyncPages();
+    const userId = req.user?.id;
+    const token = await getMetaToken(userId);
+    if (!token) {
+      return res.status(400).json({ success: false, code: "FB_NOT_CONNECTED", message: "未绑定 Facebook 账号或 Token 已失效，请前往配置页面绑定" });
+    }
+    const pages = await MetaPageManagerService.fetchAndSyncPages(token, userId);
     res.json({ success: true, count: pages.length });
   } catch (error: any) {
     if (error.message.includes("401") || error.message.includes("OAuth") || error.message.includes("token")) {

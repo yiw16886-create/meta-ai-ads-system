@@ -2,6 +2,8 @@ import { Router } from "express";
 import prisma from "../../db/index.js";
 import axios from "axios";
 import { testSmtpConnection } from "../services/email.service.js";
+import { isSafeHost } from "../ssrf.util.js";
+import { authenticateJWT } from "../middlewares/auth.middleware.js";
 
 const router = Router();
 
@@ -41,28 +43,43 @@ router.get("/", async (req: any, res) => {
       });
     }
 
-    if (userFbAccount) {
+    if (userFbAccount && userFbAccount.accessToken) {
       config["FB_AUTHORIZED_USER_ID"] = userFbAccount.facebookId || "";
       config["FB_AUTHORIZED_USER_NAME"] = userFbAccount.facebookName || "";
       config["FB_AUTHORIZED_USER_LINK"] = userFbAccount.facebookLink || "";
-      config["META_ACCESS_TOKEN"] = userFbAccount.accessToken || "";
+      config["hasMetaToken"] = "true";
+      // Do not expose real access token
     } else {
       // 绝对不能因为全局配置存在，就把上一个用户的绑定名字渲染给新用户！
       config["FB_AUTHORIZED_USER_ID"] = "";
       config["FB_AUTHORIZED_USER_NAME"] = "";
       config["FB_AUTHORIZED_USER_LINK"] = "";
-      config["META_ACCESS_TOKEN"] = "";
+      config["hasMetaToken"] = "false";
     }
     
+    // Data desensitization: remove sensitive credentials
+    delete config["META_ACCESS_TOKEN"];
+    delete config["FACEBOOK_CLIENT_SECRET"];
+    
+    for (const key of Object.keys(config)) {
+      const lowerKey = key.toLowerCase();
+      if (lowerKey.includes("password") || lowerKey.includes("secret") || lowerKey.includes("gemini_key") || lowerKey.includes("_token")) {
+        delete config[key];
+      }
+    }
+
     res.json(config);
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch settings" });
   }
 });
 
-router.post("/meta-token", async (req, res) => {
+router.post("/meta-token", authenticateJWT as any, async (req: any, res) => {
   const { token } = req.body;
+  const userId = req.user?.id;
   if (!token) return res.status(400).json({ error: "Token is required" });
+  if (!userId) return res.status(401).json({ error: "用户未登录" });
+
   try {
     // 1. Validate the token
     const valRes = await axios.get("https://graph.facebook.com/v21.0/me", {
@@ -72,34 +89,53 @@ router.post("/meta-token", async (req, res) => {
        return res.status(400).json({ error: "无效的 Meta 访问令牌" });
     }
 
-    // 2. Save to settings
-    await prisma.setting.upsert({
-      where: { key: "META_ACCESS_TOKEN" },
-      update: { value: token },
-      create: { key: "META_ACCESS_TOKEN", value: token },
-    });
+    const fbUserId = valRes.data.id;
+    const fbUserName = valRes.data.name || "";
 
-    const now = new Date().toISOString();
-    await prisma.setting.upsert({
-      where: { key: "META_TOKEN_UPDATED_AT" },
-      update: { value: now },
-      create: { key: "META_TOKEN_UPDATED_AT", value: now },
-    });
-
-    // 3. Update all AdAccounts where token is different or null
-    const result = await prisma.adAccount.updateMany({
-      where: {
-        OR: [
-          { fb_access_token: { not: token } },
-          { fb_access_token: null }
-        ]
-      },
+    // 2. Save directly to User model
+    await prisma.user.update({
+      where: { id: userId },
       data: {
         fb_access_token: token,
+        fb_user_id: fbUserId,
+        fb_user_name: fbUserName,
       }
     });
 
-    res.json({ success: true, updatedAccountsCount: result.count, timestamp: now });
+    // 3. Save to UserFacebookBinding
+    await prisma.userFacebookBinding.upsert({
+      where: { user_id: userId },
+      update: {
+        fb_user_id: fbUserId,
+        fb_username: fbUserName,
+        access_token: token,
+        updated_at: new Date()
+      },
+      create: {
+        user_id: userId,
+        fb_user_id: fbUserId,
+        fb_username: fbUserName,
+        access_token: token
+      }
+    });
+
+    // 4. Save to FacebookAccount
+    await prisma.facebookAccount.upsert({
+      where: { userId },
+      update: {
+        accessToken: token,
+        facebookId: fbUserId,
+        facebookName: fbUserName,
+      },
+      create: {
+        userId,
+        accessToken: token,
+        facebookId: fbUserId,
+        facebookName: fbUserName,
+      }
+    });
+
+    res.json({ success: true, message: "Facebook 授权 Token 绑定成功" });
   } catch (err: any) {
     console.error("[Save Meta Token Error]:", err);
     if (axios.isAxiosError(err)) {
@@ -115,9 +151,12 @@ router.post("/meta-token", async (req, res) => {
   }
 });
 
-router.post("/", async (req, res) => {
+router.post("/", authenticateJWT as any, async (req: any, res) => {
   const { key, value } = req.body;
   if (!key) return res.status(400).json({ error: "Key is required" });
+  if (key === "META_ACCESS_TOKEN" || key === "meta_access_token") {
+    return res.status(400).json({ error: "硬编码全局 META_ACCESS_TOKEN 已废除，请通过账号绑定使用动态 Token" });
+  }
   try {
     await prisma.setting.upsert({
       where: { key },
@@ -153,6 +192,11 @@ router.post("/test-smtp", async (req, res) => {
   
   if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS) {
     return res.status(400).json({ error: "SMTP 主机、端口、账户和密码均为必填项" });
+  }
+
+  // SSRF Protection: Validate SMTP_HOST
+  if (!(await isSafeHost(SMTP_HOST))) {
+    return res.status(403).json({ error: "Security Error: Invalid or prohibited SMTP host address" });
   }
 
   const emailToTest = targetEmail || SMTP_USER; // Default to self-send

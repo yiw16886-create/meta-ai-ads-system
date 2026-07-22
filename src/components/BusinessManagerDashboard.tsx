@@ -145,7 +145,7 @@ export function BusinessManagerDashboard() {
     setLoadingConfig(true);
     try {
       const res = await axios.get("/api/settings");
-      setHasEnterpriseToken(!!res.data.META_ACCESS_TOKEN);
+      setHasEnterpriseToken(!!(res.data.FB_AUTHORIZED_USER_ID || res.data.hasMetaToken === "true"));
     } catch (e) {
       console.error("加载系统配置失败:", e);
     } finally {

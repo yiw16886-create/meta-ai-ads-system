@@ -6,8 +6,25 @@ import { getMetaToken, extractMetaError, evaluateActivityStatus, getCachedData, 
 const router = Router();
 
 router.get("", async (req: any, res) => {
-  let token: string | null = null;
   const userId = req.user?.id;
+  if (!userId) {
+    return res.json([]);
+  }
+
+  // Check if the user has an active Facebook token
+  const userBinding = await prisma.userFacebookBinding.findUnique({
+    where: { user_id: Number(userId) }
+  });
+  const fbAccount = await prisma.facebookAccount.findUnique({
+    where: { userId: Number(userId) }
+  });
+  const hasFbToken = !!(userBinding?.access_token?.trim() || fbAccount?.accessToken?.trim());
+
+  if (!hasFbToken) {
+    return res.json([]);
+  }
+
+  let token: string | null = null;
   try {
     token = await getMetaToken(userId);
   } catch (e) {}
@@ -80,6 +97,17 @@ router.get("/:accountId/details", async (req: any, res) => {
     return res.status(400).json({ error: "Missing required parameters" });
   }
 
+  const userId = req.user?.id;
+  const cleanAccId = accountId.replace("act_", "").trim();
+
+  // Validate account ownership
+  const ownsAccount = await prisma.adAccount.findFirst({
+    where: { fb_account_id: cleanAccId, userId }
+  });
+  if (!ownsAccount) {
+    return res.status(403).json({ error: "Forbidden: You do not have access to this account." });
+  }
+
   const validLevels = ["campaigns", "adsets", "ads"];
   const targetLevel = validLevels.includes(level as string)
     ? level
@@ -90,7 +118,6 @@ router.get("/:accountId/details", async (req: any, res) => {
   const cached = getCachedData(cacheKey, forceRefresh);
   if (cached) return res.json(cached);
 
-  const cleanAccId = accountId.replace("act_", "").trim();
   const startStr = startDate as string;
   const endStr = endDate as string;
 
@@ -272,11 +299,19 @@ router.get("/:accountId/audience-insights", async (req: any, res) => {
   const { accountId } = req.params;
   const { startDate, endDate, breakdown } = req.query;
 
-  try {
-    const token = await getMetaToken(req.user?.id);
-    if (!token) throw new Error("Meta Token missing, using dynamic locale-aware safe fallback representation");
+  const userId = req.user?.id;
+  const cleanAccId = accountId.replace("act_", "").trim();
 
-    const cleanAccId = accountId.replace("act_", "").trim();
+  // Validate account ownership
+  const ownsAccount = await prisma.adAccount.findFirst({
+    where: { fb_account_id: cleanAccId, userId }
+  });
+  if (!ownsAccount) {
+    return res.status(403).json({ error: "Forbidden: You do not have access to this account." });
+  }
+
+  try {
+    const token = await getMetaToken(userId);
 
     let breakdownsParam = "";
     if (breakdown === "gender_age") breakdownsParam = "age,gender";
@@ -311,15 +346,24 @@ router.get("/:accountId/audience-insights", async (req: any, res) => {
 
 router.get("/:accountId/hierarchy", async (req: any, res) => {
   const { accountId } = req.params;
+  const userId = req.user?.id;
+  const cleanAccId = accountId.replace("act_", "").trim();
+
+  // Validate account ownership
+  const ownsAccount = await prisma.adAccount.findFirst({
+    where: { fb_account_id: cleanAccId, userId }
+  });
+  if (!ownsAccount) {
+    return res.status(403).json({ error: "Forbidden: You do not have access to this account." });
+  }
+
   const forceRefresh = req.query.force_refresh === 'true';
   const cacheKey = `hierarchy_${accountId}`;
   const cached = getCachedData(cacheKey, forceRefresh);
   if (cached) return res.json(cached);
 
-  const cleanAccId = accountId.replace("act_", "").trim();
-
   try {
-    const token = await getMetaToken(req.user?.id);
+    const token = await getMetaToken(userId);
     if (!token) return res.status(400).json({ error: "Meta Token 未配置" });
 
     const result = await collapseRequest(cacheKey, async () => {
@@ -473,6 +517,19 @@ router.get("/list", async (req: any, res) => {
       return res.json([]);
     }
 
+    // Check if the user has an active Facebook token
+    const userBinding = await prisma.userFacebookBinding.findUnique({
+      where: { user_id: Number(userId) }
+    });
+    const fbAccount = await prisma.facebookAccount.findUnique({
+      where: { userId: Number(userId) }
+    });
+    const hasFbToken = !!(userBinding?.access_token?.trim() || fbAccount?.accessToken?.trim());
+
+    if (!hasFbToken) {
+      return res.json([]);
+    }
+
     // 1. 获取当前用户绑定的 Business Managers 及其健康详情中的广告账户和状态
     const bms = await prisma.facebookBusinessManager.findMany({
       where: { userId }
@@ -504,9 +561,16 @@ router.get("/list", async (req: any, res) => {
       }
     });
 
-    const allAdAccounts = await prisma.adAccount.findMany();
-    const allMonitoring = await prisma.metaAccountMonitoring.findMany();
-    const allMappings = await prisma.accountMapping.findMany();
+    const allAdAccounts = await prisma.adAccount.findMany({
+      where: { userId }
+    });
+    const userAccountIds = allAdAccounts.map(a => a.fb_account_id);
+    const allMonitoring = await prisma.metaAccountMonitoring.findMany({
+      where: { accountId: { in: userAccountIds } }
+    });
+    const allMappings = await prisma.accountMapping.findMany({
+      where: { userId }
+    });
     
     const uniqueMap = new Map();
 

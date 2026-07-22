@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import prisma from '../../db/index.js';
 import axios from 'axios';
-import { collapseRequest } from '../utils.js';
+import { collapseRequest, getMetaToken } from '../utils.js';
 
 // Helper function to clean leading act_ prefix for reliable ID comparisons
 function cleanFbAccountId(id: string | null | undefined): string {
@@ -25,6 +25,7 @@ function setCachedApi(key: string, data: any, ttlSecs: number) {
 
 export async function getShopMaterialLeaderboard(req: Request, res: Response) {
   try {
+    const userId = (req as any).user?.id;
     // 1. 获取前端传来的筛选参数
     const { storeId, accountIds, startDate, endDate, materialType, page = 1, pageSize = 20 } = req.query;
     
@@ -76,13 +77,7 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
 
     // 4. 第三步：获取每一个广告的表现指标
     // 优先尝试从 Facebook API 异步拉取
-    let globalToken: string | null = null;
-    try {
-      const setting = await prisma.setting.findFirst({
-        where: { key: { in: ['META_ACCESS_TOKEN', 'meta_access_token'] } }
-      });
-      globalToken = setting?.value || null;
-    } catch (e) {}
+    const globalToken = await getMetaToken(userId);
 
     // 提前获取各账户独立Token
     const adAccounts = await prisma.adAccount.findMany({
@@ -412,6 +407,7 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
 
 export async function getMaterialTrend(req: Request, res: Response) {
   try {
+    const userId = (req as any).user?.id;
     const { storeId, accountId, startDate, endDate, materialType } = req.query;
 
     // Account filtering logic
@@ -440,13 +436,7 @@ export async function getMaterialTrend(req: Request, res: Response) {
     const startStr = String(startDate || '2026-06-08');
     const endStr = String(endDate || '2026-06-15');
 
-    let globalToken: string | null = null;
-    try {
-      const setting = await prisma.setting.findFirst({
-        where: { key: { in: ['META_ACCESS_TOKEN', 'meta_access_token'] } }
-      });
-      globalToken = setting?.value || null;
-    } catch (e) {}
+    const globalToken = await getMetaToken(userId);
 
     const adAccounts = await prisma.adAccount.findMany({
       where: { fb_account_id: { in: allowedAccountIds } },

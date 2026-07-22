@@ -1,11 +1,11 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
   binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider     = "postgresql"
+  url          = env("DATABASE_URL")
   relationMode = "prisma"
 }
 
@@ -56,24 +56,29 @@ model AccountMapping {
   project     String?
   owner       String?
   name        String?
+  userId      Int?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
   store       Store?   @relation(fields: [storeId], references: [id], onDelete: Cascade)
   updatedAt   DateTime @updatedAt
 }
 
 model Organization {
   id         String   @id @default(uuid())
-  name       String   // 企业名称（如：XX电商团队）
+  name       String // 企业名称（如：XX电商团队）
   created_at DateTime @default(now())
-  users      User[]   // 一个企业包含多个用户
+  users      User[] // 一个企业包含多个用户
 }
 
 model User {
   id               Int                       @id @default(autoincrement())
   email            String                    @unique
   password         String
-  password_hash    String?                   // For compatibility with hash-based queries
+  password_hash    String? // For compatibility with hash-based queries
   role             String                    @default("member") // "admin" or "member"
   status           String                    @default("ACTIVE") // "ACTIVE" or "DISABLED"
+  fb_access_token  String?                   @db.Text
+  fb_user_id       String?
+  fb_user_name     String?
   createdAt        DateTime                  @default(now())
   updatedAt        DateTime                  @updatedAt
   facebookAccount  FacebookAccount?
@@ -82,6 +87,9 @@ model User {
   fb_binding       UserFacebookBinding?
   org_id           String?
   organization     Organization?             @relation(fields: [org_id], references: [id])
+  accountMappings  AccountMapping[]
+  stores           Store[]
+  facebookPages    FacebookPage[]
 }
 
 model Invitation {
@@ -95,115 +103,117 @@ model Invitation {
 }
 
 model Store {
-  id              Int              @id @default(autoincrement())
-  name            String           @unique
-  platform        String?          @default("shopline")
-  shopline_token  String?
-  shopify_token   String?
-  shoplazza_token String?
-  domain          String?
-  visitors        Int              @default(0)
-  timezone        String?          @default("GMT+8")
-  timezone_fallback_warning Boolean? @default(false)
-  accounts        AdAccount[]
-  accountMappings AccountMapping[]
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
+  id                        Int              @id @default(autoincrement())
+  name                      String           @unique
+  platform                  String?          @default("shopline")
+  shopline_token            String?
+  shopify_token             String?
+  shoplazza_token           String?
+  domain                    String?
+  visitors                  Int              @default(0)
+  timezone                  String?          @default("GMT+8")
+  timezone_fallback_warning Boolean?         @default(false)
+  userId                    Int?
+  user                      User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accounts                  AdAccount[]
+  accountMappings           AccountMapping[]
+  createdAt                 DateTime         @default(now())
+  updatedAt                 DateTime         @updatedAt
 }
 
 model MetaAccountMonitoring {
-  accountId      String   @id
+  accountId      String     @id
   accountName    String?
   status         Int?
-  activityStatus Int?     @default(2)
+  activityStatus Int?       @default(2)
   spendCap       Float?
   amountSpent    Float?
   balance        Float?
   currency       String?
   timezone       String?
-  updatedAt      DateTime @updatedAt
+  updatedAt      DateTime   @updatedAt
   adAccount      AdAccount? @relation(fields: [accountId], references: [fb_account_id], onDelete: Cascade)
 }
 
 model AdAccount {
-  id              Int      @id @default(autoincrement())
-  fb_account_id   String   @unique
+  id              Int                    @id @default(autoincrement())
+  fb_account_id   String                 @unique
   fb_account_name String?
   fb_access_token String?
   storeId         Int
-  activityStatus  Int      @default(2)
+  activityStatus  Int                    @default(2)
   userId          Int?
-  store           Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  store           Store                  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
   campaigns       Campaign[]
   monitoring      MetaAccountMonitoring?
-  user            User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user            User?                  @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, fb_account_id])
 }
 
 model Product {
-  id          String   @id
-  storeId     Int
-  name        String
-  sku         String
-  category    String
-  inventory   Int      @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id        String   @id
+  storeId   Int
+  name      String
+  sku       String
+  category  String
+  inventory Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Order {
-  id          String   @id
-  storeId     Int
-  productId   String
-  revenue     Float    @default(0)
-  profit      Float    @default(0)
-  refunded    Boolean  @default(false)
-  refundedAt  DateTime?
-  orderId     String?
-  orderTotal  Float?
-  createdAt   DateTime @default(now())
+  id         String    @id
+  storeId    Int
+  productId  String
+  revenue    Float     @default(0)
+  profit     Float     @default(0)
+  refunded   Boolean   @default(false)
+  refundedAt DateTime?
+  orderId    String?
+  orderTotal Float?
+  createdAt  DateTime  @default(now())
 }
 
 model Campaign {
-  id          String   @id
-  accountId   String
-  name        String
-  region      String?
-  status      String?
-  storeId     Int?
-  adAccount   AdAccount? @relation(fields: [accountId], references: [fb_account_id], onDelete: Cascade)
-  adSets      AdSet[]
+  id        String     @id
+  accountId String
+  name      String
+  region    String?
+  status    String?
+  storeId   Int?
+  adAccount AdAccount? @relation(fields: [accountId], references: [fb_account_id], onDelete: Cascade)
+  adSets    AdSet[]
 }
 
 model AdSet {
-  id          String   @id
-  campaignId  String
-  accountId   String
-  name        String
-  storeId     Int?
-  campaign    Campaign? @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  ads         Ad[]
+  id         String    @id
+  campaignId String
+  accountId  String
+  name       String
+  storeId    Int?
+  campaign   Campaign? @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  ads        Ad[]
 }
 
 model Ad {
-  id          String   @id
-  adsetId     String
-  campaignId  String
-  accountId   String
-  name        String
-  creativeId  String?
-  storeId     Int?
-  adSet       AdSet?    @relation(fields: [adsetId], references: [id], onDelete: Cascade)
-  creative    AdCreative? @relation(fields: [creativeId], references: [creativeId], onDelete: SetNull)
+  id         String      @id
+  adsetId    String
+  campaignId String
+  accountId  String
+  name       String
+  creativeId String?
+  storeId    Int?
+  adSet      AdSet?      @relation(fields: [adsetId], references: [id], onDelete: Cascade)
+  creative   AdCreative? @relation(fields: [creativeId], references: [creativeId], onDelete: SetNull)
 }
 
 model AdCreative {
-  creativeId      String                     @id
+  creativeId      String  @id
   fbAccountId     String
-  mediaType       String                     // IMAGE/VIDEO
+  mediaType       String // IMAGE/VIDEO
   imageUrl        String?
   videoId         String?
   videoHash       String?
@@ -215,7 +225,7 @@ model AdCreative {
   previewUrl      String?
   metaAssetId     String?
   material_key    String?
-  hookRate        Float                      @default(0)
+  hookRate        Float   @default(0)
   pageId          String?
   pageName        String?
   effectivePostId String?
@@ -223,33 +233,33 @@ model AdCreative {
 }
 
 model ProductPerformanceDaily {
-  id               Int      @id @default(autoincrement())
-  date             String
-  storeId          Int
-  productId        String
-  productName      String
-  sku              String
-  category         String
-  revenue          Float    @default(0)
-  orders           Int      @default(0)
-  profit           Float    @default(0)
-  adSpend          Float    @default(0)
-  productRoas      Float    @default(0)
-  profitRoas       Float    @default(0)
-  ctr              Float    @default(0)
-  cpc              Float    @default(0)
-  cpm              Float    @default(0)
-  frequency        Float    @default(0)
-  refundRate       Float    @default(0)
-  inventory        Int      @default(0)
-  topRegion        String?
-  topCampaign      String?
-  topCreative      String?
-  aiRiskStatus     String?
-  trendStatus      String?
-  aiSuggestion     String?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id           Int      @id @default(autoincrement())
+  date         String
+  storeId      Int
+  productId    String
+  productName  String
+  sku          String
+  category     String
+  revenue      Float    @default(0)
+  orders       Int      @default(0)
+  profit       Float    @default(0)
+  adSpend      Float    @default(0)
+  productRoas  Float    @default(0)
+  profitRoas   Float    @default(0)
+  ctr          Float    @default(0)
+  cpc          Float    @default(0)
+  cpm          Float    @default(0)
+  frequency    Float    @default(0)
+  refundRate   Float    @default(0)
+  inventory    Int      @default(0)
+  topRegion    String?
+  topCampaign  String?
+  topCreative  String?
+  aiRiskStatus String?
+  trendStatus  String?
+  aiSuggestion String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   @@unique([storeId, productId, date])
 }
@@ -258,9 +268,11 @@ model ProductPerformanceDaily {
 model FacebookPage {
   id           String           @id // Meta Page ID
   page_name    String
-  access_token String           // 核心：该Page专属的 Page Access Token
-  shop_id      String           // 关联店铺ID
+  access_token String // 核心：该Page专属的 Page Access Token
+  shop_id      String // 关联店铺ID
   is_active    Boolean          @default(true)
+  userId       Int?
+  user         User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
   created_at   DateTime         @default(now())
   ads_posts    FacebookAdPost[]
 }
@@ -269,7 +281,7 @@ model FacebookPage {
 model FacebookAdPost {
   id           String          @id // Meta Post ID (格式通常为 pageId_adId)
   page_id      String
-  ad_id        String?         // 对应的广告ID（可选，如果是创意自动生成的帖子）
+  ad_id        String? // 对应的广告ID（可选，如果是创意自动生成的帖子）
   post_title   String?         @db.Text
   preview_url  String?         @db.Text // 帖子预览或素材图
   created_time DateTime
@@ -283,8 +295,8 @@ model FacebookAdPost {
 model AdPostComment {
   id           String         @id // Meta Comment ID
   post_id      String
-  from_name    String         // 评论者用户名
-  from_id      String         // 评论者用户ID
+  from_name    String // 评论者用户名
+  from_id      String // 评论者用户ID
   message      String         @db.Text // 评论具体文本
   is_hidden    Boolean        @default(false) // 核心：是否已被隐藏
   created_time DateTime
@@ -296,9 +308,9 @@ model AdPostComment {
 // 4. 企业商务管理平台 (Business Manager) 表
 model FacebookBusinessManager {
   id              Int      @id @default(autoincrement())
-  bmId            String   // Meta Business Manager ID
+  bmId            String // Meta Business Manager ID
   name            String
-  systemToken     String   // 系统用户 Token (System User Token)
+  systemToken     String // 系统用户 Token (System User Token)
   status          String   @default("PENDING_SYNC") // PENDING_SYNC / ACTIVE / RESTRICTED / DISABLED / UNKNOWN
   verification    String   @default("UNVERIFIED") // VERIFIED / UNVERIFIED / IN_PROGRESS / UNKNOWN
   dailySpendLimit String   @default("UNKNOWN") // e.g. "$50", "$250", "UNLIMITED", "UNKNOWN"
@@ -306,8 +318,8 @@ model FacebookBusinessManager {
   role            String   @default("ADMIN") // ADMIN (完全权限) / EMPLOYEE (部分权限) / UNKNOWN
   healthDetails   String?
   syncStatus      String   @default("SUCCESS") // SUCCESS / FAILED
-  syncError       String?  // 保存同步错误日志
-  userId          Int      // 🌟 关联系统用户ID
+  syncError       String? // 保存同步错误日志
+  userId          Int // 🌟 关联系统用户ID
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -331,17 +343,15 @@ model FacebookAccount {
 
 // 6. 用户与企业 Facebook 授权关联表 (核心隔离表)
 model UserFacebookBinding {
-  id              String   @id @default(uuid())
-  user_id         Int      @unique // 🌟 关键：这里必须是唯一索引，一个用户只能绑定一个企业FB
-  fb_user_id      String   // Meta 返回的用户的专属 Facebook ID
-  fb_username     String   // Meta 返回 of Facebook 用户名
-  access_token    String   @db.Text // 长期有效的 Facebook Page/User Access Token
-  authorized_at   DateTime @default(now())
-  updated_at      DateTime @updatedAt
-  org_id          String?
+  id            String   @id @default(uuid())
+  user_id       Int      @unique // 🌟 关键：这里必须是唯一索引，一个用户只能绑定一个企业FB
+  fb_user_id    String // Meta 返回的用户的专属 Facebook ID
+  fb_username   String // Meta 返回 of Facebook 用户名
+  access_token  String   @db.Text // 长期有效的 Facebook Page/User Access Token
+  authorized_at DateTime @default(now())
+  updated_at    DateTime @updatedAt
+  org_id        String?
 
   // 建立外键约束，用户删除了，绑定记录同步删除
-  user            User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
 }
-
-

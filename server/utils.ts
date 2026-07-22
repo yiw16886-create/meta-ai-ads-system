@@ -7,15 +7,66 @@ const queryCache = new Map();
 
 export async function getMetaToken(userId?: number): Promise<string | null> {
   if (userId) {
-    const acc = await prisma.facebookAccount.findUnique({
-      where: { userId }
+    const user = await prisma.user.findUnique({
+      where: { id: Number(userId) },
+      select: { fb_access_token: true }
     });
-    if (acc && acc.accessToken) return acc.accessToken;
+    if (user?.fb_access_token && user.fb_access_token.trim().length > 0) {
+      return user.fb_access_token.trim();
+    }
+
+    const binding = await prisma.userFacebookBinding.findUnique({
+      where: { user_id: Number(userId) },
+      select: { access_token: true }
+    });
+    if (binding?.access_token && binding.access_token.trim().length > 0) {
+      return binding.access_token.trim();
+    }
+
+    const acc = await prisma.facebookAccount.findUnique({
+      where: { userId: Number(userId) },
+      select: { accessToken: true }
+    });
+    if (acc?.accessToken && acc.accessToken.trim().length > 0) {
+      return acc.accessToken.trim();
+    }
+
+    return null;
   }
-  const setting = await prisma.setting.findUnique({
-    where: { key: "META_ACCESS_TOKEN" }
-  });
-  return setting ? setting.value : null;
+  return null;
+}
+
+export function getBaseUrl(): string {
+  let url = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://1-eight-azure.vercel.app';
+  url = url.trim();
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    url = `https://${url}`;
+  }
+  url = url.replace('http://', 'https://');
+  return url.replace(/\/$/, '');
+}
+
+export function getFbRedirectUri(req?: any): string {
+  if (process.env.META_REDIRECT_URI && process.env.META_REDIRECT_URI.trim()) {
+    let uri = process.env.META_REDIRECT_URI.trim();
+    if (!uri.startsWith('http://') && !uri.startsWith('https://')) {
+      uri = `https://${uri}`;
+    }
+    uri = uri.replace('http://', 'https://');
+    return uri.replace(/\/$/, '');
+  }
+  if (process.env.FACEBOOK_REDIRECT_URI && process.env.FACEBOOK_REDIRECT_URI.trim()) {
+    let uri = process.env.FACEBOOK_REDIRECT_URI.trim();
+    if (!uri.startsWith('http://') && !uri.startsWith('https://')) {
+      uri = `https://${uri}`;
+    }
+    uri = uri.replace('http://', 'https://');
+    return uri.replace(/\/$/, '');
+  }
+
+  const baseUrl = getBaseUrl();
+  const redirectUri = `${baseUrl}/api/auth/facebook/callback`;
+  return redirectUri;
 }
 
 export function mapOffsetToIana(tzStr: string): string {
@@ -352,6 +403,9 @@ export async function collapseRequest<T>(key: string, fetcher: () => Promise<T>)
 
 
 export async function syncSingleAccountAdData(accountId: string, startDate: string, endDate: string, token: string) {
+  if (!token || !token.trim()) {
+    throw new Error("未提供有效的 Facebook 授权 Token，请先完成账号绑定");
+  }
   const cleanAccountId = accountId.replace("act_", "");
   const url = `https://graph.facebook.com/v19.0/act_${cleanAccountId}/insights`;
   console.log(`[Unified Ad Sync] Fetching ACCOUNT-level insights for account ${cleanAccountId} from URL ${url}`);

@@ -2,6 +2,7 @@ import { Router } from "express";
 import prisma from "../../db/index.js";
 import { authenticateJWT, AuthenticatedRequest } from "../middlewares/auth.middleware.js";
 import jwt from "jsonwebtoken";
+import { getFbRedirectUri } from "../utils.js";
 
 const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || "fallback_secret_for_state_signing_only";
@@ -13,16 +14,23 @@ router.get("/auth-url", authenticateJWT as any, async (req: AuthenticatedRequest
       return res.status(401).json({ error: "未授权操作，请先登录" });
     }
 
-    const systemConfig = await prisma.systemSetting.findFirst();
-    if (!systemConfig || !systemConfig.meta_config_id || !systemConfig.meta_client_id) {
-      return res.status(500).json({ error: "系统未配置 Meta 基础应用凭证，请联系超级管理员" });
+    const systemConfig = await prisma.systemSetting.findFirst().catch(() => null);
+    const settings = await prisma.setting.findMany().catch(() => []);
+    const configMap: Record<string, string> = {};
+    settings.forEach((s) => {
+      configMap[s.key] = s.value;
+    });
+
+    const clientId = process.env.META_APP_ID || process.env.FACEBOOK_CLIENT_ID || systemConfig?.meta_client_id || configMap["FACEBOOK_CLIENT_ID"];
+    const configId = systemConfig?.meta_config_id || configMap["META_CONFIG_ID"];
+
+    if (!clientId) {
+      return res.status(500).json({ error: "系统未配置 Meta 应用凭证 (META_APP_ID)，请联系超级管理员" });
     }
 
-    const clientId = systemConfig.meta_client_id;
-    const configId = systemConfig.meta_config_id;
-
-    // Use the exact redirect URI specified by the user
-    const redirectUriVal = "https://1-eight-azure.vercel.app/api/auth/facebook/callback";
+    // 规范化 redirect_uri 生成逻辑
+    const redirectUriVal = getFbRedirectUri(req);
+    console.log("[Facebook OAuth] Generating auth URL with redirect_uri:", redirectUriVal);
     const redirectUri = encodeURIComponent(redirectUriVal);
 
     // Generate a signed state JWT token with 10-minute expiry to protect against CSRF and identify current user securely
@@ -32,7 +40,10 @@ router.get("/auth-url", authenticateJWT as any, async (req: AuthenticatedRequest
       { expiresIn: "10m" }
     );
 
-    const authUrl = `https://www.facebook.com/v20.0/dialog/oauth?client_id=${clientId}&redirect_uri=${redirectUri}&config_id=${configId}&response_type=code&scope=business_management,ads_management,email,public_profile&state=${encodeURIComponent(stateToken)}`;
+    let authUrl = `https://www.facebook.com/v20.0/dialog/oauth?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=business_management,ads_management,email,public_profile&state=${encodeURIComponent(stateToken)}`;
+    if (configId) {
+      authUrl += `&config_id=${configId}`;
+    }
 
     return res.json({ url: authUrl });
   } catch (error: any) {

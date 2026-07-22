@@ -5,6 +5,7 @@ import axios from "axios";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import { authenticateJWT } from "../middlewares/auth.middleware.js";
+import { getMetaToken, getFbRedirectUri } from "../utils.js";
 
 const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -148,218 +149,186 @@ router.post("/reset-password", authenticateJWT as any, async (req: any, res) => 
 
 // GET /api/auth/facebook/callback
 router.get("/facebook/callback", async (req, res) => {
-  const { code, error, state } = req.query;
-  
-  if (error) {
-    console.error("Facebook OAuth callback error from query:", error);
-    return res.redirect(`/?tab=settings&status=error&message=${encodeURIComponent(String(error))}`);
-  }
-  
-  if (!code) {
-    return res.status(400).send("Authorization code is missing");
-  }
-
   try {
-    // 1. Retrieve Client ID & Secret from database settings first, fallback to env variables
-    const settings = await prisma.setting.findMany();
-    const config: Record<string, string> = {};
+    const { code, error, state } = req.query;
+
+    if (error) {
+      console.error("[Facebook OAuth Callback Error from query]:", error);
+      return res.redirect(`/settings?error=${encodeURIComponent(String(error))}`);
+    }
+
+    if (!code) {
+      console.error("[Facebook OAuth Callback Error]: Code missing");
+      return res.redirect("/settings?error=oauth_failed");
+    }
+
+    if (!state) {
+      console.error("[Facebook OAuth Callback Error]: State missing");
+      return res.redirect("/settings?error=invalid_state");
+    }
+
+    // 1. 从 req.query.state 中解密出 userId
+    let parsedUserId: number | null = null;
+    try {
+      const secret = JWT_SECRET || process.env.JWT_SECRET || "fallback_secret_for_state_signing_only";
+      const decoded = jwt.verify(String(state), secret) as { userId?: number; id?: number; purpose?: string };
+      parsedUserId = decoded.userId || decoded.id || null;
+    } catch (jwtErr: any) {
+      console.error("[Facebook OAuth Callback JWT Verification Failed]:", jwtErr.message);
+      return res.redirect("/settings?error=invalid_state");
+    }
+
+    if (!parsedUserId || isNaN(Number(parsedUserId))) {
+      console.error("[Facebook OAuth Callback Error]: Invalid parsed userId from state:", parsedUserId);
+      return res.redirect("/settings?error=invalid_state");
+    }
+
+    // 2. 检查环境变量：确保使用 process.env.META_APP_ID, process.env.META_APP_SECRET, 以及当前请求的 Host 构建准确的 redirect_uri
+    const systemConfig = await prisma.systemSetting.findFirst().catch(() => null);
+    const settings = await prisma.setting.findMany().catch(() => []);
+    const configMap: Record<string, string> = {};
     settings.forEach((s) => {
-      config[s.key] = s.value;
+      configMap[s.key] = s.value;
     });
 
-    const systemConfig = await prisma.systemSetting.findFirst();
-    const clientId = systemConfig?.meta_client_id || config["FACEBOOK_CLIENT_ID"] || process.env.FACEBOOK_CLIENT_ID;
-    const clientSecret = systemConfig?.meta_client_secret || config["FACEBOOK_CLIENT_SECRET"] || process.env.FACEBOOK_CLIENT_SECRET;
-    
-    // Use the exact redirect URI specified by the user
-    const redirectUri = "https://1-eight-azure.vercel.app/api/auth/facebook/callback";
+    const clientId = process.env.META_APP_ID || process.env.FACEBOOK_CLIENT_ID || systemConfig?.meta_client_id || configMap["FACEBOOK_CLIENT_ID"];
+    const clientSecret = process.env.META_APP_SECRET || process.env.FACEBOOK_CLIENT_SECRET || systemConfig?.meta_client_secret || configMap["FACEBOOK_CLIENT_SECRET"];
 
     if (!clientId || !clientSecret) {
-      console.error("Facebook OAuth Error: App Credentials (App ID or App Secret) are not configured.");
-      return res.redirect(`/?tab=settings&status=error&message=${encodeURIComponent("Facebook App ID or Secret is not configured in Settings.")}`);
+      console.error("Facebook OAuth Error: App Credentials (META_APP_ID or META_APP_SECRET) are not configured.");
+      return res.redirect("/settings?error=oauth_failed");
     }
 
-    console.log("Exchanging Facebook auth code for short-lived token...");
-    // 2. Exchange authorization code for a short-lived user access token
-    const tokenRes = await axios.get("https://graph.facebook.com/v20.0/oauth/access_token", {
-      params: {
-        client_id: clientId,
-        client_secret: clientSecret,
-        redirect_uri: redirectUri,
-        code: code,
-      }
-    });
+    const redirectUri = getFbRedirectUri(req);
 
-    const shortLivedToken = tokenRes.data.access_token;
+    console.log(`[Facebook OAuth Callback] Exchanging code using redirect_uri: ${redirectUri}`);
+
+    // 3. 用 code 换取短效 Token
+    let shortLivedToken: string | null = null;
+    try {
+      const tokenRes = await axios.get("https://graph.facebook.com/v20.0/oauth/access_token", {
+        params: {
+          client_id: clientId,
+          client_secret: clientSecret,
+          redirect_uri: redirectUri,
+          code: code,
+        },
+        timeout: 10000,
+      });
+      shortLivedToken = tokenRes.data?.access_token || null;
+    } catch (tokenErr: any) {
+      console.error("[Facebook OAuth Code Exchange Error]:", tokenErr.response?.data || tokenErr.message);
+      return res.redirect("/settings?error=oauth_failed");
+    }
+
     if (!shortLivedToken) {
-      throw new Error("Failed to exchange auth code for short-lived token");
+      console.error("[Facebook OAuth Error]: Short-lived token exchange returned empty token.");
+      return res.redirect("/settings?error=oauth_failed");
     }
 
-    console.log("Upgrading short-lived token to 60-day long-lived User Access Token...");
-    // 3. Upgrade short-lived token to long-lived (60 days) access token
-    const longLivedTokenRes = await axios.get("https://graph.facebook.com/v20.0/oauth/access_token", {
-      params: {
-        grant_type: "fb_exchange_token",
-        client_id: clientId,
-        client_secret: clientSecret,
-        fb_exchange_token: shortLivedToken,
+    // 4. 换取 60 天长效访问令牌 (Long-Lived Token)
+    let longLivedToken = shortLivedToken;
+    try {
+      const longLivedTokenRes = await axios.get("https://graph.facebook.com/v20.0/oauth/access_token", {
+        params: {
+          grant_type: "fb_exchange_token",
+          client_id: clientId,
+          client_secret: clientSecret,
+          fb_exchange_token: shortLivedToken,
+        },
+        timeout: 10000,
+      });
+      if (longLivedTokenRes.data?.access_token) {
+        longLivedToken = longLivedTokenRes.data.access_token;
       }
-    });
-
-    const longLivedToken = longLivedTokenRes.data.access_token;
-    if (!longLivedToken) {
-      throw new Error("Failed to exchange short-lived token for long-lived token");
+    } catch (longErr: any) {
+      console.warn("[Facebook OAuth Long-Lived Token Exchange Warning]:", longErr.response?.data || longErr.message);
     }
 
-    // Get user details to associate with token
-    let facebookUserId = "unknown";
-    let facebookUserName = "";
+    // 5. 获取 Facebook 用户基础信息 (id, name)
+    let fbUserId: string | null = null;
+    let fbUserName: string | null = null;
     let facebookUserLink = "";
     try {
-      // ⚠️ Note: the 'link' field has been deprecated/restricted by Meta in recent Graph API versions (v20.0+),
-      // requesting it directly on /me throws OAuthException (#100). We request 'id,name,email' instead, 
-      // and construct the profile link programmatically using their Scoped User ID.
       const meRes = await axios.get("https://graph.facebook.com/v20.0/me", {
-        params: { 
+        params: {
           access_token: longLivedToken,
           fields: "id,name,email"
-        }
+        },
+        timeout: 10000,
       });
       if (meRes.data && meRes.data.id) {
-        facebookUserId = meRes.data.id;
-        // 🚀 Automatically map known app-scoped user ID to the real Facebook profile ID
-        if (facebookUserId === "1595581251548904") {
-          facebookUserId = "100032911327297";
+        fbUserId = String(meRes.data.id);
+        if (fbUserId === "1595581251548904") {
+          fbUserId = "100032911327297";
         }
-        facebookUserName = meRes.data.name || "";
-        facebookUserLink = `https://www.facebook.com/profile.php?id=${facebookUserId}`;
-        console.log(`👤 Retrieved Facebook User Info. User ID: ${facebookUserId}, Name: ${facebookUserName}, Link: ${facebookUserLink}`);
+        fbUserName = meRes.data.name || "";
+        facebookUserLink = `https://www.facebook.com/profile.php?id=${fbUserId}`;
       }
-    } catch (meErr) {
-      console.warn("Could not fetch Facebook user info:", meErr);
+    } catch (meErr: any) {
+      console.warn("[Facebook OAuth /me fetch warning]:", meErr.message);
     }
 
-    // DEBUG: Check the permissions/scopes associated with the newly exchanged long-lived token
-    try {
-      console.log("🔍 Checking permissions/scopes for the acquired Long-Lived Token...");
-      const permissionsRes = await axios.get("https://graph.facebook.com/v20.0/me/permissions", {
-        params: { access_token: longLivedToken }
-      });
-      if (permissionsRes.data && Array.isArray(permissionsRes.data.data)) {
-        const grantedPermissions = permissionsRes.data.data
-          .filter((p: any) => p.status === "granted")
-          .map((p: any) => p.permission);
-        
-        const declinedPermissions = permissionsRes.data.data
-          .filter((p: any) => p.status === "declined")
-          .map((p: any) => p.permission);
-
-        console.log("✅ Token Granted Permissions:", grantedPermissions);
-        if (declinedPermissions.length > 0) {
-          console.warn("❌ Token Declined Permissions:", declinedPermissions);
-        }
-
-        const requiredScopes = ["ads_management", "ads_read", "business_management"];
-        const missingScopes = requiredScopes.filter(scope => !grantedPermissions.includes(scope));
-        if (missingScopes.length > 0) {
-          console.warn(`⚠️ Warning: Missing required enterprise scopes for BM/Ad accounts: ${missingScopes.join(", ")}`);
-          console.warn("Ensure that you are using a Meta App of type 'Business', and that the System User / User has been assigned to those assets.");
-        } else {
-          console.log("🎉 Outstanding! All necessary business scopes are present on this token.");
-        }
-      }
-    } catch (permErr: any) {
-      console.warn("⚠️ Could not debug token permissions via /me/permissions:", permErr.response?.data || permErr.message);
-    }
-
-    // 4. Securely verify and decode long-lived token, expiry, and user ID from the signed JWT state
-    const stateVal = state;
-    if (!stateVal) {
-      return res.status(400).send("OAuth state parameter is missing");
-    }
-
-    let userId: number;
-    try {
-      const decoded = jwt.verify(String(stateVal), JWT_SECRET) as { userId: number; purpose?: string };
-      if (decoded.purpose !== "facebook-oauth") {
-        return res.status(403).send("Invalid token purpose in OAuth state");
-      }
-      userId = decoded.userId;
-    } catch (jwtErr: any) {
-      console.error("Facebook OAuth State JWT verification failed:", jwtErr.message);
-      return res.status(401).send(`OAuth state verification failed: ${jwtErr.message || "token expired or invalid"}`);
-    }
-
-    if (!userId || isNaN(userId)) {
-      return res.status(401).send("Invalid user reference in OAuth state");
-    }
-
-    // Save isolated Facebook Account details for this user
-    const userToLink = await prisma.user.findUnique({ where: { id: userId } });
+    // 6. 正确落库: 更新 User, UserFacebookBinding, FacebookAccount
+    const userToLink = await prisma.user.findUnique({ where: { id: Number(parsedUserId) } });
     if (!userToLink) {
-      return res.status(404).send("OAuth reference user does not exist in the database");
+      console.error("[Facebook OAuth Error]: User not found for id:", parsedUserId);
+      return res.redirect("/settings?error=invalid_state");
     }
+
     const userOrgId = userToLink.org_id;
 
+    // 更新 User 表
+    await prisma.user.update({
+      where: { id: Number(parsedUserId) },
+      data: {
+        fb_access_token: longLivedToken,
+        fb_user_id: fbUserId || null,
+        fb_user_name: fbUserName || null,
+      }
+    });
+
+    // 映射 UserFacebookBinding
+    await prisma.userFacebookBinding.upsert({
+      where: { user_id: Number(parsedUserId) },
+      update: {
+        fb_user_id: fbUserId || "",
+        fb_username: fbUserName || "",
+        access_token: longLivedToken,
+        updated_at: new Date(),
+        org_id: userOrgId,
+      },
+      create: {
+        user_id: Number(parsedUserId),
+        fb_user_id: fbUserId || "",
+        fb_username: fbUserName || "",
+        access_token: longLivedToken,
+        org_id: userOrgId,
+      },
+    }).catch(err => console.warn("Failed to upsert userFacebookBinding:", err.message));
+
+    // 映射 FacebookAccount
     await prisma.facebookAccount.upsert({
-      where: { userId },
+      where: { userId: Number(parsedUserId) },
       update: {
         accessToken: longLivedToken,
-        facebookId: facebookUserId || null,
-        facebookName: facebookUserName || null,
+        facebookId: fbUserId || null,
+        facebookName: fbUserName || null,
         facebookLink: facebookUserLink || null,
         org_id: userOrgId,
       },
       create: {
-        userId,
+        userId: Number(parsedUserId),
         accessToken: longLivedToken,
-        facebookId: facebookUserId || null,
-        facebookName: facebookUserName || null,
+        facebookId: fbUserId || null,
+        facebookName: fbUserName || null,
         facebookLink: facebookUserLink || null,
         org_id: userOrgId,
       },
-    });
+    }).catch(err => console.warn("Failed to upsert facebookAccount:", err.message));
 
-    // Retro-compatibility fallback setting updates
-    await prisma.setting.upsert({
-      where: { key: "META_ACCESS_TOKEN" },
-      update: { value: longLivedToken },
-      create: { key: "META_ACCESS_TOKEN", value: longLivedToken },
-    });
-
-    const now = new Date().toISOString();
-    await prisma.setting.upsert({
-      where: { key: "META_TOKEN_UPDATED_AT" },
-      update: { value: now },
-      create: { key: "META_TOKEN_UPDATED_AT", value: now },
-    });
-
-    if (facebookUserId) {
-      await prisma.setting.upsert({
-        where: { key: "FB_AUTHORIZED_USER_ID" },
-        update: { value: facebookUserId },
-        create: { key: "FB_AUTHORIZED_USER_ID", value: facebookUserId },
-      });
-    }
-
-    if (facebookUserName) {
-      await prisma.setting.upsert({
-        where: { key: "FB_AUTHORIZED_USER_NAME" },
-        update: { value: facebookUserName },
-        create: { key: "FB_AUTHORIZED_USER_NAME", value: facebookUserName },
-      });
-    }
-
-    if (facebookUserLink) {
-      await prisma.setting.upsert({
-        where: { key: "FB_AUTHORIZED_USER_LINK" },
-        update: { value: facebookUserLink },
-        create: { key: "FB_AUTHORIZED_USER_LINK", value: facebookUserLink },
-      });
-    }
-
-    // Update ONLY the AdAccounts belonging to users in the same organization to prevent cross-user/cross-org leakage!
-    let userIdsToUpdate = [userId];
+    // 映射 AdAccounts Token
+    let userIdsToUpdate = [Number(parsedUserId)];
     if (userOrgId) {
       const orgUsers = await prisma.user.findMany({
         where: { org_id: userOrgId },
@@ -371,102 +340,21 @@ router.get("/facebook/callback", async (req, res) => {
     await prisma.adAccount.updateMany({
       where: {
         userId: { in: userIdsToUpdate },
-        OR: [
-          { fb_access_token: { not: longLivedToken } },
-          { fb_access_token: null }
-        ]
       },
       data: {
         fb_access_token: longLivedToken,
-        userId: userId
+        userId: Number(parsedUserId),
       }
-    });
+    }).catch(err => console.warn("Failed to update adAccounts:", err.message));
 
-    console.log("Facebook OAuth configuration saved. Returning custom redirection response.");
+    console.log(`[Facebook OAuth Success] User ${parsedUserId} connected Facebook account ${fbUserId} (${fbUserName}).`);
 
-    // Retrieve and normalize target origin for postMessage
-    let targetOrigin = process.env.APP_URL || "https://1-eight-azure.vercel.app";
-    if (targetOrigin.endsWith("/")) {
-      targetOrigin = targetOrigin.slice(0, -1);
-    }
-
-    // Return popup postMessage template to auto-close and notify parent window
-    return res.status(200).send(`
-      <html>
-        <head>
-          <title>授权成功</title>
-          <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background-color: #f7f9fc; color: #1e293b; }
-            .card { background: white; padding: 2.5rem; border-radius: 12px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); text-align: center; max-width: 450px; border: 1px solid #e2e8f0; }
-            h1 { color: #10b981; font-size: 1.75rem; margin-top: 0; margin-bottom: 0.75rem; font-weight: 700; }
-            p { color: #64748b; font-size: 0.95rem; line-height: 1.6; margin-bottom: 2rem; }
-          </style>
-        </head>
-        <body>
-          <div class="card">
-            <h1>✓ 绑定授权成功</h1>
-            <p>已成功获取 Meta 60 天长效访问令牌并同步系统！窗口正在关闭并刷新画布...</p>
-          </div>
-          <script>
-            // 1. 通知父窗口（看板主页面）刷新数据或改变状态，采用具体的 APP_URL 明确 origin
-            if (window.opener) {
-              try {
-                window.opener.postMessage({ type: 'FB_AUTH_SUCCESS' }, ${JSON.stringify(targetOrigin)});
-                window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS' }, ${JSON.stringify(targetOrigin)});
-              } catch (e) {
-                console.error("Failed to postMessage to opener:", e);
-              }
-            }
-            // 2. 自动关闭当前弹窗
-            setTimeout(() => {
-              window.close();
-            }, 1000);
-          </script>
-        </body>
-      </html>
-    `);
+    // 7. 成功后重定向前端页面
+    return res.redirect('/settings?status=facebook_connected');
 
   } catch (error: any) {
-    const errMsg = error.response?.data?.error?.message || error.message || "Unknown callback exception";
-    console.error(`Facebook OAuth callback handling exception: ${errMsg}`);
-    
-    // Retrieve and normalize target origin for postMessage
-    let targetOrigin = process.env.APP_URL || "https://1-eight-azure.vercel.app";
-    if (targetOrigin.endsWith("/")) {
-      targetOrigin = targetOrigin.slice(0, -1);
-    }
-
-    return res.status(500).send(`
-      <html>
-        <head>
-          <title>授权失败</title>
-          <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background-color: #fef2f2; color: #991b1b; }
-            .card { background: white; padding: 2.5rem; border-radius: 12px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); text-align: center; max-width: 450px; border: 1px solid #fee2e2; }
-            h1 { color: #dc2626; font-size: 1.75rem; margin-top: 0; margin-bottom: 0.75rem; font-weight: 700; }
-            p { color: #7f1d1d; font-size: 0.95rem; line-height: 1.6; margin-bottom: 2rem; }
-          </style>
-        </head>
-        <body>
-          <div class="card">
-            <h1>✗ 绑定授权失败</h1>
-            <p>${errMsg}</p>
-          </div>
-          <script>
-            if (window.opener) {
-              try {
-                window.opener.postMessage({ type: 'FB_AUTH_ERROR', message: ${JSON.stringify(errMsg)} }, ${JSON.stringify(targetOrigin)});
-              } catch (e) {
-                console.error("Failed to postMessage to opener:", e);
-              }
-            }
-            setTimeout(() => {
-              window.close();
-            }, 3000);
-          </script>
-        </body>
-      </html>
-    `);
+    console.error("[Facebook OAuth Callback Unhandled Exception]:", error?.response?.data || error?.message || error);
+    return res.redirect('/settings?error=oauth_failed');
   }
 });
 
@@ -475,16 +363,28 @@ router.post("/facebook/disconnect", authenticateJWT as any, async (req: any, res
   try {
     const userId = req.user?.id;
     if (userId) {
+      await prisma.userFacebookBinding.deleteMany({
+        where: { user_id: userId }
+      });
       await prisma.facebookAccount.deleteMany({
         where: { userId }
       });
       await prisma.facebookBusinessManager.deleteMany({
         where: { userId }
       });
+      await prisma.facebookPage.deleteMany({
+        where: { userId }
+      });
       await prisma.adAccount.updateMany({
         where: { userId },
         data: {
           fb_access_token: null,
+          userId: null
+        }
+      });
+      await prisma.accountMapping.updateMany({
+        where: { userId },
+        data: {
           userId: null
         }
       });
@@ -501,25 +401,37 @@ router.post("/facebook/disconnect", authenticateJWT as any, async (req: any, res
 router.post("/facebook/delete-local", authenticateJWT as any, async (req: any, res) => {
   try {
     console.log("📥 Local unbind and data purge requested for Facebook integration");
-    const userId = req.user?.id;
-    if (userId) {
+    const numUserId = Number(req.user?.id || req.user?.userId);
+    if (numUserId) {
+      await prisma.userFacebookBinding.deleteMany({
+        where: { user_id: numUserId }
+      });
       await prisma.facebookAccount.deleteMany({
-        where: { userId }
+        where: { userId: numUserId }
       });
       await prisma.facebookBusinessManager.deleteMany({
-        where: { userId }
+        where: { userId: numUserId }
       });
-      await prisma.adAccount.updateMany({
-        where: { userId },
-        data: {
-          fb_access_token: null,
-          userId: null
+      await prisma.facebookPage.deleteMany({
+        where: { userId: numUserId }
+      });
+      await prisma.metaAccountMonitoring.deleteMany({
+        where: {
+          adAccount: {
+            userId: numUserId
+          }
         }
+      });
+      await prisma.adAccount.deleteMany({
+        where: { userId: numUserId }
+      });
+      await prisma.accountMapping.deleteMany({
+        where: { userId: numUserId }
       });
     }
     
-    console.log("✅ Successfully purged local Facebook configuration and tokens for user:", userId);
-    res.json({ success: true, message: "本地解绑成功，如需彻底清除 Meta 缓存，请前往 Facebook 个人后台设置" });
+    console.log("✅ Successfully purged local Facebook configuration and tokens for user:", numUserId);
+    res.json({ success: true, message: "本地解绑成功，相关缓存和数据已彻底擦除" });
   } catch (error: any) {
     console.error("Failed to handle local Facebook unbind/purge:", error);
     res.status(500).json({ error: "解除本地绑定失败", details: error.message });
@@ -530,25 +442,37 @@ router.post("/facebook/delete-local", authenticateJWT as any, async (req: any, r
 router.post("/facebook/unbind", authenticateJWT as any, async (req: any, res) => {
   try {
     console.log("📥 Compliant unbind and data purge requested for Facebook integration");
-    const userId = req.user?.id;
-    if (userId) {
+    const numUserId = Number(req.user?.id || req.user?.userId);
+    if (numUserId) {
+      await prisma.userFacebookBinding.deleteMany({
+        where: { user_id: numUserId }
+      });
       await prisma.facebookAccount.deleteMany({
-        where: { userId }
+        where: { userId: numUserId }
       });
       await prisma.facebookBusinessManager.deleteMany({
-        where: { userId }
+        where: { userId: numUserId }
       });
-      await prisma.adAccount.updateMany({
-        where: { userId },
-        data: {
-          fb_access_token: null,
-          userId: null
+      await prisma.facebookPage.deleteMany({
+        where: { userId: numUserId }
+      });
+      await prisma.metaAccountMonitoring.deleteMany({
+        where: {
+          adAccount: {
+            userId: numUserId
+          }
         }
+      });
+      await prisma.adAccount.deleteMany({
+        where: { userId: numUserId }
+      });
+      await prisma.accountMapping.deleteMany({
+        where: { userId: numUserId }
       });
     }
     
-    console.log("✅ Successfully purged Facebook configuration and tokens under compliant unbind for user:", userId);
-    res.status(200).json({ success: true, message: "您的本地授权 Token 已成功擦除" });
+    console.log("✅ Successfully purged Facebook configuration and tokens under compliant unbind for user:", numUserId);
+    res.status(200).json({ success: true, message: "您的本地授权 Token 及相关同步数据已成功彻底擦除" });
   } catch (error: any) {
     console.error("Failed to handle compliant Facebook unbind:", error);
     res.status(500).json({ error: "解除本地绑定失败", details: error.message });
@@ -695,26 +619,10 @@ router.post("/facebook/delete", async (req, res) => {
 router.get("/facebook/profile-link", authenticateJWT as any, async (req: any, res) => {
   try {
     const userId = req.user?.id;
-    let userAccessToken = null;
-    if (userId) {
-      const acc = await prisma.facebookAccount.findUnique({
-        where: { userId }
-      });
-      if (acc) {
-        userAccessToken = acc.accessToken;
-      }
-    }
-    
-    // Fallback to global setting if no user-specific token is found
-    if (!userAccessToken) {
-      const tokenSetting = await prisma.setting.findUnique({
-        where: { key: "META_ACCESS_TOKEN" }
-      });
-      userAccessToken = tokenSetting?.value;
-    }
+    const userAccessToken = await getMetaToken(userId);
 
     if (!userAccessToken) {
-      return res.status(404).json({ error: "Access token not found" });
+      return res.status(400).json({ success: false, code: "FB_NOT_CONNECTED", message: "未绑定 Facebook 账号或 Token 已失效，请前往配置页面绑定" });
     }
 
     // ⚠️ Requesting 'link' field directly throws OAuthException (#100) on newer v20.0+ Graph API.
