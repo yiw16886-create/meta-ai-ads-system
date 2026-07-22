@@ -323,12 +323,13 @@ const handleSyncSingleAccount = async (req: AuthenticatedRequest, res: any) => {
     });
   } catch (error: any) {
     const rawAcc = req.body?.accountId || req.query?.accountId || "unknown";
-    console.error(`[Vercel-Safe Sync] Account ${rawAcc} failed:`, error.message);
-    const is403 = error.response?.status === 403 || (error.message && error.message.includes("403"));
+    const metaErrorMsg = extractMetaError(error);
+    console.warn(`[Vercel-Safe Sync] Account ${rawAcc} access restriction or error:`, metaErrorMsg);
+    const is403 = error.status === 403 || error.response?.status === 403 || (metaErrorMsg && (metaErrorMsg.includes("403") || metaErrorMsg.includes("OAuthException") || metaErrorMsg.includes("200")));
     return res.status(200).json({
       success: false,
       accountId: rawAcc,
-      error: error.message || "同步该账户失败",
+      error: metaErrorMsg || "同步该账户失败",
       isForbidden: is403
     });
   }

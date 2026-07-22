@@ -590,23 +590,33 @@ export async function syncSingleAccountAdData(accountId: string, startDate: stri
   const url = `https://graph.facebook.com/v19.0/act_${cleanAccountId}/insights`;
   console.log(`[Unified Ad Sync] Fetching ACCOUNT-level insights for account ${cleanAccountId} from URL ${url}`);
   
-  const insightsResponse = await axios.get(
-    url,
-    {
-      params: {
-        level: "account",
-        time_range: JSON.stringify({
-          since: startDate,
-          until: endDate,
-        }),
-        time_increment: 1,
-        fields:
-          "account_id,account_name,date_start,reach,impressions,clicks,spend,actions,purchase_roas,action_values",
-        limit: 1000,
-        access_token: token,
+  let insightsResponse;
+  try {
+    insightsResponse = await axios.get(
+      url,
+      {
+        params: {
+          level: "account",
+          time_range: JSON.stringify({
+            since: startDate,
+            until: endDate,
+          }),
+          time_increment: 1,
+          fields:
+            "account_id,account_name,date_start,reach,impressions,clicks,spend,actions,purchase_roas,action_values",
+          limit: 1000,
+          access_token: token,
+        },
       },
-    },
-  );
+    );
+  } catch (err: any) {
+    const metaErr = extractMetaError(err);
+    console.warn(`[Unified Ad Sync] Meta API error for account ${cleanAccountId}: ${metaErr}`);
+    const customError: any = new Error(metaErr);
+    customError.response = err.response;
+    customError.status = err.response?.status || 403;
+    throw customError;
+  }
 
   const insights = insightsResponse.data.data || [];
   console.log(`[Unified Ad Sync] Received ${insights.length} account-level insight items for account ${cleanAccountId}`);

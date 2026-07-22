@@ -9,7 +9,8 @@ import { getMetaToken } from "../utils.js";
 const router = Router();
 
 // Create a new feed/photos post on Meta Facebook Page
-router.post("/posts/create", createPagePost);
+router.post("/posts/create", authenticateJWT as any, createPagePost);
+router.post("/:pageId/publish-post", authenticateJWT as any, createPagePost);
 
 // Comment/reply on a Facebook post on behalf of the page
 router.post("/post/:postId/comment", createPostComment);

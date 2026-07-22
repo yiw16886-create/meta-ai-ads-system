@@ -341,6 +341,8 @@ export function Dashboard({ onLogout }: DashboardProps) {
       // 2. 前端控制分批并发 (每批 3 个单账户同步请求，保证单次请求 1~2s 响应，绝对不触发 Vercel 10s 超时)
       let completedCount = 0;
       let totalSyncedRecords = 0;
+      let failedAccountCount = 0;
+      let lastFailedError = "";
       const batchSize = 3;
 
       if (syncToast) {
@@ -357,10 +359,16 @@ export function Dashboard({ onLogout }: DashboardProps) {
                 startDate: sDateStr,
                 endDate: eDateStr
               });
-              if (res.data?.syncedRecords) {
+              if (res.data?.success && res.data?.syncedRecords) {
                 totalSyncedRecords += res.data.syncedRecords;
+              } else if (res.data?.success === false) {
+                failedAccountCount++;
+                if (res.data?.error) {
+                  lastFailedError = res.data.error;
+                }
               }
             } catch (err: any) {
+              failedAccountCount++;
               console.warn(`[Vercel Sync] Account ${acc.accountId} sync error:`, err?.message);
             } finally {
               completedCount++;
@@ -375,7 +383,13 @@ export function Dashboard({ onLogout }: DashboardProps) {
       }
 
       if (syncToast) {
-        toast.success(`Meta 数据同步完成 (${accountList.length} 个账户)`, { id: syncToast });
+        if (failedAccountCount > 0 && totalSyncedRecords === 0 && accountList.length === failedAccountCount) {
+          toast.error(`Meta 同步失败: ${lastFailedError || "无广告账户访问权限"}`, { id: syncToast });
+        } else if (failedAccountCount > 0) {
+          toast.success(`同步完成 (${accountList.length - failedAccountCount}/${accountList.length} 账户成功，${failedAccountCount} 个无权限)`, { id: syncToast });
+        } else {
+          toast.success(`Meta 数据同步完成 (${accountList.length} 个账户)`, { id: syncToast });
+        }
       }
       setRefreshKey(prev => prev + 1);
       await fetchData();

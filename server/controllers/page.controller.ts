@@ -1,57 +1,113 @@
 import { Request, Response } from 'express';
 import axios from 'axios';
 import prisma from '../../db/index.js';
+import { getMetaToken } from '../utils.js';
 
 export const createPagePost = async (req: Request, res: Response) => {
   try {
-    const { pageId, message, imageUrl } = req.body;
-    
+    const pageId = req.params.pageId || req.body.pageId;
+    const message = req.body.message || '';
+    const imageUrl = req.body.imageUrl || req.body.image_url || req.body.picture || req.body.url;
+
+    if (!pageId) {
+      return res.status(400).json({ success: false, message: '缺少 pageId 参数', error: '缺少 pageId 参数' });
+    }
+
     // 1. 根据传入的 pageId，从本地 FacebookPage 表中精准捞取该 Page 专属的 page_access_token
-    const page = await prisma.facebookPage.findUnique({ where: { id: pageId } });
-    if (!page || !page.access_token) {
-      return res.status(404).json({ success: false, message: '找不到对应的公共主页授权' });
+    let page = await prisma.facebookPage.findUnique({ where: { id: String(pageId) } });
+    let pageAccessToken = page?.access_token;
+
+    // 2. 如果本地缺少 Page Access Token，尝试用用户 Token 向 Meta 动态查一次
+    if (!pageAccessToken) {
+      const userId = (req as any).user?.id;
+      const userToken = await getMetaToken(userId);
+      if (userToken) {
+        try {
+          const pageRes = await axios.get(`https://graph.facebook.com/v20.0/${pageId}`, {
+            params: {
+              fields: 'access_token,name',
+              access_token: userToken
+            },
+            timeout: 5000
+          });
+          if (pageRes.data?.access_token) {
+            pageAccessToken = pageRes.data.access_token;
+            // 写入本地数据库以备后续使用
+            await prisma.facebookPage.upsert({
+              where: { id: String(pageId) },
+              update: { access_token: pageAccessToken },
+              create: {
+                id: String(pageId),
+                page_name: pageRes.data.name || `Page ${pageId}`,
+                access_token: pageAccessToken,
+                shop_id: "0"
+              }
+            });
+          }
+        } catch (tokenErr: any) {
+          console.warn(`[createPagePost] Failed to fetch page access token for ${pageId}:`, tokenErr.response?.data || tokenErr.message);
+        }
+      }
+    }
+
+    if (!pageAccessToken) {
+      return res.status(404).json({
+        success: false,
+        message: '找不到对应的公共主页授权 (Page Access Token)，请确认已绑定并授权 Facebook 主页管理权限',
+        error: '找不到对应的公共主页授权'
+      });
     }
 
     let response;
-    
-    // 2. 根据运营是否上传了图片，自动分流 Meta Graph API 写入端点
+
+    // 3. 根据运营是否上传了图片，自动分流 Meta Graph API 写入端点
     if (imageUrl) {
       // 如果有图片，调用 /photos 端点发布带图贴文
       response = await axios.post(`https://graph.facebook.com/v20.0/${pageId}/photos`, {
         url: imageUrl,
         caption: message,
-        access_token: page.access_token
+        access_token: pageAccessToken
       });
     } else {
       // 如果纯文字，调用 /feed 端点发布纯文本贴文
       response = await axios.post(`https://graph.facebook.com/v20.0/${pageId}/feed`, {
         message: message,
-        access_token: page.access_token
+        access_token: pageAccessToken
       });
     }
 
     // Meta 成功返回后会吐出：{ id: "post_id" } 或 { id: "photo_id", post_id: "xxx" }
     const fbPostId = response.data.post_id || response.data.id;
 
-    // 3. 💥 核心：发布成功后，立刻在本地 Prisma 库里 upsert 一条记录，实现全血缘数据即时对齐
-    const finalTitle = message || `系统直接发布贴文 (${new Date().toLocaleDateString()})`;
+    // 4. 发布成功后，在本地 Prisma 库里 upsert 一条记录，实现全血缘数据即时对齐
+    const finalTitle = message || `系统发布贴文 (${new Date().toLocaleDateString()})`;
     const newPost = await prisma.facebookAdPost.upsert({
       where: { id: fbPostId },
       update: { post_title: finalTitle, preview_url: imageUrl || null },
       create: {
         id: fbPostId,
-        page_id: pageId,
+        page_id: String(pageId),
         post_title: finalTitle,
         preview_url: imageUrl || null,
         created_time: new Date()
       }
     });
 
-    return res.json({ success: true, message: '动态成功发布至 Facebook 公共主页！', data: newPost });
+    return res.json({
+      success: true,
+      message: '动态成功发布至 Facebook 公共主页！',
+      post_id: fbPostId,
+      data: newPost
+    });
   } catch (error: any) {
     console.error('发布主页贴文失败:', error.response?.data || error.message);
     const metaErrorMsg = error.response?.data?.error?.message || error.message;
-    return res.status(error.response?.status || 500).json({ success: false, message: metaErrorMsg, error: metaErrorMsg });
+    return res.status(error.response?.status || 500).json({
+      success: false,
+      message: '发布失败: ' + metaErrorMsg,
+      error: metaErrorMsg,
+      details: error.response?.data?.error
+    });
   }
 };
 
