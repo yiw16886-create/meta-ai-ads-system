@@ -205,7 +205,7 @@ router.post("/bm/invite", authenticateJWT as any, async (req: AuthenticatedReque
 });
 
 // GET /api/meta/accounts
-// 极速获取用户绑定的账户列表（Vercel 耗时 <0.2s）
+// 极速获取用户绑定的账户列表（优先拉取 Graph API 授权账户，Vercel 耗时 <0.2s）
 router.get("/accounts", authenticateJWT as any, async (req: AuthenticatedRequest, res) => {
   try {
     const userId = req.user?.id;
@@ -219,32 +219,18 @@ router.get("/accounts", authenticateJWT as any, async (req: AuthenticatedRequest
       select: { fbAccountId: true, project: true }
     });
 
-    const accountMap = new Map<string, { accountId: string; name: string }>();
-
+    const dbNameMap = new Map<string, string>();
     dbAccounts.forEach(a => {
       const clean = a.fb_account_id.replace("act_", "").trim();
-      if (clean) {
-        accountMap.set(clean, {
-          accountId: clean,
-          name: a.fb_account_name || `Account ${clean}`
-        });
+      if (clean && a.fb_account_name) {
+        dbNameMap.set(clean, a.fb_account_name);
       }
     });
 
-    dbMappings.forEach(m => {
-      const clean = m.fbAccountId.replace("act_", "").trim();
-      if (clean && !accountMap.has(clean)) {
-        accountMap.set(clean, {
-          accountId: clean,
-          name: `Account ${clean}`
-        });
-      }
-    });
+    let accountsList: Array<{ accountId: string; name: string }> = [];
 
-    let accountsList = Array.from(accountMap.values());
-
-    // 2. 如果本地为空且有 Token，从 Graph API 快速查一次
-    if (accountsList.length === 0 && token) {
+    // 2. 如果存在有效 Token，优先从 Meta Graph API 动态拉取当前 Token 有权限的账户列表
+    if (token) {
       try {
         const response = await axios.get("https://graph.facebook.com/v19.0/me/adaccounts", {
           params: {
@@ -255,16 +241,46 @@ router.get("/accounts", authenticateJWT as any, async (req: AuthenticatedRequest
           timeout: 4000
         });
         const metaData = response.data?.data || [];
-        accountsList = metaData.map((acc: any) => {
-          const clean = String(acc.account_id || acc.id).replace("act_", "").trim();
-          return {
-            accountId: clean,
-            name: acc.name || `Account ${clean}`
-          };
-        });
+        if (Array.isArray(metaData) && metaData.length > 0) {
+          accountsList = metaData.map((acc: any) => {
+            const clean = String(acc.account_id || acc.id).replace("act_", "").trim();
+            const localName = dbNameMap.get(clean);
+            return {
+              accountId: clean,
+              name: localName || acc.name || `Account ${clean}`
+            };
+          });
+        }
       } catch (graphErr: any) {
-        console.warn("[/api/meta/accounts] Graph API lookup warning:", graphErr.message);
+        console.warn("[/api/meta/accounts] Graph API me/adaccounts lookup warning:", graphErr.message);
       }
+    }
+
+    // 3. 如果从 Meta 未拉取到账户，降级使用本地 DB 里的账户
+    if (accountsList.length === 0) {
+      const accountMap = new Map<string, { accountId: string; name: string }>();
+
+      dbAccounts.forEach(a => {
+        const clean = a.fb_account_id.replace("act_", "").trim();
+        if (clean) {
+          accountMap.set(clean, {
+            accountId: clean,
+            name: a.fb_account_name || `Account ${clean}`
+          });
+        }
+      });
+
+      dbMappings.forEach(m => {
+        const clean = m.fbAccountId.replace("act_", "").trim();
+        if (clean && !accountMap.has(clean)) {
+          accountMap.set(clean, {
+            accountId: clean,
+            name: `Account ${clean}`
+          });
+        }
+      });
+
+      accountsList = Array.from(accountMap.values());
     }
 
     return res.json({ success: true, accounts: accountsList });
