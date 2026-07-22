@@ -16,14 +16,15 @@ import bmsRoutes from "./bms.routes.js";
 import facebookRoutes from "./facebook.routes.js";
 import adminSettingsRoutes from "./adminSettings.routes.js";
 import metaRoutes from "./meta.routes.js";
+import dashboardRoutes from "./dashboard.routes.js";
 
 const routes = Router();
 
 // 全局防御：禁止在 URL Query 参数中传递任何敏感 Token
 routes.use((req, res, next) => {
-  const sensitiveKeys = ['token', 'access_token', 'shopify_token', 'shopline_token', 'shoplazza_token', 'fb_access_token'];
+  const sensitiveKeys = ['token', 'access_token', 'shopify_token', 'shopline_token', 'shoplazza_token', 'fb_access_token', 'jwt_token'];
   for (const key of Object.keys(req.query)) {
-    if (sensitiveKeys.includes(key.toLowerCase()) || key.toLowerCase().includes('token')) {
+    if (sensitiveKeys.includes(key.toLowerCase())) {
       return res.status(403).json({ error: "Security Error: Passing access tokens in URL query parameters is strictly prohibited." });
     }
   }
@@ -71,5 +72,6 @@ routes.use("/pages", pageManageRoutes);
 routes.use("/facebook", facebookRoutes);
 routes.use("/admin/settings", adminSettingsRoutes);
 routes.use("/meta", metaRoutes);
+routes.use("/dashboard", dashboardRoutes);
 
 export default routes;

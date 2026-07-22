@@ -4,6 +4,7 @@ import axios from "axios";
 import { testSmtpConnection } from "../services/email.service.js";
 import { isSafeHost } from "../ssrf.util.js";
 import { authenticateJWT } from "../middlewares/auth.middleware.js";
+import { triggerInitialFullSync } from "../services/meta-hierarchy-sync.service.js";
 
 const router = Router();
 
@@ -133,6 +134,11 @@ router.post("/meta-token", authenticateJWT as any, async (req: any, res) => {
         facebookId: fbUserId,
         facebookName: fbUserName,
       }
+    });
+
+    // 触发绑定后首次全量初始化同步 (Initial Full Sync)
+    triggerInitialFullSync(userId, token).catch(syncErr => {
+      console.error(`[Save Meta Token] Trigger initial full sync failed for user ${userId}:`, syncErr);
     });
 
     res.json({ success: true, message: "Facebook 授权 Token 绑定成功" });

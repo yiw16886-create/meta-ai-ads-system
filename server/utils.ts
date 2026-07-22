@@ -1,38 +1,212 @@
 import prisma from "../db/index.js";
 import axios from "axios";
 import { format, subDays } from "date-fns";
+import { upsertDailyInsightRecord } from "./services/syncService.js";
 
 // CACHE map for utils
 const queryCache = new Map();
 
-export async function getMetaToken(userId?: number): Promise<string | null> {
-  if (userId) {
-    const user = await prisma.user.findUnique({
-      where: { id: Number(userId) },
-      select: { fb_access_token: true }
-    });
-    if (user?.fb_access_token && user.fb_access_token.trim().length > 0) {
-      return user.fb_access_token.trim();
-    }
+export async function isUserFacebookConnected(userId?: number | string): Promise<boolean> {
+  if (!userId) return false;
+  const numUserId = Number(userId);
+  if (isNaN(numUserId) || numUserId <= 0) return false;
 
-    const binding = await prisma.userFacebookBinding.findUnique({
-      where: { user_id: Number(userId) },
-      select: { access_token: true }
-    });
-    if (binding?.access_token && binding.access_token.trim().length > 0) {
-      return binding.access_token.trim();
-    }
-
-    const acc = await prisma.facebookAccount.findUnique({
-      where: { userId: Number(userId) },
-      select: { accessToken: true }
-    });
-    if (acc?.accessToken && acc.accessToken.trim().length > 0) {
-      return acc.accessToken.trim();
-    }
-
-    return null;
+  const user = await prisma.user.findUnique({
+    where: { id: numUserId },
+    select: { fb_access_token: true }
+  });
+  if (user?.fb_access_token && user.fb_access_token.trim().length > 0) {
+    return true;
   }
+
+  const binding = await prisma.userFacebookBinding.findUnique({
+    where: { user_id: numUserId },
+    select: { access_token: true }
+  });
+  if (binding?.access_token && binding.access_token.trim().length > 0) {
+    return true;
+  }
+
+  const acc = await prisma.facebookAccount.findUnique({
+    where: { userId: numUserId },
+    select: { accessToken: true }
+  });
+  if (acc?.accessToken && acc.accessToken.trim().length > 0) {
+    return true;
+  }
+
+  return false;
+}
+
+export async function performFullUnbindAndPurge(userId: number | string) {
+  const numUserId = Number(userId);
+  if (!numUserId) return;
+
+  console.log(`[Unbind Purge] Purging all Facebook tokens and synced ad data for user ${numUserId}...`);
+
+  // Step 1: Revoke Meta token on Facebook side before deleting local DB records
+  try {
+    const currentToken = await getMetaToken(numUserId);
+    if (currentToken) {
+      await axios.delete("https://graph.facebook.com/v20.0/me/permissions", {
+        params: { access_token: currentToken },
+        timeout: 5000
+      });
+      console.log(`[Unbind Purge] Successfully revoked Meta token permissions on Facebook side for user ${numUserId}`);
+    }
+  } catch (revokeErr: any) {
+    console.warn(`[Unbind Purge] Revoke Meta token permissions warning (token may already be invalid/expired):`, revokeErr.response?.data || revokeErr.message);
+  }
+
+  try {
+    const userAccounts = await prisma.adAccount.findMany({
+      where: { userId: numUserId },
+      select: { fb_account_id: true }
+    });
+
+    const accountIds = userAccounts.flatMap(a => {
+      const clean = a.fb_account_id.replace("act_", "").trim();
+      return [a.fb_account_id, clean, `act_${clean}`];
+    });
+
+    if (accountIds.length > 0) {
+      await prisma.adInsight.deleteMany({
+        where: { accountId: { in: accountIds } }
+      }).catch(e => console.warn("[Unbind Purge] Delete AdInsight warning:", e.message));
+
+      await prisma.ad.deleteMany({
+        where: { accountId: { in: accountIds } }
+      }).catch(e => console.warn("[Unbind Purge] Delete Ad warning:", e.message));
+
+      await prisma.adSet.deleteMany({
+        where: { accountId: { in: accountIds } }
+      }).catch(e => console.warn("[Unbind Purge] Delete AdSet warning:", e.message));
+
+      await prisma.campaign.deleteMany({
+        where: { accountId: { in: accountIds } }
+      }).catch(e => console.warn("[Unbind Purge] Delete Campaign warning:", e.message));
+
+      await prisma.metaAccountMonitoring.deleteMany({
+        where: {
+          OR: [
+            { accountId: { in: accountIds } },
+            { adAccount: { userId: numUserId } }
+          ]
+        }
+      }).catch(e => console.warn("[Unbind Purge] Delete MetaAccountMonitoring warning:", e.message));
+    }
+
+    await prisma.adAccount.deleteMany({
+      where: { userId: numUserId }
+    }).catch(e => console.warn("[Unbind Purge] Delete AdAccount warning:", e.message));
+
+    await prisma.accountMapping.deleteMany({
+      where: { userId: numUserId }
+    }).catch(e => console.warn("[Unbind Purge] Delete AccountMapping warning:", e.message));
+
+    await prisma.userFacebookBinding.deleteMany({
+      where: { user_id: numUserId }
+    }).catch(e => console.warn("[Unbind Purge] Delete UserFacebookBinding warning:", e.message));
+
+    await prisma.facebookAccount.deleteMany({
+      where: { userId: numUserId }
+    }).catch(e => console.warn("[Unbind Purge] Delete FacebookAccount warning:", e.message));
+
+    await prisma.facebookBusinessManager.deleteMany({
+      where: { userId: numUserId }
+    }).catch(e => console.warn("[Unbind Purge] Delete FacebookBusinessManager warning:", e.message));
+
+    await prisma.facebookPage.deleteMany({
+      where: { userId: numUserId }
+    }).catch(e => console.warn("[Unbind Purge] Delete FacebookPage warning:", e.message));
+
+    await prisma.user.update({
+      where: { id: numUserId },
+      data: {
+        fb_access_token: null,
+        fb_user_id: null,
+        fb_user_name: null
+      }
+    }).catch(e => console.warn("[Unbind Purge] Update User warning:", e.message));
+
+    console.log(`[Unbind Purge] Successfully purged all Facebook tokens and ad data for user ${numUserId}`);
+  } catch (err: any) {
+    console.error(`[Unbind Purge] Error purging data for user ${numUserId}:`, err);
+  }
+}
+
+export async function getMetaToken(userId?: number | string): Promise<string | null> {
+  if (userId) {
+    const numUserId = Number(userId);
+    if (numUserId) {
+      const user = await prisma.user.findUnique({
+        where: { id: numUserId },
+        select: { fb_access_token: true }
+      });
+      if (user?.fb_access_token && user.fb_access_token.trim().length > 0) {
+        return user.fb_access_token.trim();
+      }
+
+      const binding = await prisma.userFacebookBinding.findUnique({
+        where: { user_id: numUserId },
+        select: { access_token: true }
+      });
+      if (binding?.access_token && binding.access_token.trim().length > 0) {
+        return binding.access_token.trim();
+      }
+
+      const acc = await prisma.facebookAccount.findUnique({
+        where: { userId: numUserId },
+        select: { accessToken: true }
+      });
+      if (acc?.accessToken && acc.accessToken.trim().length > 0) {
+        return acc.accessToken.trim();
+      }
+
+      return null;
+    }
+  }
+
+  // Fallback 1: Check any UserFacebookBinding table record
+  const anyBinding = await prisma.userFacebookBinding.findFirst({
+    where: { access_token: { not: "" } },
+    orderBy: { updated_at: "desc" },
+    select: { access_token: true }
+  }).catch(() => null);
+  if (anyBinding?.access_token && anyBinding.access_token.trim().length > 0) {
+    return anyBinding.access_token.trim();
+  }
+
+  // Fallback 2: Check any User table with fb_access_token
+  const anyUser = await prisma.user.findFirst({
+    where: { fb_access_token: { not: null } },
+    orderBy: { updatedAt: "desc" },
+    select: { fb_access_token: true }
+  }).catch(() => null);
+  if (anyUser?.fb_access_token && anyUser.fb_access_token.trim().length > 0) {
+    return anyUser.fb_access_token.trim();
+  }
+
+  // Fallback 3: Check any FacebookAccount table with accessToken
+  const anyFbAcc = await prisma.facebookAccount.findFirst({
+    where: { accessToken: { not: "" } },
+    orderBy: { updatedAt: "desc" },
+    select: { accessToken: true }
+  }).catch(() => null);
+  if (anyFbAcc?.accessToken && anyFbAcc.accessToken.trim().length > 0) {
+    return anyFbAcc.accessToken.trim();
+  }
+
+  // Fallback 4: Check any AdAccount table with fb_access_token
+  const anyAdAcc = await prisma.adAccount.findFirst({
+    where: { fb_access_token: { not: null } },
+    orderBy: { updatedAt: "desc" },
+    select: { fb_access_token: true }
+  }).catch(() => null);
+  if (anyAdAcc?.fb_access_token && anyAdAcc.fb_access_token.trim().length > 0) {
+    return anyAdAcc.fb_access_token.trim();
+  }
+
   return null;
 }
 
@@ -349,7 +523,13 @@ export async function evaluateActivityStatus(
     return resStatus;
   }
 
-  // Default fallback/no-spend
+  // Default fallback/no-spend history in DB:
+  // If Meta reports account status is ACTIVE (1) or has realTimeSpend > 0, set status to 2 (Active) instead of 4 (Dormant)
+  if (fbAccountStatus === 1 || (typeof realTimeSpend === "number" && realTimeSpend > 0)) {
+    await saveActivityStatus(2);
+    return 2;
+  }
+
   await saveActivityStatus(4);
   return 4;
 }
@@ -490,45 +670,23 @@ export async function syncSingleAccountAdData(accountId: string, startDate: stri
     let targetStoreId: number | null = mapping ? mapping.storeId : null;
 
     if (!dbAdAccount) {
-      // If there's no mapping or mapped store does not exist, use system-wide "未分配" store
-      if (!targetStoreId) {
-        let unassignedStore = await prisma.store.findUnique({
-          where: { name: "未分配" }
-        });
-        if (!unassignedStore) {
-          unassignedStore = await prisma.store.create({
-            data: {
-              name: "未分配",
-              platform: "shopline",
-              timezone: "America/Los_Angeles"
-            }
-          });
-        }
-        targetStoreId = unassignedStore.id;
-        
-        // Also ensure mapping exists
-        if (!mapping) {
-          await prisma.accountMapping.create({
-            data: {
-              fbAccountId: rawAccountId,
-              storeId: targetStoreId,
-              project: "未分配",
-              owner: "未分配"
-            }
-          });
-        }
-      }
-
-      if (targetStoreId) {
-        dbAdAccount = await prisma.adAccount.create({
+      if (!mapping) {
+        await prisma.accountMapping.create({
           data: {
-            fb_account_id: rawAccountId,
-            fb_account_name: accountNameRaw,
-            fb_access_token: token,
-            storeId: targetStoreId
+            fbAccountId: rawAccountId,
+            storeId: null,
           }
         });
       }
+
+      dbAdAccount = await prisma.adAccount.create({
+        data: {
+          fb_account_id: rawAccountId,
+          fb_account_name: accountNameRaw,
+          fb_access_token: token,
+          storeId: targetStoreId
+        }
+      });
     } else {
       // If dbAdAccount exists, update name/token and also realign storeId if mapping dictates a valid store
       const updateData: any = {
@@ -566,115 +724,36 @@ export async function syncSingleAccountAdData(accountId: string, startDate: stri
     // 3. (REMOVED) Ensure/Sync Campaign, AdSet, Ad
     // This is now purely handled by syncMetaHierarchy directly avoiding dummy empty string IDs
 
-    // 4. Group metrics for account-level AdInsight upsert
-    if (!accountInsightsByDate[currentDate]) {
-      accountInsightsByDate[currentDate] = {
-        date: currentDate,
-        accountName: accountNameRaw,
-        reach: 0,
-        impressions: 0,
-        clicks: 0,
-        spend: 0,
-        addToCart: 0,
-        initiateCheckout: 0,
-        purchases: 0,
-        purchaseValue: 0
-      };
-    }
-
-    const entry = accountInsightsByDate[currentDate];
-    entry.reach += reach;
-    entry.impressions += impressions;
-    entry.clicks += clicks;
-    entry.spend += spend;
-    entry.addToCart += carts;
-    entry.initiateCheckout += checkouts;
-    entry.purchases += purchases;
-    entry.purchaseValue += purchaseValue;
+    // 4. Record account-level AdInsight for each day (strictly overwritten by date)
+    accountInsightsByDate[currentDate] = {
+      date: currentDate,
+      accountName: accountNameRaw,
+      reach,
+      impressions,
+      clicks,
+      spend,
+      addToCart: carts,
+      initiateCheckout: checkouts,
+      purchases,
+      purchaseValue
+    };
   }
 
-  // 5. Save the aggregated AdInsight items corresponding exactly to the same date/data
+  // 5. Save the daily AdInsight items with strict overwrite UPSERT
   for (const dateKey of Object.keys(accountInsightsByDate)) {
     const item = accountInsightsByDate[dateKey];
-    const cpc = item.clicks > 0 ? item.spend / item.clicks : 0;
-    const ctr = item.impressions > 0 ? (item.clicks / item.impressions) * 100 : 0;
-    const atcRate = item.clicks > 0 ? (item.addToCart / item.clicks) * 100 : 0;
-    const checkoutRate = item.clicks > 0 ? (item.initiateCheckout / item.clicks) * 100 : 0;
-    const cpp = item.purchases > 0 ? item.spend / item.purchases : 0;
-    const roas = item.spend > 0 ? item.purchaseValue / item.spend : 0;
-
-    // Optimization to avoid duplicate database writes if exact data already exists
-    const existing = await prisma.adInsight.findUnique({
-      where: {
-        accountId_date: {
-          accountId: cleanAccountId,
-          date: dateKey,
-        },
-      },
-    });
-
-    if (existing) {
-      const isIdentical =
-        existing.accountName === item.accountName &&
-        existing.reach === item.reach &&
-        existing.impressions === item.impressions &&
-        existing.clicks === item.clicks &&
-        Math.abs(existing.spend - item.spend) < 0.001 &&
-        existing.addToCart === item.addToCart &&
-        existing.initiateCheckout === item.initiateCheckout &&
-        existing.purchases === item.purchases &&
-        Math.abs(existing.purchaseValue - item.purchaseValue) < 0.001;
-
-      if (isIdentical) {
-        // Data is identical, skip updating to optimize database and sync performance
-        syncedRecords++;
-        continue;
-      }
-    }
-
-    await prisma.adInsight.upsert({
-      where: {
-        accountId_date: {
-          accountId: cleanAccountId,
-          date: dateKey,
-        },
-      },
-      update: {
-        accountName: item.accountName,
-        reach: item.reach,
-        impressions: item.impressions,
-        clicks: item.clicks,
-        spend: item.spend,
-        addToCart: item.addToCart,
-        initiateCheckout: item.initiateCheckout,
-        purchases: item.purchases,
-        purchaseValue: item.purchaseValue,
-        cpc,
-        ctr,
-        atcRate,
-        checkoutRate,
-        cpp,
-        roas,
-      },
-      create: {
-        accountId: cleanAccountId,
-        date: dateKey,
-        accountName: item.accountName,
-        reach: item.reach,
-        impressions: item.impressions,
-        clicks: item.clicks,
-        spend: item.spend,
-        addToCart: item.addToCart,
-        initiateCheckout: item.initiateCheckout,
-        purchases: item.purchases,
-        purchaseValue: item.purchaseValue,
-        cpc,
-        ctr,
-        atcRate,
-        checkoutRate,
-        cpp,
-        roas,
-      },
+    await upsertDailyInsightRecord({
+      accountId: cleanAccountId,
+      date: dateKey,
+      accountName: item.accountName,
+      reach: item.reach,
+      impressions: item.impressions,
+      clicks: item.clicks,
+      spend: item.spend,
+      addToCart: item.addToCart,
+      initiateCheckout: item.initiateCheckout,
+      purchases: item.purchases,
+      purchaseValue: item.purchaseValue,
     });
     syncedRecords++;
   }

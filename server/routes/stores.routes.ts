@@ -53,7 +53,10 @@ router.get("/", async (req: any, res) => {
       return res.json([]);
     }
     const stores = await prisma.store.findMany({
-      where: { userId },
+      where: {
+        userId,
+        NOT: { name: "未分配" }
+      },
       include: { accounts: true },
     });
 
@@ -413,8 +416,9 @@ router.post("/", async (req: any, res) => {
 router.get("/all-dashboard-summary", async (req: any, res) => {
   const { startDate, endDate } = req.query;
   try {
+    const userId = req.user?.id;
     const stores = await prisma.store.findMany({
-      where: { userId: req.user.id },
+      where: userId ? { OR: [{ userId }, { userId: null }] } : {},
     });
     const result: Record<string, any> = {};
 
@@ -625,10 +629,18 @@ router.get("/:id/dashboard-summary", async (req: any, res) => {
       },
     });
 
-    const accountIds = store.accounts.map((a) => a.fb_account_id);
+    const accountIds = new Set<string>();
+    store.accounts.forEach((a) => {
+      if (a.fb_account_id) {
+        const clean = a.fb_account_id.replace("act_", "").trim();
+        accountIds.add(clean);
+        accountIds.add(`act_${clean}`);
+      }
+    });
+
     const adInsights = await prisma.adInsight.findMany({
       where: {
-        accountId: { in: accountIds },
+        accountId: { in: Array.from(accountIds) },
         date: {
           gte: startStr,
           lte: endStr,

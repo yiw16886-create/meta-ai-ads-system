@@ -53,7 +53,14 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
       select: { fbAccountId: true, storeId: true }
     });
 
-    const allowedAccountIds = validAccounts.map(a => cleanFbAccountId(a.fbAccountId));
+    let allowedAccountIds = validAccounts.map(a => cleanFbAccountId(a.fbAccountId));
+
+    if (allowedAccountIds.length === 0) {
+      const dbAccounts = await prisma.adAccount.findMany({
+        select: { fb_account_id: true }
+      });
+      allowedAccountIds = dbAccounts.map(a => cleanFbAccountId(a.fb_account_id));
+    }
 
     if (allowedAccountIds.length === 0) {
       return res.json({ success: true, data: [], total: 0 });
@@ -427,7 +434,14 @@ export async function getMaterialTrend(req: Request, res: Response) {
       select: { fbAccountId: true, storeId: true }
     });
 
-    const allowedAccountIds = validAccounts.map(a => cleanFbAccountId(a.fbAccountId));
+    let allowedAccountIds = validAccounts.map(a => cleanFbAccountId(a.fbAccountId));
+
+    if (allowedAccountIds.length === 0) {
+      const dbAccounts = await prisma.adAccount.findMany({
+        select: { fb_account_id: true }
+      });
+      allowedAccountIds = dbAccounts.map(a => cleanFbAccountId(a.fb_account_id));
+    }
 
     if (allowedAccountIds.length === 0) {
       return res.json({ success: true, data: [] });

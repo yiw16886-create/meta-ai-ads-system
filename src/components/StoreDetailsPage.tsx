@@ -281,10 +281,14 @@ export function StoreDetailsPage({
     return storeMappings.map((m: any) => {
       const cleanMappedId = String(m.accountId).replace("act_", "").trim();
       
-      // Filter ad insights that match this account ID
+      const cleanMappedName = String(m.accountName || "").trim();
+      
+      // Filter ad insights that match this account ID or account Name
       const matchingInsights = adInsights.filter((insight: any) => {
         const cleanInsightId = String(insight.accountId).replace("act_", "").trim();
-        return cleanInsightId === cleanMappedId;
+        const cleanInsightName = String(insight.accountName || "").trim();
+        return cleanInsightId === cleanMappedId ||
+               (cleanInsightName && cleanMappedName && cleanInsightName === cleanMappedName);
       });
 
       // Sum metrics

@@ -1,5 +1,6 @@
 import axios from "axios";
 import prisma from "../../db/index.js";
+import { evaluateActivityStatus, syncSingleAccountAdData } from "../utils.js";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -49,40 +50,14 @@ export async function ensureAdAccounts(token: string) {
 
         // 如果未在 AccountMapping 表显式绑定店铺（即映射不存在、或者 storeId 为 null/空），
         // 自动绑定到系统默认的 "未分配" 店铺中显示，而不能直接跳过，以免导致有消耗却不显示
-        if (!mapping || !mapping.storeId) {
-          let unassignedStore = await prisma.store.findUnique({
-            where: { name: "未分配" }
+        if (!mapping) {
+          targetStoreId = null;
+          await prisma.accountMapping.create({
+            data: {
+              fbAccountId: acc.account_id,
+              storeId: null,
+            }
           });
-          if (!unassignedStore) {
-            unassignedStore = await prisma.store.create({
-              data: {
-                name: "未分配",
-                platform: "shopline",
-                timezone: "America/Los_Angeles"
-              }
-            });
-          }
-          targetStoreId = unassignedStore.id;
-
-          if (!mapping) {
-            await prisma.accountMapping.create({
-              data: {
-                fbAccountId: acc.account_id,
-                storeId: targetStoreId,
-                project: "未分配",
-                owner: "未分配"
-              }
-            });
-          } else {
-            await prisma.accountMapping.update({
-              where: { id: mapping.id },
-              data: {
-                storeId: targetStoreId,
-                project: mapping.project || "未分配",
-                owner: mapping.owner || "未分配"
-              }
-            });
-          }
         } else {
           targetStoreId = mapping.storeId;
         }
@@ -403,4 +378,192 @@ export async function syncMetaHierarchy(token: string, options: { syncCreative?:
     // Throttle between account syncs to avoid running out of request limits
     await delay(1000);
   }
+}
+
+export async function syncSingleAccountHierarchy(
+  rawAccountId: string,
+  token: string,
+  options: { syncCreative?: boolean; ignoreDormant?: boolean } = { syncCreative: false, ignoreDormant: true }
+) {
+  const cleanAccountId = rawAccountId.replace("act_", "").trim();
+  const actId = `act_${cleanAccountId}`;
+
+  console.log(`[Single Hierarchy Sync] Starting hierarchy sync for account ${actId}`);
+
+  try {
+    // 1. Fetch Campaigns
+    const campaignsUrl = `https://graph.facebook.com/v19.0/${actId}/campaigns`;
+    const campaignsRes = await axios.get(campaignsUrl, {
+      params: { fields: "id,name,status", limit: 250, access_token: token },
+      timeout: 15000,
+    });
+    const campaigns = campaignsRes.data?.data || [];
+
+    for (const campaign of campaigns) {
+      try {
+        await prisma.campaign.upsert({
+          where: { id: campaign.id },
+          update: { name: campaign.name, status: campaign.status, accountId: cleanAccountId },
+          create: { id: campaign.id, accountId: cleanAccountId, name: campaign.name, status: campaign.status },
+        });
+      } catch (err: any) {
+        console.error(`[Single Hierarchy Sync] Error upserting campaign ${campaign.id}:`, err.message);
+      }
+    }
+
+    await delay(200);
+
+    // 2. Fetch AdSets
+    const adsetsUrl = `https://graph.facebook.com/v19.0/${actId}/adsets`;
+    const adsetsRes = await axios.get(adsetsUrl, {
+      params: { fields: "id,name,campaign_id,status", limit: 250, access_token: token },
+      timeout: 15000,
+    });
+    const adsets = adsetsRes.data?.data || [];
+
+    const cleanPrefix = (str: string | null | undefined): string => {
+      if (!str) return "";
+      return str.replace(/^(as-|ad-|camp-)/gi, "");
+    };
+
+    for (const adset of adsets) {
+      try {
+        const cleanedSetId = cleanPrefix(adset.id);
+        const cleanedCampId = cleanPrefix(adset.campaign_id);
+        await prisma.adSet.upsert({
+          where: { id: cleanedSetId },
+          update: { name: adset.name, campaignId: cleanedCampId, accountId: cleanAccountId },
+          create: { id: cleanedSetId, campaignId: cleanedCampId, accountId: cleanAccountId, name: adset.name },
+        });
+      } catch (err: any) {
+        console.error(`[Single Hierarchy Sync] Error upserting adset ${adset.id}:`, err.message);
+      }
+    }
+
+    await delay(200);
+
+    // 3. Fetch Ads & Creative
+    const adsUrl = `https://graph.facebook.com/v19.0/${actId}/ads`;
+    const adsRes = await axios.get(adsUrl, {
+      params: { fields: "id,name,adset_id,campaign_id,status,creative{id}", limit: 250, access_token: token },
+      timeout: 15000,
+    });
+    const ads = adsRes.data?.data || [];
+
+    for (const ad of ads) {
+      try {
+        const cleanedAdId = cleanPrefix(ad.id);
+        const cleanedSetId = cleanPrefix(ad.adset_id);
+        const cleanedCampId = cleanPrefix(ad.campaign_id);
+        const creativeId = ad.creative?.id || null;
+
+        await prisma.ad.upsert({
+          where: { id: cleanedAdId },
+          update: { name: ad.name, adsetId: cleanedSetId, campaignId: cleanedCampId, creativeId, accountId: cleanAccountId },
+          create: { id: cleanedAdId, adsetId: cleanedSetId, campaignId: cleanedCampId, accountId: cleanAccountId, name: ad.name, creativeId },
+        });
+      } catch (err: any) {
+        console.error(`[Single Hierarchy Sync] Error upserting ad ${ad.id}:`, err.message);
+      }
+    }
+
+    lastHierarchySyncByAccount.set(cleanAccountId, Date.now());
+    console.log(`[Single Hierarchy Sync] Successfully synced ${campaigns.length} campaigns, ${adsets.length} adsets, ${ads.length} ads for account ${actId}`);
+  } catch (err: any) {
+    const errorMsg = err.response?.data?.error?.message || err.message;
+    console.error(`[Single Hierarchy Sync] Failed hierarchy sync for account ${actId}: ${errorMsg}`);
+  }
+}
+
+/**
+ * 绑定成功后的首次全量初始化同步 (Initial Full Sync)
+ * 1. 忽略以前落库的 Dormant 标记，对新 Token 拥有的所有广告账户强行开启全量深度同步 (DepthSync=true)
+ * 2. 抓取完整的 Campaigns, AdSets, Ads 以及最近 30 天的 Insights 指标
+ * 3. 首次全量同步落库完成后，运行 evaluateActivityStatus 重新计算并分类更新状态 (StatusLevel / ActivityStatus)
+ */
+export async function triggerInitialFullSync(userId: string | number, accessToken: string) {
+  const numUserId = Number(userId);
+  console.log(`[OAuth Init Sync] 开始对用户 ${userId} 执行绑定后首次全量数据拉取...`);
+
+  // 1. 自动执行 ensureAdAccounts，建立/确保 AdAccount 表与店铺映射关系
+  await ensureAdAccounts(accessToken).catch(err => {
+    console.error(`[OAuth Init Sync] ensureAdAccounts 提示:`, err.message || err);
+  });
+
+  // 2. 用新 Token 拉取该用户名下的所有 Ad Accounts 列表
+  let accountItems: { id: string; status: number }[] = [];
+  try {
+    const url = `https://graph.facebook.com/v19.0/me/adaccounts`;
+    const res = await axios.get(url, {
+      params: { fields: "account_id,id,name,account_status", limit: 1000, access_token: accessToken },
+      timeout: 15000,
+    });
+    const metaData = res.data?.data || [];
+    accountItems = metaData.map((a: any) => ({
+      id: String(a.account_id || a.id).replace("act_", "").trim(),
+      status: typeof a.account_status === "number" ? a.account_status : 1
+    }));
+  } catch (err: any) {
+    console.warn(`[OAuth Init Sync] 无法直接从 Meta API 获取账号列表, 尝试从本地数据库中检索:`, err.message);
+  }
+
+  // 备用情况: 从数据库中查询 mapped 账号
+  if (accountItems.length === 0) {
+    const dbAccounts = await prisma.adAccount.findMany({
+      where: numUserId ? {
+        OR: [
+          { userId: numUserId },
+          { userId: null }
+        ]
+      } : {},
+      select: { fb_account_id: true }
+    });
+    accountItems = dbAccounts.map(a => ({ id: a.fb_account_id.replace("act_", "").trim(), status: 1 }));
+  }
+
+  console.log(`[OAuth Init Sync] 找到 ${accountItems.length} 个账号，开始【强行开启 DepthSync=true】全量数据同步...`);
+
+  // 计算最近 30 天的时间范围
+  const today = new Date();
+  const endDate = today.toISOString().split("T")[0];
+  const pastDate = new Date();
+  pastDate.setDate(pastDate.getDate() - 30);
+  const startDate = pastDate.toISOString().split("T")[0];
+
+  // 步骤 B: 遍历所有账户，【强行开启 DepthSync=true】执行全量拉取（忽略历史 Dormant 标记）
+  for (const acc of accountItems) {
+    const cleanAccId = acc.id;
+    if (!cleanAccId) continue;
+
+    try {
+      console.log(`[OAuth Init Sync] 账户 act_${cleanAccId} 忽略 Dormant 标记强行拉取 Campaigns, AdSets, Ads 与 Insights...`);
+
+      // A) 强行同步层级结构 (Campaigns, AdSets, Ads)
+      await syncSingleAccountHierarchy(cleanAccId, accessToken, { ignoreDormant: true }).catch(err => {
+        console.warn(`[OAuth Init Sync] 账户 act_${cleanAccId} 层级同步警告:`, err.message);
+      });
+
+      // B) 强行同步近 30 天的 Ad Insights
+      await syncSingleAccountAdData(cleanAccId, startDate, endDate, accessToken).catch(err => {
+        console.warn(`[OAuth Init Sync] 账户 act_${cleanAccId} Insights 同步警告:`, err.message);
+      });
+
+    } catch (accErr: any) {
+      console.error(`[OAuth Init Sync] 账户 act_${cleanAccId} 首次全量拉取过程出现异常:`, accErr.message);
+    }
+  }
+
+  // 步骤 C: 全量拉取完成后，重新运行原有的 evaluateActivityStatus 逻辑，对账户重新分类更新数据库状态！
+  console.log(`[OAuth Init Sync] 全量数据落库完成，开始重新评估所有账户活跃度与分类...`);
+  for (const acc of accountItems) {
+    const cleanAccId = acc.id;
+    if (!cleanAccId) continue;
+    try {
+      await evaluateActivityStatus(cleanAccId, acc.status ?? 1, accessToken);
+    } catch (evalErr: any) {
+      console.warn(`[OAuth Init Sync] 重新评估账户 act_${cleanAccId} 活跃度失败:`, evalErr.message);
+    }
+  }
+
+  console.log(`[OAuth Init Sync] 用户 ${userId} 首次全量同步与规则重新分类全部成功完成！`);
 }

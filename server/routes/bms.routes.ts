@@ -1,4 +1,4 @@
-import { getMetaToken } from "../utils.js";
+import { getMetaToken, isUserFacebookConnected } from "../utils.js";
 import { Router } from "express";
 import prisma from "../../db/index.js";
 import axios from "axios";
@@ -357,13 +357,7 @@ router.get("/", async (req: any, res) => {
     }
 
     // Check if the user has an active Facebook token
-    const userBinding = await prisma.userFacebookBinding.findUnique({
-      where: { user_id: userId }
-    });
-    const fbAccount = await prisma.facebookAccount.findUnique({
-      where: { userId }
-    });
-    const hasFbToken = !!(userBinding?.access_token?.trim() || fbAccount?.accessToken?.trim());
+    const hasFbToken = await isUserFacebookConnected(userId);
 
     if (!hasFbToken) {
       return res.json([]);

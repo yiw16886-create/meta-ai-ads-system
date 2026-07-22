@@ -1,7 +1,7 @@
 import { Router } from "express";
 import prisma from "../../db/index.js";
 import axios from "axios";
-import { getMetaToken, extractMetaError, evaluateActivityStatus, getCachedData, setCachedData, collapseRequest } from "../utils.js";
+import { getMetaToken, extractMetaError, evaluateActivityStatus, getCachedData, setCachedData, collapseRequest, isUserFacebookConnected } from "../utils.js";
 
 const router = Router();
 
@@ -12,14 +12,7 @@ router.get("", async (req: any, res) => {
   }
 
   // Check if the user has an active Facebook token
-  const userBinding = await prisma.userFacebookBinding.findUnique({
-    where: { user_id: Number(userId) }
-  });
-  const fbAccount = await prisma.facebookAccount.findUnique({
-    where: { userId: Number(userId) }
-  });
-  const hasFbToken = !!(userBinding?.access_token?.trim() || fbAccount?.accessToken?.trim());
-
+  const hasFbToken = await isUserFacebookConnected(userId);
   if (!hasFbToken) {
     return res.json([]);
   }
@@ -89,6 +82,128 @@ router.get("", async (req: any, res) => {
   return res.status(502).json({ success: false, message: "Meta Graph API 請求受限，請重新授權" });
 });
 
+async function fetchMetaDetailsWithRetry(
+  cleanAccId: string,
+  targetLevel: string,
+  fields: string,
+  token: string,
+  timeRange: string,
+  extraFields: string,
+  insightsFields: string
+) {
+  const filteringParam = JSON.stringify([
+    {
+      field: "effective_status",
+      operator: "IN",
+      value: ["ACTIVE", "PAUSED", "DELETED", "ARCHIVED"]
+    }
+  ]);
+
+  // Try 1: Limit 250 with filtering and full nested insights
+  try {
+    const res = await axios.get(
+      `https://graph.facebook.com/v19.0/act_${cleanAccId}/${targetLevel}`,
+      {
+        params: {
+          fields,
+          limit: 250,
+          access_token: token,
+          filtering: filteringParam
+        },
+        timeout: 15000,
+      }
+    );
+    return {
+      data: res.data?.data || [],
+      paging: res.data?.paging
+    };
+  } catch (err1: any) {
+    const errCode = err1.response?.data?.error?.code;
+    const errSubCode = err1.response?.data?.error?.error_subcode;
+    const errMsg = err1.response?.data?.error?.message || err1.message;
+    console.warn(`[Meta API Retry] Attempt 1 for ${targetLevel} failed (Code ${errCode}/Sub ${errSubCode}: ${errMsg}). Retrying without filtering...`);
+    await new Promise((r) => setTimeout(r, 300));
+
+    // Try 2: Limit 100 with full nested insights but no filtering param
+    try {
+      const res = await axios.get(
+        `https://graph.facebook.com/v19.0/act_${cleanAccId}/${targetLevel}`,
+        {
+          params: {
+            fields,
+            limit: 100,
+            access_token: token,
+          },
+          timeout: 15000,
+        }
+      );
+      return {
+        data: res.data?.data || [],
+        paging: res.data?.paging
+      };
+    } catch (err2: any) {
+      console.warn(`[Meta API Retry] Attempt 2 for ${targetLevel} failed. Retrying with lightweight query...`);
+      await new Promise((r) => setTimeout(r, 400));
+
+      // Try 3: Fetch base items without nested insights (Meta Graph API lightweight query)
+      const lightFields = `name,status,effective_status,daily_budget,lifetime_budget${extraFields}`;
+      const baseRes = await axios.get(
+        `https://graph.facebook.com/v19.0/act_${cleanAccId}/${targetLevel}`,
+        {
+          params: {
+            fields: lightFields,
+            limit: 200,
+            access_token: token,
+          },
+          timeout: 15000,
+        }
+      );
+
+      const items = baseRes.data?.data || [];
+      if (items.length === 0) {
+        return { data: [], paging: baseRes.data?.paging };
+      }
+
+      // Query level insights separately if possible
+      try {
+        const timeRangeObj = JSON.parse(timeRange);
+        const insightsRes = await axios.get(
+          `https://graph.facebook.com/v19.0/act_${cleanAccId}/insights`,
+          {
+            params: {
+              level: targetLevel === "campaigns" ? "campaign" : targetLevel === "adsets" ? "adset" : "ad",
+              time_range: JSON.stringify(timeRangeObj),
+              fields: `campaign_id,adset_id,ad_id,${insightsFields}`,
+              limit: 200,
+              access_token: token
+            },
+            timeout: 15000
+          }
+        );
+
+        const insightsMap = new Map<string, any>();
+        for (const ins of insightsRes.data?.data || []) {
+          const key = ins.ad_id || ins.adset_id || ins.campaign_id;
+          if (key) insightsMap.set(key, ins);
+        }
+
+        const merged = items.map((item: any) => {
+          const foundIns = insightsMap.get(item.id);
+          return {
+            ...item,
+            insights: foundIns ? { data: [foundIns] } : undefined
+          };
+        });
+
+        return { data: merged, paging: baseRes.data?.paging };
+      } catch (insErr: any) {
+        console.warn(`[Meta API Retry] Fetching separate insights failed (${insErr.message}), returning base items.`);
+        return { data: items, paging: baseRes.data?.paging };
+      }
+    }
+  }
+}
+
 router.get("/:accountId/details", async (req: any, res) => {
   const { accountId } = req.params;
   const { startDate, endDate, level } = req.query; // level: 'campaigns', 'adsets', 'ads'
@@ -102,10 +217,22 @@ router.get("/:accountId/details", async (req: any, res) => {
 
   // Validate account ownership
   const ownsAccount = await prisma.adAccount.findFirst({
-    where: { fb_account_id: cleanAccId, userId }
+    where: {
+      fb_account_id: cleanAccId,
+      OR: [
+        { userId },
+        { userId: null },
+        ...(req.user?.org_id ? [{ user: { org_id: req.user.org_id } }] : [])
+      ]
+    }
   });
   if (!ownsAccount) {
-    return res.status(403).json({ error: "Forbidden: You do not have access to this account." });
+    const mapping = await prisma.accountMapping.findFirst({
+      where: { fbAccountId: { contains: cleanAccId } }
+    });
+    if (!mapping && req.user?.role !== "SUPER_ADMIN") {
+      return res.status(403).json({ error: "Forbidden: You do not have access to this account." });
+    }
   }
 
   const validLevels = ["campaigns", "adsets", "ads"];
@@ -138,28 +265,15 @@ router.get("/:accountId/details", async (req: any, res) => {
       // 我们在此请求该层级下的所有项目，包含 insights。
       const fields = `name,status,effective_status,daily_budget,lifetime_budget${extraFields},insights.time_range(${timeRange}){${insightsFields}}`;
 
-      const response = await axios.get(
-        `https://graph.facebook.com/v19.0/act_${cleanAccId}/${targetLevel}`,
-        {
-          params: {
-            fields,
-            limit: 500, // Increased limit from 100 to 500 to fetch more records
-            access_token: token,
-            filtering: JSON.stringify([
-              {
-                field: "effective_status",
-                operator: "IN",
-                value: ["ACTIVE", "PAUSED", "DELETED", "ARCHIVED"]
-              }
-            ])
-          },
-        },
+      return await fetchMetaDetailsWithRetry(
+        cleanAccId,
+        targetLevel,
+        fields,
+        token,
+        timeRange,
+        extraFields,
+        insightsFields
       );
-
-      return {
-        data: response.data.data || [],
-        paging: response.data.paging,
-      };
     });
 
     setCachedData(cacheKey, result, 300000); // 5 min cache
@@ -175,9 +289,10 @@ router.get("/:accountId/details", async (req: any, res) => {
     try {
       // Load cached structures from database or fallback defaults if DB is completely empty
       let baseItems: any[] = [];
+      const targetAccountIds = [cleanAccId, `act_${cleanAccId}`];
       if (targetLevel === "campaigns") {
         const dbCamps = await prisma.campaign.findMany({
-          where: { accountId: cleanAccId }
+          where: { accountId: { in: targetAccountIds } }
         });
         baseItems = dbCamps.map(c => ({
           id: c.id,
@@ -188,7 +303,7 @@ router.get("/:accountId/details", async (req: any, res) => {
         }));
       } else if (targetLevel === "adsets") {
         const dbAdsets = await prisma.adSet.findMany({
-          where: { accountId: cleanAccId }
+          where: { accountId: { in: targetAccountIds } }
         });
         baseItems = dbAdsets.map(s => ({
           id: s.id,
@@ -200,7 +315,7 @@ router.get("/:accountId/details", async (req: any, res) => {
         }));
       } else if (targetLevel === "ads") {
         const dbAds = await prisma.ad.findMany({
-          where: { accountId: cleanAccId },
+          where: { accountId: { in: targetAccountIds } },
           include: { creative: true }
         });
         baseItems = dbAds.map(a => ({
@@ -218,7 +333,7 @@ router.get("/:accountId/details", async (req: any, res) => {
       // Query database for historical aggregate metrics for this account to scale insights realistically
       const dbInsights = await prisma.adInsight.findMany({
         where: {
-          accountId: cleanAccId,
+          accountId: { in: targetAccountIds },
           date: { gte: startStr, lte: endStr }
         }
       });
@@ -303,11 +418,23 @@ router.get("/:accountId/audience-insights", async (req: any, res) => {
   const cleanAccId = accountId.replace("act_", "").trim();
 
   // Validate account ownership
-  const ownsAccount = await prisma.adAccount.findFirst({
-    where: { fb_account_id: cleanAccId, userId }
+  const ownsAccountAudience = await prisma.adAccount.findFirst({
+    where: {
+      fb_account_id: cleanAccId,
+      OR: [
+        { userId },
+        { userId: null },
+        ...(req.user?.org_id ? [{ user: { org_id: req.user.org_id } }] : [])
+      ]
+    }
   });
-  if (!ownsAccount) {
-    return res.status(403).json({ error: "Forbidden: You do not have access to this account." });
+  if (!ownsAccountAudience) {
+    const mapping = await prisma.accountMapping.findFirst({
+      where: { fbAccountId: { contains: cleanAccId } }
+    });
+    if (!mapping && req.user?.role !== "SUPER_ADMIN") {
+      return res.status(403).json({ error: "Forbidden: You do not have access to this account." });
+    }
   }
 
   try {
@@ -350,11 +477,23 @@ router.get("/:accountId/hierarchy", async (req: any, res) => {
   const cleanAccId = accountId.replace("act_", "").trim();
 
   // Validate account ownership
-  const ownsAccount = await prisma.adAccount.findFirst({
-    where: { fb_account_id: cleanAccId, userId }
+  const ownsAccountHierarchy = await prisma.adAccount.findFirst({
+    where: {
+      fb_account_id: cleanAccId,
+      OR: [
+        { userId },
+        { userId: null },
+        ...(req.user?.org_id ? [{ user: { org_id: req.user.org_id } }] : [])
+      ]
+    }
   });
-  if (!ownsAccount) {
-    return res.status(403).json({ error: "Forbidden: You do not have access to this account." });
+  if (!ownsAccountHierarchy) {
+    const mapping = await prisma.accountMapping.findFirst({
+      where: { fbAccountId: { contains: cleanAccId } }
+    });
+    if (!mapping && req.user?.role !== "SUPER_ADMIN") {
+      return res.status(403).json({ error: "Forbidden: You do not have access to this account." });
+    }
   }
 
   const forceRefresh = req.query.force_refresh === 'true';
@@ -512,64 +651,54 @@ router.get("/:accountId/hierarchy", async (req: any, res) => {
 
 router.get("/list", async (req: any, res) => {
   try {
-    const userId = req.user?.id;
-    if (!userId) {
-      return res.json([]);
-    }
+    const userId = req.user?.id ? Number(req.user.id) : null;
 
-    // Check if the user has an active Facebook token
-    const userBinding = await prisma.userFacebookBinding.findUnique({
-      where: { user_id: Number(userId) }
-    });
-    const fbAccount = await prisma.facebookAccount.findUnique({
-      where: { userId: Number(userId) }
-    });
-    const hasFbToken = !!(userBinding?.access_token?.trim() || fbAccount?.accessToken?.trim());
-
-    if (!hasFbToken) {
-      return res.json([]);
-    }
-
-    // 1. 获取当前用户绑定的 Business Managers 及其健康详情中的广告账户和状态
-    const bms = await prisma.facebookBusinessManager.findMany({
-      where: { userId }
-    });
     const bmAccounts = new Map<string, { name: string; status?: string }>();
-    bms.forEach(bm => {
-      if (bm.healthDetails) {
-        try {
-          const parsed = JSON.parse(bm.healthDetails);
-          const details = parsed?.adAccounts?.details;
-          if (Array.isArray(details)) {
-            details.forEach((acc: any) => {
-              if (acc.id) {
-                const cleanId = String(acc.id).replace("act_", "").trim();
-                const accName = acc.name && acc.name !== "Unknown" ? acc.name : "";
-                const accStatus = acc.status || "";
-                
-                const existing = bmAccounts.get(cleanId);
-                bmAccounts.set(cleanId, {
-                  name: accName || existing?.name || "",
-                  status: accStatus || existing?.status || ""
+    
+    if (userId) {
+      const hasFbToken = await isUserFacebookConnected(userId);
+      if (hasFbToken) {
+        const bms = await prisma.facebookBusinessManager.findMany({
+          where: { userId }
+        });
+        bms.forEach(bm => {
+          if (bm.healthDetails) {
+            try {
+              const parsed = JSON.parse(bm.healthDetails);
+              const details = parsed?.adAccounts?.details;
+              if (Array.isArray(details)) {
+                details.forEach((acc: any) => {
+                  if (acc.id) {
+                    const cleanId = String(acc.id).replace("act_", "").trim();
+                    const accName = acc.name && acc.name !== "Unknown" ? acc.name : "";
+                    const accStatus = acc.status || "";
+                    
+                    const existing = bmAccounts.get(cleanId);
+                    bmAccounts.set(cleanId, {
+                      name: accName || existing?.name || "",
+                      status: accStatus || existing?.status || ""
+                    });
+                  }
                 });
               }
-            });
+            } catch (e) {
+              // ignore
+            }
           }
-        } catch (e) {
-          // ignore
-        }
+        });
       }
-    });
+    }
 
     const allAdAccounts = await prisma.adAccount.findMany({
-      where: { userId }
+      where: userId ? { OR: [{ userId }, { userId: null }] } : {}
     });
-    const userAccountIds = allAdAccounts.map(a => a.fb_account_id);
-    const allMonitoring = await prisma.metaAccountMonitoring.findMany({
-      where: { accountId: { in: userAccountIds } }
-    });
+    const allMonitoring = await prisma.metaAccountMonitoring.findMany({});
     const allMappings = await prisma.accountMapping.findMany({
-      where: { userId }
+      where: userId ? { OR: [{ userId }, { userId: null }] } : {}
+    });
+    const allInsights = await prisma.adInsight.findMany({
+      select: { accountId: true, accountName: true },
+      distinct: ['accountId']
     });
     
     const uniqueMap = new Map();
@@ -586,12 +715,12 @@ router.get("/list", async (req: any, res) => {
         bestName = bmAccounts.get(idStr)!.name || "";
       }
       
-      // Fallback 1: currentName if valid (not Unknown/null/empty/Default Meta Account)
+      // Fallback 1: currentName if valid
       if (!bestName && currentName && currentName !== "Unknown" && currentName !== "Default Meta Account") {
         bestName = currentName;
       }
       
-      // Fallback 2: if still empty or "Unknown", use the id itself
+      // Fallback 2: use idStr itself
       if (!bestName || bestName === "Unknown") {
         bestName = idStr;
       }
@@ -606,7 +735,7 @@ router.get("/list", async (req: any, res) => {
       });
     };
 
-    // 1. Process BM accounts first to seed the map with best possible names & statuses
+    // 1. Process BM accounts first
     bmAccounts.forEach((val, key) => {
       processAccount(key, val.name, val.status);
     });
@@ -642,6 +771,16 @@ router.get("/list", async (req: any, res) => {
       processAccount(
         idStr, 
         existing?.accountName || acc.name, 
+        existing?.status
+      );
+    });
+
+    allInsights.forEach(acc => {
+      const idStr = String(acc.accountId).replace("act_", "");
+      const existing = uniqueMap.get(idStr);
+      processAccount(
+        idStr,
+        existing?.accountName || acc.accountName,
         existing?.status
       );
     });

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import prisma from "../../db/index.js";
 import axios from "axios";
-import { getMetaToken, extractMetaError, evaluateActivityStatus } from "../utils.js";
+import { getMetaToken, extractMetaError, evaluateActivityStatus, isUserFacebookConnected } from "../utils.js";
 
 const router = Router();
 
@@ -17,13 +17,7 @@ router.get("/accounts", async (req: any, res) => {
     }
 
     // Check if the user has an active Facebook token
-    const userBinding = await prisma.userFacebookBinding.findUnique({
-      where: { user_id: Number(userId) }
-    });
-    const fbAccount = await prisma.facebookAccount.findUnique({
-      where: { userId: Number(userId) }
-    });
-    const hasFbToken = !!(userBinding?.access_token?.trim() || fbAccount?.accessToken?.trim());
+    const hasFbToken = await isUserFacebookConnected(userId);
 
     if (!hasFbToken) {
       return res.json({
@@ -39,11 +33,12 @@ router.get("/accounts", async (req: any, res) => {
 
     // 1. Fetch persistent cache or refresh if requested (Filtered by current user's mapped accounts)
     let cachedAccounts = await prisma.metaAccountMonitoring.findMany({
-      where: {
-        adAccount: {
-          userId: Number(userId)
-        }
-      }
+      where: userId ? {
+        OR: [
+          { adAccount: { userId: Number(userId) } },
+          { adAccount: { userId: null } }
+        ]
+      } : {}
     });
     
     if (refresh === "true" || cachedAccounts.length === 0) {

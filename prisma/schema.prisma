@@ -140,10 +140,10 @@ model AdAccount {
   fb_account_id   String                 @unique
   fb_account_name String?
   fb_access_token String?
-  storeId         Int
+  storeId         Int?
   activityStatus  Int                    @default(2)
   userId          Int?
-  store           Store                  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  store           Store?                 @relation(fields: [storeId], references: [id], onDelete: Cascade)
   createdAt       DateTime               @default(now())
   updatedAt       DateTime               @updatedAt
   campaigns       Campaign[]

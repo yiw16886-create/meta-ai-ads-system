@@ -6,28 +6,41 @@ const router = Router();
 router.get("/available-accounts", async (req: any, res) => {
   try {
     const userId = Number(req.user?.id || req.user?.userId);
-    if (!userId) {
-      return res.json({ success: true, data: [] });
-    }
-
-    const userBinding = await prisma.userFacebookBinding.findUnique({
-      where: { user_id: userId }
-    });
-    const fbAccount = await prisma.facebookAccount.findUnique({
-      where: { userId }
-    });
-    const hasFbToken = !!(userBinding?.access_token?.trim() || fbAccount?.accessToken?.trim());
-
-    if (!hasFbToken) {
-      return res.json({ success: true, data: [] });
-    }
 
     const adAccounts = await prisma.adAccount.findMany({
-      where: { userId },
+      where: userId ? { OR: [{ userId }, { userId: null }] } : {},
       select: { fb_account_id: true, fb_account_name: true }
     });
 
-    return res.json({ success: true, data: adAccounts });
+    const mappings = await prisma.accountMapping.findMany({
+      where: userId ? { OR: [{ userId }, { userId: null }] } : {},
+      select: { fbAccountId: true, name: true }
+    });
+
+    const insights = await prisma.adInsight.findMany({
+      select: { accountId: true, accountName: true },
+      distinct: ['accountId']
+    });
+
+    const uniqueMap = new Map();
+    adAccounts.forEach(a => {
+      const clean = String(a.fb_account_id).replace("act_", "").trim();
+      uniqueMap.set(clean, { accountId: clean, accountName: a.fb_account_name || clean });
+    });
+    mappings.forEach(m => {
+      const clean = String(m.fbAccountId).replace("act_", "").trim();
+      if (!uniqueMap.has(clean)) {
+        uniqueMap.set(clean, { accountId: clean, accountName: m.name || clean });
+      }
+    });
+    insights.forEach(i => {
+      const clean = String(i.accountId).replace("act_", "").trim();
+      if (!uniqueMap.has(clean)) {
+        uniqueMap.set(clean, { accountId: clean, accountName: i.accountName || clean });
+      }
+    });
+
+    return res.json({ success: true, data: Array.from(uniqueMap.values()) });
   } catch (error: any) {
     console.error("Fetch available accounts error:", error);
     return res.status(500).json({ error: error.message });
@@ -96,54 +109,44 @@ router.get("/", async (req: any, res) => {
   try {
     const { activeOnly } = req.query;
     const userId = req.user?.id || req.user?.userId;
-
-    if (!userId) {
-      return res.json([]);
-    }
-
-    // Check if the user has an active Facebook token
-    const userBinding = await prisma.userFacebookBinding.findUnique({
-      where: { user_id: Number(userId) }
-    });
-    const fbAccount = await prisma.facebookAccount.findUnique({
-      where: { userId: Number(userId) }
-    });
-    const hasFbToken = !!(userBinding?.access_token?.trim() || fbAccount?.accessToken?.trim());
-
-    if (!hasFbToken) {
-      return res.json([]);
-    }
+    const numUserId = userId ? Number(userId) : null;
 
     const mappings = await prisma.accountMapping.findMany({
-      where: { userId: Number(userId) },
+      where: numUserId ? { OR: [{ userId: numUserId }, { userId: null }] } : {},
       include: { store: true },
     });
 
     const adAccountData = await prisma.adAccount.findMany({
-      where: { userId: Number(userId) },
+      where: numUserId ? { OR: [{ userId: numUserId }, { userId: null }] } : {},
       select: { fb_account_id: true, fb_account_name: true },
     });
 
-    const userAccountIds = adAccountData.map((a) => a.fb_account_id);
     const monitoringData = await prisma.metaAccountMonitoring.findMany({
-      where: { accountId: { in: userAccountIds } },
       select: { accountId: true, accountName: true, activityStatus: true },
     });
 
-    const nameMap = new Map();
+    const insightData = await prisma.adInsight.findMany({
+      select: { accountId: true, accountName: true },
+      distinct: ['accountId']
+    });
+
+    const nameMap = new Map<string, string>();
     for (const d of monitoringData) {
-      if (d.accountName)
-        nameMap.set(
-          String(d.accountId).replace("act_", "").trim(),
-          d.accountName,
-        );
+      if (d.accountName) {
+        nameMap.set(String(d.accountId).replace("act_", "").trim(), d.accountName);
+      }
     }
     for (const d of adAccountData) {
       if (d.fb_account_name) {
-        nameMap.set(
-          String(d.fb_account_id).replace("act_", "").trim(),
-          d.fb_account_name,
-        );
+        nameMap.set(String(d.fb_account_id).replace("act_", "").trim(), d.fb_account_name);
+      }
+    }
+    for (const d of insightData) {
+      if (d.accountName) {
+        const clean = String(d.accountId).replace("act_", "").trim();
+        if (!nameMap.has(clean)) {
+          nameMap.set(clean, d.accountName);
+        }
       }
     }
 
@@ -158,17 +161,21 @@ router.get("/", async (req: any, res) => {
     adAccountData.forEach((d) =>
       uniqueIds.add(String(d.fb_account_id).replace("act_", "").trim()),
     );
+    insightData.forEach((d) =>
+      uniqueIds.add(String(d.accountId).replace("act_", "").trim()),
+    );
 
-    // Map them to the old format so frontend is happy
+    // Map them to format so frontend is happy
     let mapped = Array.from(uniqueIds).map((cleanId) => {
       const m = mappings.find(
         (item) =>
           String(item.fbAccountId).replace("act_", "").trim() === cleanId,
       );
       const accId = m ? m.fbAccountId : cleanId;
+      const displayName = nameMap.get(cleanId) || (m && m.name ? m.name : accId);
       return {
         accountId: accId.startsWith("act_") ? accId : `act_${accId}`,
-        accountName: nameMap.get(cleanId) || accId,
+        accountName: displayName,
         fbPageId: m ? m.fbPageId : null,
         store: m && m.store ? m.store.name : "未分配",
         storeId: m ? m.storeId : null,
@@ -211,6 +218,7 @@ router.post("/batch", async (req: any, res) => {
   try {
     // Filter out invalid mappings before updating DB
     const validMappings = mappings.filter((m: any) => m && m.accountId != null);
+
     const results = await Promise.all(
       validMappings.map(async (mapping: any) => {
         const cleanAccId = String(mapping.accountId).replace("act_", "").trim();
@@ -224,13 +232,11 @@ router.post("/batch", async (req: any, res) => {
                 equals: storeName,
                 mode: "insensitive",
               },
-              userId,
             },
           });
 
           if (!store) {
             try {
-              // Cancel the restriction and automatically create the store safely
               store = await prisma.store.upsert({
                 where: { name: storeName },
                 update: { userId },
@@ -241,14 +247,12 @@ router.post("/batch", async (req: any, res) => {
                 },
               });
             } catch (e) {
-              // Fallback selection in case of race condition
               store = await prisma.store.findFirst({
                 where: {
                   name: {
                     equals: storeName,
                     mode: "insensitive",
                   },
-                  userId,
                 },
               });
             }
@@ -258,107 +262,59 @@ router.post("/batch", async (req: any, res) => {
           }
         }
 
-        if (!targetStoreId) {
-          // If no mapped store, update to storeId = null
-          const upMap = await prisma.accountMapping.upsert({
-            where: { fbAccountId: cleanAccId },
-            update: {
-              storeId: null,
-              userId,
-              fbPageId: mapping.fbPageId ? String(mapping.fbPageId) : null,
-              project:
-                mapping.project && String(mapping.project).trim() !== "未分配"
-                  ? String(mapping.project).trim()
-                  : null,
-              owner:
-                mapping.owner && String(mapping.owner).trim() !== "未分配"
-                  ? String(mapping.owner).trim()
-                  : null,
-            },
-            create: {
-              storeId: null,
-              userId,
-              fbAccountId: cleanAccId,
-              fbPageId: mapping.fbPageId ? String(mapping.fbPageId) : null,
-              project:
-                mapping.project && String(mapping.project).trim() !== "未分配"
-                  ? String(mapping.project).trim()
-                  : null,
-              owner:
-                mapping.owner && String(mapping.owner).trim() !== "未分配"
-                  ? String(mapping.owner).trim()
-                  : null,
-            },
-          });
+        const upMap = await prisma.accountMapping.upsert({
+          where: { fbAccountId: cleanAccId },
+          update: {
+            storeId: targetStoreId,
+            userId,
+            fbPageId: mapping.fbPageId ? String(mapping.fbPageId) : null,
+            project:
+              mapping.project && String(mapping.project).trim() !== "未分配"
+                ? String(mapping.project).trim()
+                : null,
+            owner:
+              mapping.owner && String(mapping.owner).trim() !== "未分配"
+                ? String(mapping.owner).trim()
+                : null,
+            updatedAt: new Date(),
+          },
+          create: {
+            storeId: targetStoreId,
+            userId,
+            fbAccountId: cleanAccId,
+            fbPageId: mapping.fbPageId ? String(mapping.fbPageId) : null,
+            project:
+              mapping.project && String(mapping.project).trim() !== "未分配"
+                ? String(mapping.project).trim()
+                : null,
+            owner:
+              mapping.owner && String(mapping.owner).trim() !== "未分配"
+                ? String(mapping.owner).trim()
+                : null,
+          },
+        });
 
-          // Also delete corresponding AdAccount record since storeId is not nullable
-          try {
-            await prisma.adAccount.deleteMany({
-              where: { fb_account_id: cleanAccId, userId },
-            });
-          } catch (e) {
-            // ignore if not found in AdAccount
-          }
-          return { success: true, accountId: cleanAccId, action: "unmapped" };
-        }
+        // Ensure AdAccount record exists and points to targetStoreId
+        await prisma.adAccount.upsert({
+          where: { fb_account_id: cleanAccId },
+          update: {
+            storeId: targetStoreId,
+            userId,
+            fb_account_name: mapping.accountName
+              ? String(mapping.accountName).trim()
+              : undefined,
+          },
+          create: {
+            fb_account_id: cleanAccId,
+            fb_account_name: mapping.accountName
+              ? String(mapping.accountName).trim()
+              : cleanAccId,
+            storeId: targetStoreId,
+            userId,
+          },
+        });
 
-        if (targetStoreId) {
-          const upMap = await prisma.accountMapping.upsert({
-            where: { fbAccountId: cleanAccId },
-            update: {
-              storeId: targetStoreId,
-              userId,
-              fbPageId: mapping.fbPageId ? String(mapping.fbPageId) : null,
-              project:
-                mapping.project && String(mapping.project).trim() !== "未分配"
-                  ? String(mapping.project).trim()
-                  : null,
-              owner:
-                mapping.owner && String(mapping.owner).trim() !== "未分配"
-                  ? String(mapping.owner).trim()
-                  : null,
-              updatedAt: new Date(),
-            },
-            create: {
-              storeId: targetStoreId,
-              userId,
-              fbAccountId: cleanAccId,
-              fbPageId: mapping.fbPageId ? String(mapping.fbPageId) : null,
-              project:
-                mapping.project && String(mapping.project).trim() !== "未分配"
-                  ? String(mapping.project).trim()
-                  : null,
-              owner:
-                mapping.owner && String(mapping.owner).trim() !== "未分配"
-                  ? String(mapping.owner).trim()
-                  : null,
-            },
-          });
-
-          // Sync with AdAccount: find corresponding Store and upsert/update store relation
-          await prisma.adAccount.upsert({
-            where: { fb_account_id: cleanAccId },
-            update: {
-              storeId: targetStoreId,
-              userId,
-              fb_account_name: mapping.accountName
-                ? String(mapping.accountName).trim()
-                : "Unknown",
-            },
-            create: {
-              fb_account_id: cleanAccId,
-              fb_account_name: mapping.accountName
-                ? String(mapping.accountName).trim()
-                : "Unknown",
-              storeId: targetStoreId,
-              userId,
-            },
-          });
-
-          return upMap;
-        } else {
-          return null;
-        }
+        return upMap;
       }),
     );
     res.json({ success: true, count: results.filter(Boolean).length });
@@ -367,6 +323,27 @@ router.post("/batch", async (req: any, res) => {
     res
       .status(500)
       .json({ error: "Failed to save mappings to DB", details: err.message });
+  }
+});
+
+router.delete("/:accountId", async (req: any, res) => {
+  try {
+    const { accountId } = req.params;
+    const cleanAccId = String(accountId).replace("act_", "").trim();
+    
+    await prisma.accountMapping.deleteMany({
+      where: {
+        OR: [
+          { fbAccountId: cleanAccId },
+          { fbAccountId: `act_${cleanAccId}` }
+        ]
+      }
+    });
+
+    res.json({ success: true, accountId: cleanAccId });
+  } catch (err: any) {
+    console.error("Delete mapping error:", err);
+    res.status(500).json({ error: err.message });
   }
 });
 

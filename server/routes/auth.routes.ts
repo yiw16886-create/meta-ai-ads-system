@@ -5,7 +5,8 @@ import axios from "axios";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import { authenticateJWT } from "../middlewares/auth.middleware.js";
-import { getMetaToken, getFbRedirectUri } from "../utils.js";
+import { getMetaToken, getFbRedirectUri, performFullUnbindAndPurge } from "../utils.js";
+import { triggerInitialFullSync } from "../services/meta-hierarchy-sync.service.js";
 
 const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -154,17 +155,75 @@ router.get("/facebook/callback", async (req, res) => {
 
     if (error) {
       console.error("[Facebook OAuth Callback Error from query]:", error);
-      return res.redirect(`/settings?error=${encodeURIComponent(String(error))}`);
+      const errMsg = String(error);
+      return res.status(200).send(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="utf-8">
+            <title>授权失败</title>
+            <style>
+              body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background-color: #fef2f2; color: #991b1b; }
+              .card { background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); text-align: center; max-width: 400px; border: 1px solid #fee2e2; }
+              h1 { color: #dc2626; font-size: 1.5rem; margin-top: 0; margin-bottom: 0.5rem; }
+              p { color: #7f1d1d; font-size: 0.95rem; margin: 0; }
+            </style>
+          </head>
+          <body>
+            <div class="card">
+              <h1>✗ 授权失败</h1>
+              <p>授权请求被拒绝或发生错误：${errMsg}</p>
+            </div>
+            <script>
+              if (window.opener) {
+                window.opener.postMessage({ type: 'FB_CONNECTED_FAILED', error: ${JSON.stringify(errMsg)} }, '*');
+                window.opener.postMessage({ type: 'FB_AUTH_ERROR', message: ${JSON.stringify(errMsg)} }, '*');
+              }
+              setTimeout(() => { window.close(); }, 2000);
+            </script>
+          </body>
+        </html>
+      `);
     }
 
     if (!code) {
       console.error("[Facebook OAuth Callback Error]: Code missing");
-      return res.redirect("/settings?error=oauth_failed");
+      return res.status(200).send(`
+        <!DOCTYPE html>
+        <html>
+          <head><meta charset="utf-8"><title>授权失败</title></head>
+          <body>
+            <p>授权失败：未收到授权码，正在关闭窗口...</p>
+            <script>
+              if (window.opener) {
+                window.opener.postMessage({ type: 'FB_CONNECTED_FAILED', error: '未收到授权码' }, '*');
+                window.opener.postMessage({ type: 'FB_AUTH_ERROR', message: '未收到授权码' }, '*');
+              }
+              setTimeout(() => { window.close(); }, 2000);
+            </script>
+          </body>
+        </html>
+      `);
     }
 
     if (!state) {
       console.error("[Facebook OAuth Callback Error]: State missing");
-      return res.redirect("/settings?error=invalid_state");
+      return res.status(200).send(`
+        <!DOCTYPE html>
+        <html>
+          <head><meta charset="utf-8"><title>授权失败</title></head>
+          <body>
+            <p>授权失败：State 参数缺失，正在关闭窗口...</p>
+            <script>
+              if (window.opener) {
+                window.opener.postMessage({ type: 'FB_CONNECTED_FAILED', error: 'State 参数缺失' }, '*');
+                window.opener.postMessage({ type: 'FB_AUTH_ERROR', message: 'State 参数缺失' }, '*');
+              }
+              setTimeout(() => { window.close(); }, 2000);
+            </script>
+          </body>
+        </html>
+      `);
     }
 
     // 1. 从 req.query.state 中解密出 userId
@@ -175,15 +234,45 @@ router.get("/facebook/callback", async (req, res) => {
       parsedUserId = decoded.userId || decoded.id || null;
     } catch (jwtErr: any) {
       console.error("[Facebook OAuth Callback JWT Verification Failed]:", jwtErr.message);
-      return res.redirect("/settings?error=invalid_state");
+      return res.status(200).send(`
+        <!DOCTYPE html>
+        <html>
+          <head><meta charset="utf-8"><title>授权失败</title></head>
+          <body>
+            <p>授权失败：State 校验失败或超时，正在关闭窗口...</p>
+            <script>
+              if (window.opener) {
+                window.opener.postMessage({ type: 'FB_CONNECTED_FAILED', error: 'State 校验失败或超时' }, '*');
+                window.opener.postMessage({ type: 'FB_AUTH_ERROR', message: 'State 校验失败或超时' }, '*');
+              }
+              setTimeout(() => { window.close(); }, 2000);
+            </script>
+          </body>
+        </html>
+      `);
     }
 
     if (!parsedUserId || isNaN(Number(parsedUserId))) {
       console.error("[Facebook OAuth Callback Error]: Invalid parsed userId from state:", parsedUserId);
-      return res.redirect("/settings?error=invalid_state");
+      return res.status(200).send(`
+        <!DOCTYPE html>
+        <html>
+          <head><meta charset="utf-8"><title>授权失败</title></head>
+          <body>
+            <p>授权失败：无效的用户状态，正在关闭窗口...</p>
+            <script>
+              if (window.opener) {
+                window.opener.postMessage({ type: 'FB_CONNECTED_FAILED', error: '无效的用户状态' }, '*');
+                window.opener.postMessage({ type: 'FB_AUTH_ERROR', message: '无效的用户状态' }, '*');
+              }
+              setTimeout(() => { window.close(); }, 2000);
+            </script>
+          </body>
+        </html>
+      `);
     }
 
-    // 2. 检查环境变量：确保使用 process.env.META_APP_ID, process.env.META_APP_SECRET, 以及当前请求的 Host 构建准确的 redirect_uri
+    // 2. 检查环境变量：确保使用 process.env.META_APP_ID, process.env.META_APP_SECRET
     const systemConfig = await prisma.systemSetting.findFirst().catch(() => null);
     const settings = await prisma.setting.findMany().catch(() => []);
     const configMap: Record<string, string> = {};
@@ -196,7 +285,22 @@ router.get("/facebook/callback", async (req, res) => {
 
     if (!clientId || !clientSecret) {
       console.error("Facebook OAuth Error: App Credentials (META_APP_ID or META_APP_SECRET) are not configured.");
-      return res.redirect("/settings?error=oauth_failed");
+      return res.status(200).send(`
+        <!DOCTYPE html>
+        <html>
+          <head><meta charset="utf-8"><title>授权失败</title></head>
+          <body>
+            <p>授权失败：系统未配置 Meta 应用凭证，正在关闭窗口...</p>
+            <script>
+              if (window.opener) {
+                window.opener.postMessage({ type: 'FB_CONNECTED_FAILED', error: '系统未配置 Meta 应用凭证' }, '*');
+                window.opener.postMessage({ type: 'FB_AUTH_ERROR', message: '系统未配置 Meta 应用凭证' }, '*');
+              }
+              setTimeout(() => { window.close(); }, 2000);
+            </script>
+          </body>
+        </html>
+      `);
     }
 
     const redirectUri = getFbRedirectUri(req);
@@ -217,13 +321,44 @@ router.get("/facebook/callback", async (req, res) => {
       });
       shortLivedToken = tokenRes.data?.access_token || null;
     } catch (tokenErr: any) {
+      const errMsg = tokenErr.response?.data?.error?.message || tokenErr.message || "换取 Token 失败";
       console.error("[Facebook OAuth Code Exchange Error]:", tokenErr.response?.data || tokenErr.message);
-      return res.redirect("/settings?error=oauth_failed");
+      return res.status(200).send(`
+        <!DOCTYPE html>
+        <html>
+          <head><meta charset="utf-8"><title>授权失败</title></head>
+          <body>
+            <p>授权失败：${errMsg}，正在关闭窗口...</p>
+            <script>
+              if (window.opener) {
+                window.opener.postMessage({ type: 'FB_CONNECTED_FAILED', error: ${JSON.stringify(errMsg)} }, '*');
+                window.opener.postMessage({ type: 'FB_AUTH_ERROR', message: ${JSON.stringify(errMsg)} }, '*');
+              }
+              setTimeout(() => { window.close(); }, 2000);
+            </script>
+          </body>
+        </html>
+      `);
     }
 
     if (!shortLivedToken) {
       console.error("[Facebook OAuth Error]: Short-lived token exchange returned empty token.");
-      return res.redirect("/settings?error=oauth_failed");
+      return res.status(200).send(`
+        <!DOCTYPE html>
+        <html>
+          <head><meta charset="utf-8"><title>授权失败</title></head>
+          <body>
+            <p>授权失败：未获得访问令牌，正在关闭窗口...</p>
+            <script>
+              if (window.opener) {
+                window.opener.postMessage({ type: 'FB_CONNECTED_FAILED', error: '未获得访问令牌' }, '*');
+                window.opener.postMessage({ type: 'FB_AUTH_ERROR', message: '未获得访问令牌' }, '*');
+              }
+              setTimeout(() => { window.close(); }, 2000);
+            </script>
+          </body>
+        </html>
+      `);
     }
 
     // 4. 换取 60 天长效访问令牌 (Long-Lived Token)
@@ -273,7 +408,22 @@ router.get("/facebook/callback", async (req, res) => {
     const userToLink = await prisma.user.findUnique({ where: { id: Number(parsedUserId) } });
     if (!userToLink) {
       console.error("[Facebook OAuth Error]: User not found for id:", parsedUserId);
-      return res.redirect("/settings?error=invalid_state");
+      return res.status(200).send(`
+        <!DOCTYPE html>
+        <html>
+          <head><meta charset="utf-8"><title>授权失败</title></head>
+          <body>
+            <p>授权失败：用户不存在，正在关闭窗口...</p>
+            <script>
+              if (window.opener) {
+                window.opener.postMessage({ type: 'FB_CONNECTED_FAILED', error: '用户不存在' }, '*');
+                window.opener.postMessage({ type: 'FB_AUTH_ERROR', message: '用户不存在' }, '*');
+              }
+              setTimeout(() => { window.close(); }, 2000);
+            </script>
+          </body>
+        </html>
+      `);
     }
 
     const userOrgId = userToLink.org_id;
@@ -349,45 +499,86 @@ router.get("/facebook/callback", async (req, res) => {
 
     console.log(`[Facebook OAuth Success] User ${parsedUserId} connected Facebook account ${fbUserId} (${fbUserName}).`);
 
-    // 7. 成功后重定向前端页面
-    return res.redirect('/settings?status=facebook_connected');
+    // 触发绑定后首次全量初始化同步 (Initial Full Sync): 忽略历史 Dormant 标记全量拉取并重新评估活跃度
+    triggerInitialFullSync(parsedUserId, longLivedToken).catch(syncErr => {
+      console.error(`[Facebook OAuth Callback] Trigger initial full sync failed for user ${parsedUserId}:`, syncErr);
+    });
+
+    // 7. 成功后直接返回通信 HTML 响应给小弹窗并关闭
+    return res.status(200).send(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <title>授权成功</title>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background-color: #f7f9fc; color: #1e293b; }
+            .card { background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); text-align: center; max-width: 400px; border: 1px solid #e2e8f0; }
+            h1 { color: #10b981; font-size: 1.5rem; margin-top: 0; margin-bottom: 0.5rem; font-weight: 700; }
+            p { color: #64748b; font-size: 0.95rem; margin: 0; }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <h1>✓ 授权成功</h1>
+            <p>授权成功，正在关闭窗口...</p>
+          </div>
+          <script>
+            if (window.opener) {
+              window.opener.postMessage({ type: 'FB_CONNECTED_SUCCESS' }, '*');
+              window.opener.postMessage({ type: 'FB_AUTH_SUCCESS' }, '*');
+              window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS' }, '*');
+            }
+            setTimeout(() => {
+              window.close();
+            }, 600);
+          </script>
+        </body>
+      </html>
+    `);
 
   } catch (error: any) {
+    const errMsg = error?.response?.data?.error?.message || error?.message || "未知授权异常";
     console.error("[Facebook OAuth Callback Unhandled Exception]:", error?.response?.data || error?.message || error);
-    return res.redirect('/settings?error=oauth_failed');
+    return res.status(200).send(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <title>授权失败</title>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background-color: #fef2f2; color: #991b1b; }
+            .card { background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); text-align: center; max-width: 400px; border: 1px solid #fee2e2; }
+            h1 { color: #dc2626; font-size: 1.5rem; margin-top: 0; margin-bottom: 0.5rem; font-weight: 700; }
+            p { color: #7f1d1d; font-size: 0.95rem; margin: 0; }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <h1>✗ 授权失败</h1>
+            <p>授权失败，正在关闭窗口...</p>
+          </div>
+          <script>
+            if (window.opener) {
+              window.opener.postMessage({ type: 'FB_CONNECTED_FAILED', error: ${JSON.stringify(errMsg)} }, '*');
+              window.opener.postMessage({ type: 'FB_AUTH_ERROR', message: ${JSON.stringify(errMsg)} }, '*');
+            }
+            setTimeout(() => {
+              window.close();
+            }, 2000);
+          </script>
+        </body>
+      </html>
+    `);
   }
 });
 
 // POST /api/auth/facebook/disconnect
 router.post("/facebook/disconnect", authenticateJWT as any, async (req: any, res) => {
   try {
-    const userId = req.user?.id;
+    const userId = req.user?.id || req.user?.userId;
     if (userId) {
-      await prisma.userFacebookBinding.deleteMany({
-        where: { user_id: userId }
-      });
-      await prisma.facebookAccount.deleteMany({
-        where: { userId }
-      });
-      await prisma.facebookBusinessManager.deleteMany({
-        where: { userId }
-      });
-      await prisma.facebookPage.deleteMany({
-        where: { userId }
-      });
-      await prisma.adAccount.updateMany({
-        where: { userId },
-        data: {
-          fb_access_token: null,
-          userId: null
-        }
-      });
-      await prisma.accountMapping.updateMany({
-        where: { userId },
-        data: {
-          userId: null
-        }
-      });
+      await performFullUnbindAndPurge(userId);
     }
 
     res.json({ success: true, message: "已成功断开 Facebook 授权绑定" });
@@ -401,36 +592,12 @@ router.post("/facebook/disconnect", authenticateJWT as any, async (req: any, res
 router.post("/facebook/delete-local", authenticateJWT as any, async (req: any, res) => {
   try {
     console.log("📥 Local unbind and data purge requested for Facebook integration");
-    const numUserId = Number(req.user?.id || req.user?.userId);
-    if (numUserId) {
-      await prisma.userFacebookBinding.deleteMany({
-        where: { user_id: numUserId }
-      });
-      await prisma.facebookAccount.deleteMany({
-        where: { userId: numUserId }
-      });
-      await prisma.facebookBusinessManager.deleteMany({
-        where: { userId: numUserId }
-      });
-      await prisma.facebookPage.deleteMany({
-        where: { userId: numUserId }
-      });
-      await prisma.metaAccountMonitoring.deleteMany({
-        where: {
-          adAccount: {
-            userId: numUserId
-          }
-        }
-      });
-      await prisma.adAccount.deleteMany({
-        where: { userId: numUserId }
-      });
-      await prisma.accountMapping.deleteMany({
-        where: { userId: numUserId }
-      });
+    const userId = req.user?.id || req.user?.userId;
+    if (userId) {
+      await performFullUnbindAndPurge(userId);
     }
     
-    console.log("✅ Successfully purged local Facebook configuration and tokens for user:", numUserId);
+    console.log("✅ Successfully purged local Facebook configuration and tokens for user:", userId);
     res.json({ success: true, message: "本地解绑成功，相关缓存和数据已彻底擦除" });
   } catch (error: any) {
     console.error("Failed to handle local Facebook unbind/purge:", error);
@@ -442,36 +609,12 @@ router.post("/facebook/delete-local", authenticateJWT as any, async (req: any, r
 router.post("/facebook/unbind", authenticateJWT as any, async (req: any, res) => {
   try {
     console.log("📥 Compliant unbind and data purge requested for Facebook integration");
-    const numUserId = Number(req.user?.id || req.user?.userId);
-    if (numUserId) {
-      await prisma.userFacebookBinding.deleteMany({
-        where: { user_id: numUserId }
-      });
-      await prisma.facebookAccount.deleteMany({
-        where: { userId: numUserId }
-      });
-      await prisma.facebookBusinessManager.deleteMany({
-        where: { userId: numUserId }
-      });
-      await prisma.facebookPage.deleteMany({
-        where: { userId: numUserId }
-      });
-      await prisma.metaAccountMonitoring.deleteMany({
-        where: {
-          adAccount: {
-            userId: numUserId
-          }
-        }
-      });
-      await prisma.adAccount.deleteMany({
-        where: { userId: numUserId }
-      });
-      await prisma.accountMapping.deleteMany({
-        where: { userId: numUserId }
-      });
+    const userId = req.user?.id || req.user?.userId;
+    if (userId) {
+      await performFullUnbindAndPurge(userId);
     }
     
-    console.log("✅ Successfully purged Facebook configuration and tokens under compliant unbind for user:", numUserId);
+    console.log("✅ Successfully purged Facebook configuration and tokens under compliant unbind for user:", userId);
     res.status(200).json({ success: true, message: "您的本地授权 Token 及相关同步数据已成功彻底擦除" });
   } catch (error: any) {
     console.error("Failed to handle compliant Facebook unbind:", error);

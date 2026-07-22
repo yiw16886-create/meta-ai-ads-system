@@ -16,13 +16,14 @@ router.get("/", async (req: any, res) => {
     }
     
     req.user.role = dbUser.role;
-
-    if (req.user.role !== "SUPER_ADMIN") {
-      return res.status(403).json({ error: "无权访问" });
-    }
+    const isSuperAdmin = req.user.role === "SUPER_ADMIN";
 
     const config = await prisma.systemSetting.findFirst();
-    return res.json(config || { meta_client_id: "", meta_client_secret: "", meta_config_id: "" });
+    return res.json({
+      meta_client_id: config?.meta_client_id || process.env.META_APP_ID || process.env.FACEBOOK_CLIENT_ID || "",
+      meta_config_id: config?.meta_config_id || "",
+      meta_client_secret: isSuperAdmin ? (config?.meta_client_secret || process.env.META_APP_SECRET || process.env.FACEBOOK_CLIENT_SECRET || "") : ""
+    });
   } catch (error: any) {
     return res.status(500).json({ error: error.message });
   }

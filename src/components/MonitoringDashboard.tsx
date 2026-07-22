@@ -36,6 +36,12 @@ export function MonitoringDashboard() {
     key: 'amountSpent', 
     direction: 'desc' 
   });
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 20;
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, statusFilter, hideInactive, sortConfig]);
 
   const fetchData = async (forceRefresh = false) => {
     setLoading(true);
@@ -110,6 +116,12 @@ export function MonitoringDashboard() {
 
     return result;
   }, [data, statusFilter, searchTerm, sortConfig, hideInactive]);
+
+  const totalPages = Math.ceil(filteredAndSortedData.length / pageSize) || 1;
+  const paginatedData = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredAndSortedData.slice(start, start + pageSize);
+  }, [filteredAndSortedData, currentPage, pageSize]);
 
   if (loading && data.length === 0) {
     return (
@@ -284,8 +296,8 @@ export function MonitoringDashboard() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filteredAndSortedData.length > 0 ? (
-              filteredAndSortedData.map((acc) => {
+            {paginatedData.length > 0 ? (
+              paginatedData.map((acc) => {
                 const isDanger = acc.accountStatus !== 1;
                 const isLowDays = acc.estimatedDays !== Infinity && acc.estimatedDays !== null && acc.estimatedDays <= 2;
 
@@ -375,7 +387,7 @@ export function MonitoringDashboard() {
               })
             ) : (
               <TableRow>
-                <TableCell colSpan={7} className="h-40 text-center">
+                <TableCell colSpan={8} className="h-40 text-center">
                   <div className="flex flex-col items-center justify-center text-gray-400">
                     <AlertTriangle className="w-8 h-8 mb-2 opacity-20" />
                     <p className="text-sm font-bold">没有匹配的广告账户</p>
@@ -385,6 +397,36 @@ export function MonitoringDashboard() {
             )}
           </TableBody>
         </Table>
+
+        {/* 分页控制面板 (每页 20 条) */}
+        <div className="flex flex-col sm:flex-row items-center justify-between px-5 py-3 bg-white border-t border-gray-100 gap-3">
+          <div className="text-xs text-gray-500 font-medium">
+            显示第 <span className="font-bold text-gray-900">{filteredAndSortedData.length > 0 ? (currentPage - 1) * pageSize + 1 : 0}</span> 到 <span className="font-bold text-gray-900">{Math.min(currentPage * pageSize, filteredAndSortedData.length)}</span> 条，共 <span className="font-bold text-gray-900">{filteredAndSortedData.length}</span> 个账户 (每页 20 条)
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={currentPage <= 1}
+              onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+              className="h-8 text-xs font-semibold px-3"
+            >
+              上一页
+            </Button>
+            <div className="text-xs font-bold px-3 py-1 bg-gray-100 rounded text-gray-700">
+              {currentPage} / {totalPages}
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={currentPage >= totalPages}
+              onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+              className="h-8 text-xs font-semibold px-3"
+            >
+              下一页
+            </Button>
+          </div>
+        </div>
       </div>
 
       <div className="px-5 py-3 bg-gray-50 rounded-lg flex items-center justify-between text-[11px] font-bold text-gray-400 border border-gray-100">

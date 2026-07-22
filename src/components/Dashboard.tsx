@@ -13,6 +13,9 @@ import {
   Search,
   Calendar as CalendarIcon,
   ChevronRight,
+  ChevronLeft,
+  ArrowUp,
+  ArrowDown,
   TrendingUp,
   LogOut,
   ArrowUpDown,
@@ -91,10 +94,21 @@ export interface AdInsight {
   roas: number;
 }
 
-export function getMappingForAccount(accountId: string, mappings: Record<string, any>) {
+export function getMappingForAccount(accountId: string, mappings: Record<string, any>, accountName?: string) {
   if (!mappings || !accountId) return null;
-  const cleanId = accountId.replace("act_", "").trim();
-  return mappings[accountId] || mappings[`act_${cleanId}`] || mappings[cleanId];
+  const cleanId = String(accountId).replace("act_", "").trim();
+  if (mappings[accountId]) return mappings[accountId];
+  if (mappings[`act_${cleanId}`]) return mappings[`act_${cleanId}`];
+  if (mappings[cleanId]) return mappings[cleanId];
+  if (accountName) {
+    const cleanName = String(accountName).trim();
+    if (mappings[cleanName]) return mappings[cleanName];
+    const matchByName = Object.values(mappings).find(
+      (m: any) => m && m.accountName && String(m.accountName).trim() === cleanName
+    );
+    if (matchByName) return matchByName;
+  }
+  return null;
 }
 
 interface DashboardProps {
@@ -195,17 +209,22 @@ export function Dashboard({ onLogout }: DashboardProps) {
       if (Array.isArray(response.data)) {
         const mappingMap: Record<string, any> = {};
         response.data.forEach((m: any) => {
+          if (!m.accountId) return;
+          const cleanId = String(m.accountId).replace("act_", "").trim();
           mappingMap[m.accountId] = m;
+          mappingMap[cleanId] = m;
+          mappingMap[`act_${cleanId}`] = m;
+          if (m.accountName && m.accountName !== "Unknown") {
+            mappingMap[String(m.accountName).trim()] = m;
+          }
         });
         setMappings(mappingMap);
-        // Also sync to localStorage as a local cache/fallback
         try {
           localStorage.setItem("META_ACCOUNT_MAPPINGS", JSON.stringify(mappingMap));
         } catch (e) {}
       }
     } catch (error) {
       console.error("Failed to fetch mappings:", error);
-      // Fallback to local storage if API fails
       try {
         const stored = localStorage.getItem("META_ACCOUNT_MAPPINGS");
         if (stored) setMappings(JSON.parse(stored));
@@ -215,15 +234,14 @@ export function Dashboard({ onLogout }: DashboardProps) {
 
   const syncMappingsToDb = async (newMappings: Record<string, any>) => {
     try {
-      // Sync to local storage immediately for UI responsiveness
       setMappings(newMappings);
       try {
         localStorage.setItem("META_ACCOUNT_MAPPINGS", JSON.stringify(newMappings));
       } catch (e) {}
 
-      // Send to server
       const mappingList = Object.values(newMappings);
       await axios.post("/api/mappings/batch", { mappings: mappingList });
+      await fetchMappings();
     } catch (error) {
       console.error("Failed to sync mappings to server:", error);
       toast.error("同步映射到服务器失败，仅保存到本地");
@@ -293,130 +311,78 @@ export function Dashboard({ onLogout }: DashboardProps) {
 
     let syncToast: string | number | undefined = undefined;
     if (!isSilent) {
-      syncToast = toast.loading("正在同步 Meta 数据...");
-      setData([]); // Clear array to show stream updates
+      syncToast = toast.loading("正在准备同步 Meta 数据...");
     }
 
     try {
-      const token = localStorage.getItem("token");
-      const userStr = localStorage.getItem("user");
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json"
-      };
-      if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-      }
-      if (userStr) {
-        try {
-          const user = JSON.parse(userStr);
-          if (user && user.id) {
-            headers["x-user-id"] = String(user.id);
-          }
-        } catch (e) {}
-      }
-
       const sDateStr = format(startDate, "yyyy-MM-dd");
       const eDateStr = format(endDate, "yyyy-MM-dd");
 
-      const url = `/api/meta/sync-ads?startDate=${sDateStr}&endDate=${eDateStr}${isSilent ? "&is_silent=true" : ""}`;
-      const response = await fetch(url, {
-        method: "GET",
-        headers
-      });
+      // 1. 快速获取绑定的账户列表 (<0.2s)
+      const accRes = await axios.get("/api/meta/accounts").catch(() => null);
+      let accountList: Array<{ accountId: string; name?: string }> = accRes?.data?.accounts || [];
 
-      if (!response.ok) {
-        if (response.status === 401 || response.status === 403) {
-          console.warn("Unauthorized access on stream sync - clearing session");
-          localStorage.clear();
-          window.location.href = "/";
-          return;
+      if (accountList.length === 0) {
+        // Fallback: 尝试从 mappings 获取
+        if (mappings && mappings.length > 0) {
+          accountList = mappings.map((m: any) => ({ accountId: m.fbAccountId }));
         }
-        throw new Error(`HTTP Error: ${response.status}`);
       }
 
-      const contentType = response.headers.get("content-type") || "";
-      if (contentType.includes("text/html") || contentType.includes("html")) {
-        console.warn("Received HTML instead of JSON stream - server may be restarting or unauthenticated.");
+      if (accountList.length === 0) {
         if (syncToast) {
           toast.dismiss(syncToast);
         }
+        toast.info("未检测到已绑定的广告账户，请先在账户管理中绑定 Meta 账户");
+        fetchData();
         return;
       }
 
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error("Failed to get response reader");
+      // 2. 前端控制分批并发 (每批 3 个单账户同步请求，保证单次请求 1~2s 响应，绝对不触发 Vercel 10s 超时)
+      let completedCount = 0;
+      let totalSyncedRecords = 0;
+      const batchSize = 3;
+
+      if (syncToast) {
+        toast.loading(`正在同步 Meta 数据 (0/${accountList.length} 账户)...`, { id: syncToast });
       }
 
-      const decoder = new TextDecoder("utf-8");
-      let buffer = "";
-      let recordCount = 0;
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (trimmed) {
-            if (trimmed.startsWith("<")) {
-              continue;
-            }
+      for (let i = 0; i < accountList.length; i += batchSize) {
+        const batch = accountList.slice(i, i + batchSize);
+        await Promise.all(
+          batch.map(async (acc) => {
             try {
-              const row = JSON.parse(line);
-              if (row.type === "SYNC_COMPLETE") {
-                // 🌟 收到结束信号：
-                // 1. 关闭全局 and 静默 loading
-                setIsSilentLoading(false);
-                setSyncing(false);
-                if (syncToast) {
-                  toast.success(`同步完成: 成功拉取 ${recordCount} 条记录`, { id: syncToast });
-                }
-                // 2. 强行改变 refreshKey 逼迫表格刷新，确保数据完全呈现在 DOM 上！
-                setRefreshKey(prev => prev + 1);
-                fetchData();
-                return;
+              const res = await axios.post("/api/meta/sync-account", {
+                accountId: acc.accountId,
+                startDate: sDateStr,
+                endDate: eDateStr
+              });
+              if (res.data?.syncedRecords) {
+                totalSyncedRecords += res.data.syncedRecords;
               }
-              if (row.error) {
-                console.warn(`Sync error for account: ${row.error}`);
-                continue;
+            } catch (err: any) {
+              console.warn(`[Vercel Sync] Account ${acc.accountId} sync error:`, err?.message);
+            } finally {
+              completedCount++;
+              if (syncToast) {
+                toast.loading(`正在同步 Meta 数据 (${completedCount}/${accountList.length} 账户)...`, { id: syncToast });
               }
-              if (row.accountId) {
-                setData(prev => {
-                  const safePrev = Array.isArray(prev) ? prev : [];
-                  const exists = safePrev.some(
-                    item => item.accountId === row.accountId && item.date === row.date
-                  );
-                  if (exists) {
-                    return safePrev.map(item => 
-                      (item.accountId === row.accountId && item.date === row.date) ? row : item
-                    );
-                  }
-                  return [...safePrev, row];
-                });
-                recordCount++;
-              }
-            } catch (err) {
-              console.error("Failed to parse streamed line:", err, line);
             }
-          }
-        }
+          })
+        );
+        // 每批同步完成后立即刷新一次 DOM 看板，实现渐进式实时更新
+        await fetchData();
       }
 
       if (syncToast) {
-        toast.success(`同步成功: ${recordCount} 条记录`, {
-          id: syncToast,
-        });
+        toast.success(`Meta 数据同步完成 (${accountList.length} 个账户)`, { id: syncToast });
       }
-      fetchData();
+      setRefreshKey(prev => prev + 1);
+      await fetchData();
     } catch (error: any) {
-      console.error("Stream sync error:", error);
+      console.error("Vercel-Safe Meta sync error:", error);
       if (syncToast) {
-        toast.error(error.message || "同步失败，请重试", { id: syncToast });
+        toast.error(error?.message || "同步异常，请稍后重试", { id: syncToast });
       }
     } finally {
       setIsSilentLoading(false);
@@ -486,8 +452,8 @@ export function Dashboard({ onLogout }: DashboardProps) {
       roas: item.spend > 0 ? item.purchaseValue / item.spend : 0,
     }));
     
-    // 底层最优先级逻辑：根据日期查询有消耗的账户数据。没有消耗的才需要隐藏
-    return mappedData.filter(item => item.spend > 0);
+    // 过滤有数据展示的记录（包含消耗、展示、点击或成效）
+    return mappedData.filter(item => item.spend > 0 || item.impressions > 0 || item.clicks > 0 || item.purchases > 0 || mappedData.length <= 10);
   }, [data, search, viewDimension]);
 
   const [sortConfig, setSortConfig] = useState<{ key: keyof AdInsight; direction: "asc" | "desc" } | null>(null);
@@ -1208,6 +1174,40 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
   const [submittingBatch, setSubmittingBatch] = useState(false);
   const [accountSearch, setAccountSearch] = useState("");
 
+  // All Mappings Table states
+  const [mappingSearch, setMappingSearch] = useState("");
+  const [editingMappingId, setEditingMappingId] = useState<string | null>(null);
+  const [editingRow, setEditingRow] = useState<any>({});
+  
+  // All Mappings Table sorting & pagination
+  const [mappingSortConfig, setMappingSortConfig] = useState<{
+    key: string;
+    direction: "asc" | "desc";
+  } | null>({ key: "accountId", direction: "asc" });
+  const [mappingCurrentPage, setMappingCurrentPage] = useState(1);
+  const mappingPageSize = 20;
+
+  const requestMappingSort = (key: string) => {
+    let direction: "asc" | "desc" = "asc";
+    if (
+      mappingSortConfig &&
+      mappingSortConfig.key === key &&
+      mappingSortConfig.direction === "asc"
+    ) {
+      direction = "desc";
+    }
+    setMappingSortConfig({ key, direction });
+    setMappingCurrentPage(1);
+  };
+  
+  // Custom single add mapping modal
+  const [showAddSingleModal, setShowAddSingleModal] = useState(false);
+  const [singleAccId, setSingleAccId] = useState("");
+  const [singleAccName, setSingleAccName] = useState("");
+  const [singleProject, setSingleProject] = useState("");
+  const [singleStore, setSingleStore] = useState("");
+  const [singleOwner, setSingleOwner] = useState("");
+
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: "asc" | "desc" } | null>({ key: 'accountName', direction: 'asc' });
 
   const requestSort = (key: string) => {
@@ -1441,6 +1441,129 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
     } finally {
       setSubmittingBatch(false);
     }
+  };
+
+  const uniqueMappingsList = useMemo(() => {
+    const map = new Map<string, any>();
+    if (mappings && typeof mappings === "object") {
+      Object.values(mappings).forEach((m: any) => {
+        if (!m || !m.accountId) return;
+        const cleanId = String(m.accountId).replace("act_", "").trim();
+        if (!map.has(cleanId) || (m.store && m.store !== "未分配")) {
+          map.set(cleanId, {
+            ...m,
+            cleanAccountId: cleanId,
+          });
+        }
+      });
+    }
+    return Array.from(map.values());
+  }, [mappings]);
+
+  const filteredMappingsList = useMemo(() => {
+    const q = mappingSearch.toLowerCase().trim();
+    if (!q) return uniqueMappingsList;
+    return uniqueMappingsList.filter((m) =>
+      (m.accountId || "").toLowerCase().includes(q) ||
+      (m.accountName || "").toLowerCase().includes(q) ||
+      (m.project || "").toLowerCase().includes(q) ||
+      (m.store || "").toLowerCase().includes(q) ||
+      (m.owner || "").toLowerCase().includes(q)
+    );
+  }, [uniqueMappingsList, mappingSearch]);
+
+  useEffect(() => {
+    setMappingCurrentPage(1);
+  }, [mappingSearch]);
+
+  const sortedMappingsList = useMemo(() => {
+    if (!mappingSortConfig) return filteredMappingsList;
+    return [...filteredMappingsList].sort((a, b) => {
+      const key = mappingSortConfig.key;
+      const valA = String(a[key] || "").toLowerCase();
+      const valB = String(b[key] || "").toLowerCase();
+      if (valA < valB) return mappingSortConfig.direction === "asc" ? -1 : 1;
+      if (valA > valB) return mappingSortConfig.direction === "asc" ? 1 : -1;
+      return 0;
+    });
+  }, [filteredMappingsList, mappingSortConfig]);
+
+  const totalMappingPages =
+    Math.ceil(sortedMappingsList.length / mappingPageSize) || 1;
+
+  const paginatedMappingsList = useMemo(() => {
+    const start = (mappingCurrentPage - 1) * mappingPageSize;
+    return sortedMappingsList.slice(start, start + mappingPageSize);
+  }, [sortedMappingsList, mappingCurrentPage, mappingPageSize]);
+
+  const handleStartEditRow = (m: any) => {
+    setEditingMappingId(m.cleanAccountId || m.accountId);
+    setEditingRow({
+      accountId: m.accountId,
+      accountName: m.accountName || "",
+      project: m.project || "",
+      store: m.store || "",
+      owner: m.owner || "",
+    });
+  };
+
+  const handleSaveSingleRow = async (cleanAccId: string) => {
+    try {
+      const newMappings = { ...mappings };
+      const formattedAccId = editingRow.accountId || `act_${cleanAccId}`;
+      newMappings[formattedAccId] = {
+        accountId: formattedAccId,
+        accountName: editingRow.accountName || formattedAccId,
+        project: editingRow.project || "",
+        store: editingRow.store || "",
+        owner: editingRow.owner || "",
+      };
+      await onMappingsChange(newMappings);
+      setEditingMappingId(null);
+      toast.success("映射信息已保存并同步");
+    } catch (e) {
+      toast.error("保存映射失败");
+    }
+  };
+
+  const handleDeleteMapping = async (accountId: string) => {
+    try {
+      const cleanAccId = String(accountId).replace("act_", "").trim();
+      await axios.delete(`/api/mappings/${cleanAccId}`);
+      const newMappings = { ...mappings };
+      delete newMappings[accountId];
+      delete newMappings[cleanAccId];
+      delete newMappings[`act_${cleanAccId}`];
+      await onMappingsChange(newMappings);
+      toast.success("已解除该账户关联");
+    } catch (e) {
+      toast.error("解除关联失败");
+    }
+  };
+
+  const handleAddSingleSubmit = async () => {
+    if (!singleAccId.trim()) {
+      toast.error("请输入广告账户 ID");
+      return;
+    }
+    const cleanId = singleAccId.replace("act_", "").trim();
+    const formattedId = `act_${cleanId}`;
+    const newMappings = { ...mappings };
+    newMappings[formattedId] = {
+      accountId: formattedId,
+      accountName: singleAccName.trim() || formattedId,
+      project: singleProject.trim() || "",
+      store: singleStore.trim() || "",
+      owner: singleOwner.trim() || "",
+    };
+    await onMappingsChange(newMappings);
+    toast.success("新建映射保存成功，已同步至服务器！");
+    setShowAddSingleModal(false);
+    setSingleAccId("");
+    setSingleAccName("");
+    setSingleProject("");
+    setSingleStore("");
+    setSingleOwner("");
   };
 
   if (fetching) {
@@ -1743,6 +1866,375 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
               )}
             </Button>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* All Mapped Accounts Card */}
+      <Card className="border-none shadow-sm rounded-[12px] overflow-hidden">
+        <CardHeader className="border-b bg-gray-50/50 flex flex-row items-center justify-between space-y-0">
+          <div>
+            <CardTitle className="text-xl flex items-center gap-2">
+              📋 已关联的广告账户级数据与映射明细
+              <span className="text-xs bg-meta-blue/10 text-meta-blue px-2.5 py-1 rounded-full font-semibold">
+                共 {filteredMappingsList.length} 条记录
+              </span>
+            </CardTitle>
+            <p className="text-sm text-meta-text-muted mt-1">
+              查看并直接编辑数据库中保存的所有广告账户与项目、店铺、负责人的映射与绑定关系
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="relative w-64">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <Input
+                placeholder="搜索账户 ID、店铺或项目..."
+                className="pl-9 h-9 text-xs"
+                value={mappingSearch}
+                onChange={(e) => setMappingSearch(e.target.value)}
+              />
+            </div>
+            <Dialog open={showAddSingleModal} onOpenChange={setShowAddSingleModal}>
+              <DialogTrigger
+                render={
+                  <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium h-9">
+                    ➕ 手动添加映射
+                  </Button>
+                }
+              />
+              <DialogContent className="max-w-[450px] p-6 space-y-4">
+                <DialogHeader>
+                  <DialogTitle>手动添加/关联账户映射</DialogTitle>
+                  <p className="text-xs text-gray-500">
+                    为特定 Meta 广告账户指定店铺、项目和负责人信息
+                  </p>
+                </DialogHeader>
+                <div className="space-y-3 pt-2 text-sm">
+                  <div>
+                    <label className="text-xs font-semibold text-gray-600">广告账户 ID (例如 act_123456 或 123456)</label>
+                    <Input
+                      placeholder="123456789"
+                      value={singleAccId}
+                      onChange={(e) => setSingleAccId(e.target.value)}
+                      className="mt-1"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-gray-600">账户名称 (可选)</label>
+                    <Input
+                      placeholder="如: 美东独立站广告组"
+                      value={singleAccName}
+                      onChange={(e) => setSingleAccName(e.target.value)}
+                      className="mt-1"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-gray-600">归属项目 (Project)</label>
+                    <Input
+                      placeholder="如: 健身器材"
+                      value={singleProject}
+                      onChange={(e) => setSingleProject(e.target.value)}
+                      className="mt-1"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-gray-600">归属店铺 (Store)</label>
+                    <Input
+                      placeholder="如: Shopline_US"
+                      value={singleStore}
+                      onChange={(e) => setSingleStore(e.target.value)}
+                      className="mt-1"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-gray-600">负责人 (Owner)</label>
+                    <Input
+                      placeholder="如: 张三"
+                      value={singleOwner}
+                      onChange={(e) => setSingleOwner(e.target.value)}
+                      className="mt-1"
+                    />
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2 pt-4">
+                  <Button variant="outline" onClick={() => setShowAddSingleModal(false)}>
+                    取消
+                  </Button>
+                  <Button className="bg-meta-blue hover:bg-blue-600" onClick={handleAddSingleSubmit}>
+                    确认添加并同步
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader className="bg-gray-50/80">
+              <TableRow>
+                <TableHead
+                  className="w-[180px] cursor-pointer select-none hover:bg-gray-100/70 transition-colors"
+                  onClick={() => requestMappingSort("accountId")}
+                >
+                  <div className="flex items-center gap-1 font-semibold text-gray-700">
+                    <span>账户 ID</span>
+                    {mappingSortConfig?.key === "accountId" ? (
+                      mappingSortConfig.direction === "asc" ? (
+                        <ArrowUp className="w-3.5 h-3.5 text-meta-blue" />
+                      ) : (
+                        <ArrowDown className="w-3.5 h-3.5 text-meta-blue" />
+                      )
+                    ) : (
+                      <ArrowUpDown className="w-3.5 h-3.5 text-gray-400 hover:text-gray-600" />
+                    )}
+                  </div>
+                </TableHead>
+                <TableHead
+                  className="w-[200px] cursor-pointer select-none hover:bg-gray-100/70 transition-colors"
+                  onClick={() => requestMappingSort("accountName")}
+                >
+                  <div className="flex items-center gap-1 font-semibold text-gray-700">
+                    <span>账户名称</span>
+                    {mappingSortConfig?.key === "accountName" ? (
+                      mappingSortConfig.direction === "asc" ? (
+                        <ArrowUp className="w-3.5 h-3.5 text-meta-blue" />
+                      ) : (
+                        <ArrowDown className="w-3.5 h-3.5 text-meta-blue" />
+                      )
+                    ) : (
+                      <ArrowUpDown className="w-3.5 h-3.5 text-gray-400 hover:text-gray-600" />
+                    )}
+                  </div>
+                </TableHead>
+                <TableHead
+                  className="cursor-pointer select-none hover:bg-gray-100/70 transition-colors"
+                  onClick={() => requestMappingSort("project")}
+                >
+                  <div className="flex items-center gap-1 font-semibold text-gray-700">
+                    <span>归属项目 (Project)</span>
+                    {mappingSortConfig?.key === "project" ? (
+                      mappingSortConfig.direction === "asc" ? (
+                        <ArrowUp className="w-3.5 h-3.5 text-meta-blue" />
+                      ) : (
+                        <ArrowDown className="w-3.5 h-3.5 text-meta-blue" />
+                      )
+                    ) : (
+                      <ArrowUpDown className="w-3.5 h-3.5 text-gray-400 hover:text-gray-600" />
+                    )}
+                  </div>
+                </TableHead>
+                <TableHead
+                  className="cursor-pointer select-none hover:bg-gray-100/70 transition-colors"
+                  onClick={() => requestMappingSort("store")}
+                >
+                  <div className="flex items-center gap-1 font-semibold text-gray-700">
+                    <span>关联店铺 (Store)</span>
+                    {mappingSortConfig?.key === "store" ? (
+                      mappingSortConfig.direction === "asc" ? (
+                        <ArrowUp className="w-3.5 h-3.5 text-meta-blue" />
+                      ) : (
+                        <ArrowDown className="w-3.5 h-3.5 text-meta-blue" />
+                      )
+                    ) : (
+                      <ArrowUpDown className="w-3.5 h-3.5 text-gray-400 hover:text-gray-600" />
+                    )}
+                  </div>
+                </TableHead>
+                <TableHead
+                  className="cursor-pointer select-none hover:bg-gray-100/70 transition-colors"
+                  onClick={() => requestMappingSort("owner")}
+                >
+                  <div className="flex items-center gap-1 font-semibold text-gray-700">
+                    <span>负责人 (Owner)</span>
+                    {mappingSortConfig?.key === "owner" ? (
+                      mappingSortConfig.direction === "asc" ? (
+                        <ArrowUp className="w-3.5 h-3.5 text-meta-blue" />
+                      ) : (
+                        <ArrowDown className="w-3.5 h-3.5 text-meta-blue" />
+                      )
+                    ) : (
+                      <ArrowUpDown className="w-3.5 h-3.5 text-gray-400 hover:text-gray-600" />
+                    )}
+                  </div>
+                </TableHead>
+                <TableHead className="text-right w-[140px]">操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {paginatedMappingsList.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="text-center py-12 text-gray-400 italic">
+                    暂无已映射的账户数据
+                  </TableCell>
+                </TableRow>
+              ) : (
+                paginatedMappingsList.map((m) => {
+                  const isEditing = editingMappingId === m.cleanAccountId;
+                  return (
+                    <TableRow key={m.cleanAccountId} className="hover:bg-gray-50/50">
+                      <TableCell className="font-mono text-xs font-semibold text-gray-700">
+                        {m.accountId}
+                      </TableCell>
+                      <TableCell className="text-xs text-gray-800 font-medium">
+                        {isEditing ? (
+                          <Input
+                            size={1}
+                            className="h-8 text-xs"
+                            value={editingRow.accountName}
+                            onChange={(e) => setEditingRow({ ...editingRow, accountName: e.target.value })}
+                          />
+                        ) : (
+                          m.accountName || "Unknown"
+                        )}
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        {isEditing ? (
+                          <Input
+                            size={1}
+                            className="h-8 text-xs"
+                            value={editingRow.project}
+                            onChange={(e) => setEditingRow({ ...editingRow, project: e.target.value })}
+                          />
+                        ) : (
+                          <span className={m.project && m.project !== "未分配" ? "text-blue-700 font-medium" : "text-gray-400"}>
+                            {m.project || "未分配"}
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        {isEditing ? (
+                          <Input
+                            size={1}
+                            className="h-8 text-xs"
+                            value={editingRow.store}
+                            onChange={(e) => setEditingRow({ ...editingRow, store: e.target.value })}
+                          />
+                        ) : (
+                          <span className={m.store && m.store !== "未分配" ? "text-emerald-700 font-medium" : "text-gray-400"}>
+                            {m.store || "未分配"}
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        {isEditing ? (
+                          <Input
+                            size={1}
+                            className="h-8 text-xs"
+                            value={editingRow.owner}
+                            onChange={(e) => setEditingRow({ ...editingRow, owner: e.target.value })}
+                          />
+                        ) : (
+                          <span className={m.owner && m.owner !== "未分配" ? "text-purple-700 font-medium" : "text-gray-400"}>
+                            {m.owner || "未分配"}
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {isEditing ? (
+                          <div className="flex justify-end gap-1">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 px-2 text-xs text-green-600 hover:bg-green-50"
+                              onClick={() => handleSaveSingleRow(m.cleanAccountId)}
+                            >
+                              保存
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 px-2 text-xs text-gray-500"
+                              onClick={() => setEditingMappingId(null)}
+                            >
+                              取消
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="flex justify-end gap-1">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 px-2 text-xs text-meta-blue hover:bg-blue-50"
+                              onClick={() => handleStartEditRow(m)}
+                            >
+                              编辑
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 px-2 text-xs text-red-500 hover:bg-red-50"
+                              onClick={() => handleDeleteMapping(m.accountId)}
+                            >
+                              解除
+                            </Button>
+                          </div>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
+              )}
+            </TableBody>
+          </Table>
+
+          {/* Pagination Controls */}
+          {sortedMappingsList.length > 0 && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t bg-gray-50/50 text-xs text-gray-600">
+              <div>
+                显示第{" "}
+                <span className="font-semibold text-gray-800">
+                  {(mappingCurrentPage - 1) * mappingPageSize + 1}
+                </span>{" "}
+                至{" "}
+                <span className="font-semibold text-gray-800">
+                  {Math.min(mappingCurrentPage * mappingPageSize, sortedMappingsList.length)}
+                </span>{" "}
+                条，共 <span className="font-semibold text-gray-800">{sortedMappingsList.length}</span> 条记录
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 px-2.5 text-xs"
+                  disabled={mappingCurrentPage <= 1}
+                  onClick={() => setMappingCurrentPage(1)}
+                >
+                  首页
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 px-2.5 text-xs flex items-center gap-1"
+                  disabled={mappingCurrentPage <= 1}
+                  onClick={() => setMappingCurrentPage((p) => Math.max(1, p - 1))}
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                  上一页
+                </Button>
+                <div className="px-3 py-1 font-medium bg-white border rounded text-gray-700 shadow-xs">
+                  第 {mappingCurrentPage} / {totalMappingPages} 页
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 px-2.5 text-xs flex items-center gap-1"
+                  disabled={mappingCurrentPage >= totalMappingPages}
+                  onClick={() => setMappingCurrentPage((p) => Math.min(totalMappingPages, p + 1))}
+                >
+                  下一页
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 px-2.5 text-xs"
+                  disabled={mappingCurrentPage >= totalMappingPages}
+                  onClick={() => setMappingCurrentPage(totalMappingPages)}
+                >
+                  末页
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
@@ -2488,16 +2980,25 @@ function SettingsPage() {
 
   // Listen for popup postMessage events to handle popup auth flow seamlessly
   useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      const origin = event.origin;
-      if (!origin.endsWith(".run.app") && !origin.includes("localhost") && !origin.includes("vercel.app")) {
-        return;
-      }
-      if (event.data?.type === "OAUTH_AUTH_SUCCESS" || event.data?.type === "FB_AUTH_SUCCESS") {
-        toast.success("Facebook 账户绑定成功！已拉取 60 天长效访问令牌。");
-        reloadSettings();
-      } else if (event.data?.type === "FB_AUTH_ERROR") {
-        toast.error(event.data.message || "Facebook 授权失败，请检查开发者配置！");
+    const handleMessage = async (event: MessageEvent) => {
+      const type = event.data?.type;
+      if (
+        type === "FB_CONNECTED_SUCCESS" ||
+        type === "OAUTH_AUTH_SUCCESS" ||
+        type === "FB_AUTH_SUCCESS"
+      ) {
+        toast.success("Facebook 账号绑定成功！");
+        await reloadSettings();
+        try {
+          await axios.get("/api/meta/accounts").catch(() => {});
+        } catch (syncErr) {
+          console.warn("Auto-sync Meta data after connection warning:", syncErr);
+        }
+      } else if (
+        type === "FB_CONNECTED_FAILED" ||
+        type === "FB_AUTH_ERROR"
+      ) {
+        toast.error(event.data?.error || event.data?.message || "Facebook 授权失败，请重试！");
       }
     };
     window.addEventListener("message", handleMessage);
@@ -2640,13 +3141,16 @@ function SettingsPage() {
         console.warn("Popup block detected or browser restricted opening window inside sandbox:", openErr);
       }
       
-      toast.success("您的本地授权 Token 已成功擦除");
+      toast.success("您的本地授权 Token 及历史数据已成功彻底擦除");
       setFbUserId("");
       setFbUserName("");
       setFbUserLink("");
       setHasMetaToken(false);
       setMetaTokenUpdatedAt(null);
       setShowUnbindConfirmModal(false);
+      setTimeout(() => {
+        window.location.reload();
+      }, 500);
     } catch (err: any) {
       toast.error(err.response?.data?.error || "解绑并清除数据失败");
     } finally {
