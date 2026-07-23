@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { format, subDays } from "date-fns";
 import axios from "axios";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useUrlDateRange } from "../hooks/useUrlDateRange";
 import {
   ArrowLeft,
   Save,
@@ -112,40 +113,13 @@ export function StoreDetailsPage({
     error: false
   });
 
-  const [startDate, setStartDate] = useState<Date>(() => {
-    try {
-      const saved = localStorage.getItem("META_DASHBOARD_START_DATE");
-      if (saved) {
-        const parsed = new Date(saved);
-        if (!isNaN(parsed.getTime())) return parsed;
-      }
-    } catch (e) {}
-    return subDays(new Date(), 1);
-  });
-  const [endDate, setEndDate] = useState<Date>(() => {
-    try {
-      const saved = localStorage.getItem("META_DASHBOARD_END_DATE");
-      if (saved) {
-        const parsed = new Date(saved);
-        if (!isNaN(parsed.getTime())) return parsed;
-      }
-    } catch (e) {}
-    return subDays(new Date(), 1);
-  });
+  const { startDate, endDate, setStartDate, setEndDate } = useUrlDateRange(6);
 
   const [showToken, setShowToken] = useState(false);
 
-  useEffect(() => {
-    if (startDate) {
-      localStorage.setItem("META_DASHBOARD_START_DATE", startDate.toISOString());
-    }
-  }, [startDate]);
+  
 
-  useEffect(() => {
-    if (endDate) {
-      localStorage.setItem("META_DASHBOARD_END_DATE", endDate.toISOString());
-    }
-  }, [endDate]);
+  
 
   // Ad Account Mappings States
   const [mappings, setMappings] = useState<any[]>([]);

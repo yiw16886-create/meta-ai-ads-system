@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { format, subDays } from "date-fns";
 import axios from "axios";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
+import { useUrlDateRange } from "../hooks/useUrlDateRange";
 import { motion } from "motion/react";
 import {
   BarChart3,
@@ -159,38 +160,11 @@ export function Dashboard({ onLogout }: DashboardProps) {
     }
   }, [location.search]);
 
-  const [startDate, setStartDate] = useState<Date>(() => {
-    try {
-      const saved = localStorage.getItem("META_DASHBOARD_START_DATE");
-      if (saved) {
-        const parsed = new Date(saved);
-        if (!isNaN(parsed.getTime())) return parsed;
-      }
-    } catch (e) {}
-    return subDays(new Date(), 1);
-  });
-  const [endDate, setEndDate] = useState<Date>(() => {
-    try {
-      const saved = localStorage.getItem("META_DASHBOARD_END_DATE");
-      if (saved) {
-        const parsed = new Date(saved);
-        if (!isNaN(parsed.getTime())) return parsed;
-      }
-    } catch (e) {}
-    return subDays(new Date(), 1);
-  });
+  const { startDate, endDate, setStartDate, setEndDate } = useUrlDateRange(6);
 
-  useEffect(() => {
-    if (startDate) {
-      localStorage.setItem("META_DASHBOARD_START_DATE", startDate.toISOString());
-    }
-  }, [startDate]);
+  
 
-  useEffect(() => {
-    if (endDate) {
-      localStorage.setItem("META_DASHBOARD_END_DATE", endDate.toISOString());
-    }
-  }, [endDate]);
+  
   const [search, setSearch] = useState("");
   const [viewDimension, setViewDimension] = useState<"account" | "date" | "date_account">("account");
   const [data, setData] = useState<AdInsight[]>([]);
@@ -220,15 +194,12 @@ export function Dashboard({ onLogout }: DashboardProps) {
         });
         setMappings(mappingMap);
         try {
-          localStorage.setItem("META_ACCOUNT_MAPPINGS", JSON.stringify(mappingMap));
+          
         } catch (e) {}
       }
     } catch (error) {
       console.error("Failed to fetch mappings:", error);
-      try {
-        const stored = localStorage.getItem("META_ACCOUNT_MAPPINGS");
-        if (stored) setMappings(JSON.parse(stored));
-      } catch (e) {}
+      setMappings({});
     }
   };
 
@@ -236,7 +207,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
     try {
       setMappings(newMappings);
       try {
-        localStorage.setItem("META_ACCOUNT_MAPPINGS", JSON.stringify(newMappings));
+        
       } catch (e) {}
 
       const mappingList = Object.values(newMappings);
@@ -552,7 +523,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
         <div className="flex-1 flex flex-col overflow-y-auto min-h-0 sidebar-scrollbar">
           <nav className="flex-1 px-4 space-y-1">
           <button
-            onClick={() => navigate(`/?tab=overview`)}
+            onClick={() => navigate(`/?tab=overview&from=${format(startDate, "yyyy-MM-dd")}&to=${format(endDate, "yyyy-MM-dd")}`)}
             className={cn(
               "w-full flex items-center gap-3 px-4 py-3 rounded-[8px] text-[14px] transition-colors cursor-pointer",
               currentTab === "overview"
@@ -584,7 +555,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
             {dashboardExpanded && (
               <div className="pl-11 pr-4 py-1 space-y-1">
                 <button
-                  onClick={() => navigate("/?tab=dashboard")}
+                  onClick={() => navigate(`/?tab=dashboard&from=${format(startDate, "yyyy-MM-dd")}&to=${format(endDate, "yyyy-MM-dd")}`)}
                   className={cn(
                     "w-full flex items-center gap-3 px-3 py-2 rounded-[6px] text-[13px] transition-colors cursor-pointer text-left",
                     currentTab === "dashboard"
@@ -595,7 +566,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                   数据明细
                 </button>
                 <button
-                  onClick={() => navigate("/?tab=campaign_structure")}
+                  onClick={() => navigate(`/?tab=campaign_structure&from=${format(startDate, "yyyy-MM-dd")}&to=${format(endDate, "yyyy-MM-dd")}`)}
                   className={cn(
                     "w-full flex items-center gap-3 px-3 py-2 rounded-[6px] text-[13px] transition-colors cursor-pointer text-left",
                     currentTab === "campaign_structure"
@@ -606,7 +577,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                   广告系列结构
                 </button>
                 <button
-                  onClick={() => navigate("/?tab=audience_analysis")}
+                  onClick={() => navigate(`/?tab=audience_analysis&from=${format(startDate, "yyyy-MM-dd")}&to=${format(endDate, "yyyy-MM-dd")}`)}
                   className={cn(
                     "w-full flex items-center gap-3 px-3 py-2 rounded-[6px] text-[13px] transition-colors cursor-pointer text-left",
                     currentTab === "audience_analysis"
@@ -617,7 +588,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                   受众
                 </button>
                 <button
-                  onClick={() => navigate("/?tab=creative_analysis")}
+                  onClick={() => navigate(`/?tab=creative_analysis&from=${format(startDate, "yyyy-MM-dd")}&to=${format(endDate, "yyyy-MM-dd")}`)}
                   className={cn(
                     "w-full flex items-center gap-3 px-3 py-2 rounded-[6px] text-[13px] transition-colors cursor-pointer text-left",
                     currentTab === "creative_analysis"
@@ -628,7 +599,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                   素材
                 </button>
                 <button
-                  onClick={() => navigate("/?tab=store_data")}
+                  onClick={() => navigate(`/?tab=store_data&from=${format(startDate, "yyyy-MM-dd")}&to=${format(endDate, "yyyy-MM-dd")}`)}
                   className={cn(
                     "w-full flex items-center gap-3 px-3 py-2 rounded-[6px] text-[13px] transition-colors cursor-pointer text-left",
                     currentTab === "store_data"
@@ -651,7 +622,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
           ].filter(Boolean).map((item: any) => (
             <button
               key={item.id}
-              onClick={() => navigate(`/?tab=${item.id}`)}
+              onClick={() => navigate(`/?tab=${item.id}&from=${format(startDate, "yyyy-MM-dd")}&to=${format(endDate, "yyyy-MM-dd")}`)}
               className={cn(
                 "w-full flex items-center gap-3 px-4 py-3 rounded-[8px] text-[14px] transition-colors cursor-pointer",
                 currentTab === item.id
@@ -685,7 +656,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
             {settingsExpanded && (
               <div className="pl-11 pr-4 py-1 space-y-1">
                 <button
-                  onClick={() => navigate("/?tab=settings")}
+                  onClick={() => navigate(`/?tab=settings&from=${format(startDate, "yyyy-MM-dd")}&to=${format(endDate, "yyyy-MM-dd")}`)}
                   className={cn(
                     "w-full flex items-center gap-3 px-3 py-2 rounded-[6px] text-[13px] transition-colors cursor-pointer text-left",
                     currentTab === "settings"
@@ -697,7 +668,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                 </button>
                 {isAdmin && (
                   <button
-                    onClick={() => navigate("/?tab=users")}
+                    onClick={() => navigate(`/?tab=users&from=${format(startDate, "yyyy-MM-dd")}&to=${format(endDate, "yyyy-MM-dd")}`)}
                     className={cn(
                       "w-full flex items-center gap-3 px-3 py-2 rounded-[6px] text-[13px] transition-colors cursor-pointer text-left",
                       currentTab === "users"
@@ -1069,7 +1040,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                             <TableCell className="sticky left-0 z-10 bg-white border-r-2 border-[#f3f4f6] px-4 py-[10px] whitespace-nowrap font-medium text-meta-dark">
                               {viewDimension === "account" && (
                                 <button
-                                  onClick={() => navigate(`/account/${item.accountId}`)}
+                                  onClick={() => navigate(`/account/${item.accountId}?from=${format(startDate, "yyyy-MM-dd")}&to=${format(endDate, "yyyy-MM-dd")}`)}
                                   className="hover:text-blue-600 hover:underline text-left outline-none"
                                 >
                                   {item.accountName}
@@ -1083,7 +1054,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                                   <span className="text-gray-500 font-normal">{item.date}</span>
                                   <span className="text-gray-300">|</span>
                                   <button
-                                    onClick={() => navigate(`/account/${item.accountId}`)}
+                                    onClick={() => navigate(`/account/${item.accountId}?from=${format(startDate, "yyyy-MM-dd")}&to=${format(endDate, "yyyy-MM-dd")}`)}
                                     className="hover:text-blue-600 hover:underline text-left outline-none font-medium"
                                   >
                                     {item.accountName}
@@ -1150,7 +1121,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
         ) : currentTab === "category" ? (
           <CategoryDashboard
             mappings={mappings}
-            onManageAccounts={() => navigate("/?tab=accounts")}
+            onManageAccounts={() => navigate(`/?tab=accounts&from=${format(startDate, "yyyy-MM-dd")}&to=${format(endDate, "yyyy-MM-dd")}`)}
           />
         ) : currentTab === "stores" ? (
           <StoresDashboard startDate={startDate} endDate={endDate} />
@@ -3764,38 +3735,11 @@ function SettingsPage() {
 
 function CategoryDashboard({ mappings, onManageAccounts }: { mappings: Record<string, any>, onManageAccounts: () => void }) {
   const navigate = useNavigate();
-  const [startDate, setStartDate] = useState<Date>(() => {
-    try {
-      const saved = localStorage.getItem("META_DASHBOARD_START_DATE");
-      if (saved) {
-        const parsed = new Date(saved);
-        if (!isNaN(parsed.getTime())) return parsed;
-      }
-    } catch (e) {}
-    return subDays(new Date(), 1);
-  });
-  const [endDate, setEndDate] = useState<Date>(() => {
-    try {
-      const saved = localStorage.getItem("META_DASHBOARD_END_DATE");
-      if (saved) {
-        const parsed = new Date(saved);
-        if (!isNaN(parsed.getTime())) return parsed;
-      }
-    } catch (e) {}
-    return subDays(new Date(), 1);
-  });
+  const { startDate, endDate, setStartDate, setEndDate } = useUrlDateRange(6);
 
-  useEffect(() => {
-    if (startDate) {
-      localStorage.setItem("META_DASHBOARD_START_DATE", startDate.toISOString());
-    }
-  }, [startDate]);
+  
 
-  useEffect(() => {
-    if (endDate) {
-      localStorage.setItem("META_DASHBOARD_END_DATE", endDate.toISOString());
-    }
-  }, [endDate]);
+  
   const [rawInsights, setRawInsights] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -4168,7 +4112,7 @@ function CategoryDashboard({ mappings, onManageAccounts }: { mappings: Record<st
                     </TableCell>
                     <TableCell 
                       className="text-blue-600 font-medium cursor-pointer"
-                      onClick={() => navigate(`/store/${encodeURIComponent(item.store)}`)}
+                      onClick={() => navigate(`/store/${encodeURIComponent(item.store)}?from=${format(startDate, "yyyy-MM-dd")}&to=${format(endDate, "yyyy-MM-dd")}`)}
                     >
                       {item.store}
                     </TableCell>
@@ -4180,7 +4124,7 @@ function CategoryDashboard({ mappings, onManageAccounts }: { mappings: Record<st
                       title={item.accountName}
                     >
                       <button
-                        onClick={() => navigate(`/account/${item.accountId}`)}
+                        onClick={() => navigate(`/account/${item.accountId}?from=${format(startDate, "yyyy-MM-dd")}&to=${format(endDate, "yyyy-MM-dd")}`)}
                         className="hover:text-blue-600 hover:underline text-left outline-none"
                       >
                         {item.accountName}

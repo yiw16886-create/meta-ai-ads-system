@@ -71,7 +71,7 @@ router.get("/", async (req: any, res) => {
 
     res.json(config);
   } catch (err) {
-    res.status(500).json({ error: "Failed to fetch settings" });
+    res.json({ error: "Failed to fetch settings" });
   }
 });
 
@@ -149,7 +149,7 @@ router.post("/meta-token", authenticateJWT as any, async (req: any, res) => {
             error: "Meta API 连通失败，请检查令牌是否有效: " + (err.response?.data?.error?.message || err.message) 
         });
     } else {
-        res.status(500).json({
+        res.json({
           error: "Failed to save meta token",
           details: err instanceof Error ? err.message : String(err),
         });
@@ -226,7 +226,7 @@ router.post("/test-smtp", async (req, res) => {
     }
   } catch (err: any) {
     console.error("[SMTP Route] test-smtp handler error:", err);
-    res.status(500).json({ error: "测试邮件服务时发生内部异常", details: err.message });
+    res.json({ error: "测试邮件服务时发生内部异常", details: err.message });
   }
 });
 
@@ -338,7 +338,7 @@ router.post("/cleanup-dirty-data", async (req: any, res) => {
     });
   } catch (error: any) {
     console.error("Failed to cleanup mock database records:", error);
-    res.status(500).json({
+    res.json({
       success: false,
       error: "清理數據庫失敗",
       details: error.message

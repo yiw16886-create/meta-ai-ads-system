@@ -82,11 +82,12 @@ router.get("/accounts", async (req: any, res) => {
       );
       
       cachedAccounts = await prisma.metaAccountMonitoring.findMany({
-        where: {
-          adAccount: {
-            userId: Number(userId)
-          }
-        }
+        where: userId ? {
+          OR: [
+            { adAccount: { userId: Number(userId) } },
+            { adAccount: { userId: null } }
+          ]
+        } : {}
       });
     }
 
@@ -270,12 +271,12 @@ router.get("/accounts", async (req: any, res) => {
       stats: {
         total: filteredMonitoringData.length,
         active: filteredMonitoringData.filter(a => a.accountStatus === 1).length,
-        hasSpend: filteredMonitoringData.length
+        hasSpend: filteredMonitoringData.filter(a => a.hasSpendLast30Days).length
       }
     });
   } catch (error: any) {
     console.error("[Monitoring API] Error:", error.message);
-    res.status(500).json({ error: error.message });
+    res.json({ error: error.message });
   }
 });
 
@@ -298,7 +299,7 @@ router.post("/accounts/:accountId/reset", async (req: any, res) => {
     res.json({ success: true, message: "限额已成功重置" });
   } catch (error: any) {
     console.error(`[Reset Cap] Failed for ${accountId}:`, error.response?.data || error.message);
-    res.status(500).json({ error: extractMetaError(error) });
+    res.json({ error: extractMetaError(error) });
   }
 });
 

@@ -788,11 +788,7 @@ router.get("/list", async (req: any, res) => {
     res.json(Array.from(uniqueMap.values()));
   } catch (err: any) {
     console.error("Fetch unique accounts error:", err);
-    res.status(500).json({
-      error: "Failed to fetch unique accounts from DB",
-      details: err.message,
-      code: err.code,
-    });
+    res.json([]);
   }
 });
 

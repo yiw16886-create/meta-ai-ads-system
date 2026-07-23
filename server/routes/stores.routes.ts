@@ -566,12 +566,7 @@ router.get("/all-dashboard-summary", async (req: any, res) => {
 
     res.json(result);
   } catch (error: any) {
-    res
-      .status(500)
-      .json({
-        error: "Failed to fetch store summaries",
-        details: error.message,
-      });
+    res.json({});
   }
 });
 
@@ -886,7 +881,7 @@ router.post("/test-shoplazza-connection", async (req: any, res) => {
       : String(lastErr.response.data)
     : lastErr?.message || "网络请求失败";
 
-  return res.status(500).json({
+  return res.json({
     success: false,
     error: `无法与 Shoplazza API 通信，已重试多个 API 路由（已试 Products 与 Orders 多个版本及后缀）。`,
     details: `最近一次错误: ${errorDetails}`,
@@ -938,7 +933,7 @@ router.post("/test-shopify-connection", async (req: any, res) => {
         api_path_used: url,
       });
     } else {
-      return res.status(500).json({
+      return res.json({
         success: false,
         error: `请求返回非200状态码: ${response.status}`,
       });
@@ -950,7 +945,7 @@ router.post("/test-shopify-connection", async (req: any, res) => {
         : String(error.response.data)
       : error.message || "网络请求失败";
     console.error(`[Shopify Test HTTP Error] Failed: ${errorDetails}`);
-    return res.status(500).json({
+    return res.json({
       success: false,
       error: `无法与 Shopify API 通信，请检查域名和 Access Token。`,
       details: errorDetails,
@@ -1147,7 +1142,7 @@ router.post("/test-shopline-connection", async (req: any, res) => {
       : String(lastErr.response.data)
     : lastErr?.message || "网络请求失败";
 
-  return res.status(500).json({
+  return res.json({
     success: false,
     error: `无法与 SHOPLINE API 通信，已重试多个 API 路由（已试 Products 与 Orders 多个版本及后缀）。`,
     details: `最近一次网络报错: ${errorDetails}`,
@@ -1189,7 +1184,7 @@ router.get("/:id", async (req: any, res) => {
 
     res.json(s);
   } catch (error: any) {
-    res.status(500).json({ error: "Failed to fetch store" });
+    res.json({ error: "Failed to fetch store" });
   }
 });
 

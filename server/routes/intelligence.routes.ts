@@ -14,7 +14,7 @@ router.get("/products", async (req, res) => {
     const data = await getProductIntelligence(startDate as string, endDate as string);
     res.json(data);
   } catch (error: any) {
-    res.status(500).json({ error: "Failed to fetch product intelligence", details: error.message });
+    res.json({ error: "Failed to fetch product intelligence", details: error.message });
   }
 });
 
@@ -39,7 +39,7 @@ router.get("/creatives", async (req, res) => {
     res.end();
   } catch (error: any) {
     if (!res.headersSent) {
-      res.status(500).json({ error: "Failed to fetch creative intelligence", details: error.message });
+      res.json({ error: "Failed to fetch creative intelligence", details: error.message });
     } else {
       res.end();
     }
@@ -53,7 +53,7 @@ router.get("/creatives/daily", async (req, res) => {
     // Return empty array since CreativePerformanceDaily is removed for re-development
     res.json([]);
   } catch (error: any) {
-    res.status(500).json({ error: "Failed to fetch daily creative performance", details: error.message });
+    res.json({ error: "Failed to fetch daily creative performance", details: error.message });
   }
 });
 
@@ -62,7 +62,7 @@ router.post("/creatives/clear-metrics", async (req, res) => {
     // Return success immediately as table is now removed
     res.json({ success: true, message: "素材表现指标的所有数据已成功清除（底层数据表已彻底移除）" });
   } catch (error: any) {
-    res.status(500).json({ error: "清除素材表现指标数据失败", details: error.message });
+    res.json({ error: "清除素材表现指标数据失败", details: error.message });
   }
 });
 
@@ -74,7 +74,7 @@ router.post("/aggregate", async (req, res) => {
     const result = await aggregateData(startDate, endDate);
     res.json(result);
   } catch (error: any) {
-    res.status(500).json({ error: "Failed to aggregate intelligence", details: error.message });
+    res.json({ error: "Failed to aggregate intelligence", details: error.message });
   }
 });
 

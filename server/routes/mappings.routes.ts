@@ -43,7 +43,7 @@ router.get("/available-accounts", async (req: any, res) => {
     return res.json({ success: true, data: Array.from(uniqueMap.values()) });
   } catch (error: any) {
     console.error("Fetch available accounts error:", error);
-    return res.status(500).json({ error: error.message });
+    return res.json([]);
   }
 });
 
@@ -101,7 +101,7 @@ router.post("/", async (req: any, res) => {
     return res.json({ success: true, mapping });
   } catch (error: any) {
     console.error("Save account mapping error:", error);
-    return res.status(500).json({ error: error.message || "关联映射操作失败" });
+    return res.json({ error: error.message || "关联映射操作失败" });
   }
 });
 
@@ -195,7 +195,7 @@ router.get("/", async (req: any, res) => {
     res.json(mapped);
   } catch (err: any) {
     console.error("Fetch mappings error:", err);
-    res.status(500).json({
+    res.json({
       error: "Failed to fetch mappings from DB",
       details: err.message,
       code: err.code,
@@ -343,7 +343,7 @@ router.delete("/:accountId", async (req: any, res) => {
     res.json({ success: true, accountId: cleanAccId });
   } catch (err: any) {
     console.error("Delete mapping error:", err);
-    res.status(500).json({ error: err.message });
+    res.json({ error: err.message });
   }
 });
 

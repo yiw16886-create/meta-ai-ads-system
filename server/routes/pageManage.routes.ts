@@ -25,7 +25,7 @@ router.get("/", async (req, res) => {
     const pages = await prisma.facebookPage.findMany();
     res.json(pages);
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    res.json({ error: error.message });
   }
 });
 
@@ -43,7 +43,7 @@ router.post("/fetch-pages", authenticateJWT as any, async (req: any, res) => {
     if (error.message.includes("401") || error.message.includes("OAuth") || error.message.includes("token")) {
       return res.status(401).json({ error: error.message, message: error.message });
     }
-    res.status(500).json({ error: error.message, message: error.message });
+    res.json({ error: error.message, message: error.message });
   }
 });
 
@@ -61,7 +61,7 @@ router.post("/sync", authenticateJWT as any, async (req: any, res) => {
     if (error.message.includes("401") || error.message.includes("OAuth") || error.message.includes("token")) {
       return res.status(401).json({ error: error.message, message: error.message });
     }
-    res.status(500).json({ error: error.message, message: error.message });
+    res.json({ error: error.message, message: error.message });
   }
 });
 
@@ -75,7 +75,7 @@ router.get("/:pageId/posts", async (req, res) => {
     });
     res.json(posts);
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    res.json({ error: error.message });
   }
 });
 
@@ -89,7 +89,7 @@ router.get("/post/:postId/comments", async (req, res) => {
     });
     res.json(comments);
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    res.json({ error: error.message });
   }
 });
 
@@ -103,7 +103,7 @@ router.post("/:pageId/fetch-ads", async (req, res) => {
     if (error.message.includes("401") || error.message.includes("OAuth") || error.message.includes("token")) {
       return res.status(401).json({ error: error.message, message: error.message });
     }
-    res.status(500).json({ error: error.message, message: error.message });
+    res.json({ error: error.message, message: error.message });
   }
 });
 
@@ -117,7 +117,7 @@ router.post("/post/:postId/fetch-comments", async (req, res) => {
     if (error.message.includes("401") || error.message.includes("OAuth") || error.message.includes("token")) {
       return res.status(401).json({ error: error.message, message: error.message });
     }
-    res.status(500).json({ error: error.message, message: error.message });
+    res.json({ error: error.message, message: error.message });
   }
 });
 

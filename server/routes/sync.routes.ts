@@ -184,7 +184,7 @@ router.post("/sync", async (req: any, res) => {
     const msg = extractMetaError(error);
     const errorMsg = error.response?.data?.error?.message || error.response?.data?.message || error.message;
     console.error(`Sync error: ${errorMsg}`);
-    res.status(500).json({ error: msg });
+    res.json({ error: msg });
   }
 });
 
@@ -199,7 +199,7 @@ router.post("/sync-store", async (req: any, res) => {
     return res.json({ success: true, message: "店铺和订单数据同步成功" });
   } catch (error: any) {
     console.error("Store sync error:", error);
-    return res.status(500).json({ error: error.message || "店铺和订单数据同步失败" });
+    return res.json({ error: error.message || "店铺和订单数据同步失败" });
   }
 });
 
@@ -219,7 +219,7 @@ router.post("/sync-creatives", async (req: any, res) => {
     return res.json({ success: true, message: "创意素材数据同步成功" });
   } catch (error: any) {
     console.error("Creative sync error:", error);
-    return res.status(500).json({ error: extractMetaError(error) });
+    return res.json({ error: extractMetaError(error) });
   }
 });
 
@@ -239,7 +239,7 @@ router.post("/sync-creative-hash", async (req: any, res) => {
     return res.json({ success: true, message: "素材特征抓取已在后台开始运行" });
   } catch (error: any) {
     console.error("Creative sync error:", error);
-    return res.status(500).json({ error: extractMetaError(error) });
+    return res.json({ error: extractMetaError(error) });
   }
 });
 
@@ -366,7 +366,7 @@ router.get("/cron/sync-monthly", async (req: any, res) => {
     const msg = extractMetaError(error);
     const status = error.response?.status;
     console.error(`[Cron Sync] Global failure (${status || "Unknown"}):`, msg);
-    res.status(500).json({ error: msg });
+    res.json({ error: msg });
   }
 });
 

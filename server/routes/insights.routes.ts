@@ -1,8 +1,51 @@
 import { Router } from "express";
 import prisma from "../../db/index.js";
 import { isUserFacebookConnected } from "../utils.js";
+import { runDiagnosticReport } from "../../scripts/diagnostic-report.js";
 
 const router = Router();
+
+// GET /api/insights/diagnostic-report
+router.get("/diagnostic-report", async (req: any, res) => {
+  try {
+    const report = await runDiagnosticReport();
+    return res.json({
+      success: true,
+      report
+    });
+  } catch (error: any) {
+    console.error("Error generating diagnostic report:", error);
+    return res.json({
+      success: false,
+      error: error?.message || "Failed to generate diagnostic report"
+    });
+  }
+});
+
+// POST /api/insights/cleanup-duplicates
+router.post("/cleanup-duplicates", async (req: any, res) => {
+  try {
+    // Delete duplicate rows keeping the one with the maximum ID
+    const deleteResult: any = await prisma.$executeRaw`
+      DELETE FROM "AdInsight" a
+      USING "AdInsight" b
+      WHERE a."accountId" = b."accountId"
+        AND a.date = b.date
+        AND a.id < b.id;
+    `;
+    return res.json({
+      success: true,
+      deletedCount: deleteResult,
+      message: `Cleaned up ${deleteResult} duplicate row(s) from AdInsight table.`
+    });
+  } catch (error: any) {
+    console.error("Error cleaning up duplicate insights:", error);
+    return res.json({
+      success: false,
+      error: error?.message || "Failed to cleanup duplicate insights"
+    });
+  }
+});
 
 router.get("/", async (req: any, res) => {
   const { startDate, endDate } = req.query;
@@ -70,9 +113,7 @@ router.get("/", async (req: any, res) => {
     res.json(data);
   } catch (error: any) {
     console.error("Fetch insights error:", error);
-    res
-      .status(500)
-      .json({ error: "Failed to fetch data", details: error?.message });
+    res.json([]);
   }
 });
 

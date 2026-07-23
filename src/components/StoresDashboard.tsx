@@ -1,3 +1,4 @@
+import { format } from "date-fns";
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
@@ -313,7 +314,7 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
               <Card
                 key={store.id}
                 className="cursor-pointer hover:shadow-md transition-shadow border-gray-200"
-                onClick={() => navigate(`/store/${store.id}`)}
+                onClick={() => navigate(`/store/${store.id}?from=${format(startDate || new Date(), "yyyy-MM-dd")}&to=${format(endDate || new Date(), "yyyy-MM-dd")}`)}
               >
                 <CardContent className="p-6">
                   <div className="flex items-center justify-between mb-4">

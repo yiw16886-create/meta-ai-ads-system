@@ -370,7 +370,7 @@ router.get("/", async (req: any, res) => {
     return res.json(bms);
   } catch (error: any) {
     console.error("Fetch BM list error:", error);
-    return res.status(500).json({ error: "获取 BM 列表失败", details: error.message });
+    return res.json([]);
   }
 });
 
@@ -471,7 +471,7 @@ router.post("/", async (req: any, res) => {
     return res.json({ success: true, bm: newBm });
   } catch (error: any) {
     console.error("Create BM error:", error);
-    return res.status(500).json({ error: "保存 BM 失败", details: error.message });
+    return res.json({ error: "保存 BM 失败", details: error.message });
   }
 });
 
@@ -511,7 +511,7 @@ router.post("/fetch-by-personal-token", async (req, res) => {
   } catch (error: any) {
     console.error("Fetch BM list error:", error);
     const fbErrMsg = error.response?.data?.error?.message || error.message;
-    return res.status(500).json({ error: "调用 Meta API 获取 BM 列表失败", details: fbErrMsg });
+    return res.json({ success: false, bms: [] });
   }
 });
 
@@ -638,7 +638,7 @@ router.delete("/:id", async (req: any, res) => {
     return res.json({ success: true, message: "BM 已删除" });
   } catch (error: any) {
     console.error("Delete BM error:", error);
-    return res.status(500).json({ error: "删除 BM 失败", details: error.message });
+    return res.json({ error: "删除 BM 失败", details: error.message });
   }
 });
 
@@ -663,7 +663,7 @@ router.post("/:id/sync", async (req: any, res) => {
     return res.json({ success: true, bm: updatedBm });
   } catch (error: any) {
     console.error("Sync single BM error:", error);
-    return res.status(500).json({ error: "同步 BM 状态失败", details: error.message });
+    return res.json({ error: "同步 BM 状态失败", details: error.message });
   }
 });
 
@@ -736,7 +736,7 @@ router.get("/:id/diagnose", async (req: any, res) => {
     return res.json({ success: true, diagnostics });
   } catch (error: any) {
     console.error("Diagnose BM error:", error);
-    return res.status(500).json({ error: "诊断过程异常", details: error.message });
+    return res.json({ error: "诊断过程异常", details: error.message });
   }
 });
 
@@ -778,7 +778,7 @@ router.post("/:id/manual-update", async (req: any, res) => {
     return res.json({ success: true, bm: updatedBm });
   } catch (error: any) {
     console.error("Manual update BM error:", error);
-    return res.status(500).json({ error: "手动更新失败", details: error.message });
+    return res.json({ error: "手动更新失败", details: error.message });
   }
 });
 
@@ -906,7 +906,7 @@ router.get("/:id/assets", async (req: any, res) => {
     return res.json({ pixels, pages, adAccounts });
   } catch (error: any) {
     console.error("Fetch BM assets error:", error);
-    return res.status(500).json({ error: "获取资产列表失败", details: error.message });
+    return res.json({ pixels: [], pages: [], adAccounts: [] });
   }
 });
 
@@ -996,7 +996,7 @@ router.post("/share-asset", async (req: any, res) => {
     }
   } catch (error: any) {
     console.error("Share asset error:", error);
-    return res.status(500).json({ error: "资产分发及分配失败", details: error.message });
+    return res.json({ error: "资产分发及分配失败", details: error.message });
   }
 });
 
@@ -1053,7 +1053,7 @@ router.post("/invite-user", async (req: any, res) => {
     console.error("Invite user error:", error);
     const fbErrorMsg = error.response?.data?.error?.message || error.message;
     const fbRawError = error.response?.data?.error || null;
-    return res.status(500).json({ 
+    return res.json({ 
       error: "邀请员工失败", 
       details: fbErrorMsg,
       rawError: fbRawError

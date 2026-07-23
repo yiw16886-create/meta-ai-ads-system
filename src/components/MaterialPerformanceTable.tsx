@@ -64,8 +64,7 @@ export function MaterialPerformanceTable() {
   };
   
   // Date states
-  const [startDate, setStartDate] = useState<Date>(subDays(new Date(), 7));
-  const [endDate, setEndDate] = useState<Date>(new Date());
+  const { startDate, endDate, setStartDate, setEndDate } = useUrlDateRange(7);
 
   // Dropdown list states loaded from backend
   const [storesList, setStoresList] = useState<{ id: string; name: string }[]>([]);
