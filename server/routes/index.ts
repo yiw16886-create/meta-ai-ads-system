@@ -33,26 +33,31 @@ routes.use((req, res, next) => {
 
 // 统一 API 路由鉴权白名单
 routes.use((req, res, next) => {
-  const isWhitelisted = (path: string) => {
-    // 忽略末尾斜杠
-    const cleanPath = path.endsWith('/') && path.length > 1 ? path.slice(0, -1) : path;
-    const whitelist = [
-      '/auth/login',
-      '/auth/register',
-      '/facebook/callback',      // 允许 Facebook OAuth 回调放行
-      '/auth/facebook/callback' // 允许 Facebook OAuth 回调放行
-    ];
-    return whitelist.includes(cleanPath);
-  };
+  const publicPaths = [
+    '/auth/login',
+    '/auth/register',
+    '/auth/verify-token',
+    '/auth/accept-invite',
+    '/auth/invites/verify',
+    '/api/auth/login',
+    '/api/auth/register',
+    '/api/auth/verify-token',
+    '/api/auth/accept-invite',
+    '/api/invites/verify',
+    '/facebook/callback',
+    '/auth/facebook/callback',
+    '/api/facebook/callback',
+    '/api/auth/facebook/callback'
+  ];
 
-  if (isWhitelisted(req.path)) {
+  const reqPath = req.path || '';
+  const originalUrl = req.originalUrl || '';
+
+  if (publicPaths.some(path => reqPath.startsWith(path) || originalUrl.startsWith(path))) {
     return next();
   }
 
   // 健康检查 /api/health 不在此 Router 中，直接在 server.ts 根实例放行
-  
-  // Facebook callback 等无需 JWT 的接口，根据题意要求移除所有匿名访问权限，
-  // 严格遵循例外白名单要求，此处不予放行，统一拦截
   return authenticateJWT(req as any, res, next);
 });
 

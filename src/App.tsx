@@ -2,12 +2,14 @@ import React, { useState, useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { Dashboard } from "./components/Dashboard";
 import { LoginPage } from "./components/LoginPage";
+import { AcceptInvitePage } from "./components/AcceptInvitePage";
 import { AccountDetailsPage } from "./components/AccountDetailsPage";
 import { StoreDetailsPage } from "./components/StoreDetailsPage";
 import { FloatingAIChat } from "./components/FloatingAIChat";
 import { PrivacyPage } from "./components/PrivacyPage";
 import { DataDeletionPage } from "./components/DataDeletionPage";
 import { DeletionStatusPage } from "./components/DeletionStatusPage";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Toaster } from "sonner";
 
 function AppContent({ isAuthenticated, setIsAuthenticated, checking, setChecking, handleLogin, handleLogout }: any) {
@@ -25,8 +27,11 @@ function AppContent({ isAuthenticated, setIsAuthenticated, checking, setChecking
         setIsAuthenticated(false);
       } else {
         const auth = localStorage.getItem("isAuthenticated");
-        if (auth === "true") {
+        const jwtToken = localStorage.getItem("token");
+        if (auth === "true" && jwtToken && jwtToken.trim() !== "") {
           setIsAuthenticated(true);
+        } else {
+          setIsAuthenticated(false);
         }
       }
     } catch (e) {
@@ -49,6 +54,7 @@ function AppContent({ isAuthenticated, setIsAuthenticated, checking, setChecking
       <Route path="/privacy" element={<PrivacyPage />} />
       <Route path="/data-deletion-instructions" element={<DataDeletionPage />} />
       <Route path="/deletion-status" element={<DeletionStatusPage />} />
+      <Route path="/accept-invite" element={<AcceptInvitePage onLogin={handleLogin} />} />
       <Route
         path="/*"
         element={
@@ -92,14 +98,16 @@ export default function App() {
   return (
     <BrowserRouter>
       <Toaster position="top-center" richColors />
-      <AppContent
-        isAuthenticated={isAuthenticated}
-        setIsAuthenticated={setIsAuthenticated}
-        checking={checking}
-        setChecking={setChecking}
-        handleLogin={handleLogin}
-        handleLogout={handleLogout}
-      />
+      <ErrorBoundary>
+        <AppContent
+          isAuthenticated={isAuthenticated}
+          setIsAuthenticated={setIsAuthenticated}
+          checking={checking}
+          setChecking={setChecking}
+          handleLogin={handleLogin}
+          handleLogout={handleLogout}
+        />
+      </ErrorBoundary>
     </BrowserRouter>
   );
 }

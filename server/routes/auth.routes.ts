@@ -41,17 +41,25 @@ router.post("/login", async (req, res) => {
   }
 });
 
-router.post("/verify-token", async (req, res) => {
+router.post(["/verify-token", "/accept-invite", "/invites/verify"], async (req, res) => {
   const { token } = req.body;
-  if (!token) return res.status(400).json({ error: "Token required" });
+  if (!token) return res.status(400).json({ success: false, error: "未提供邀请 Token" });
   try {
     const invitation = await prisma.invitation.findUnique({ where: { token } });
     if (!invitation || invitation.expiresAt < new Date()) {
-      return res.status(400).json({ error: "邀请失效或已过期" });
+      return res.status(400).json({ success: false, error: "邀请失效或已过期" });
     }
-    res.json({ success: true, data: { email: invitation.email, role: invitation.role } });
+    res.json({
+      success: true,
+      data: {
+        email: invitation.email,
+        role: invitation.role,
+        expiresAt: invitation.expiresAt
+      }
+    });
   } catch (e) {
-    res.status(500).json({ error: "Token verification failed" });
+    console.error("Token verification error:", e);
+    res.status(500).json({ success: false, error: "邀请 Token 校验异常" });
   }
 });
 

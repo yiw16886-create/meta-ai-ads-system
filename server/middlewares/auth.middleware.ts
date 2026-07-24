@@ -43,6 +43,30 @@ export async function ensureUserOrganization(userId: number, email: string) {
 }
 
 export function authenticateJWT(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  const publicPaths = [
+    '/auth/login',
+    '/auth/register',
+    '/auth/verify-token',
+    '/auth/accept-invite',
+    '/auth/invites/verify',
+    '/api/auth/login',
+    '/api/auth/register',
+    '/api/auth/verify-token',
+    '/api/auth/accept-invite',
+    '/api/invites/verify',
+    '/facebook/callback',
+    '/auth/facebook/callback',
+    '/api/facebook/callback',
+    '/api/auth/facebook/callback'
+  ];
+
+  const reqPath = req.path || '';
+  const originalUrl = req.originalUrl || '';
+
+  if (publicPaths.some(path => reqPath.startsWith(path) || originalUrl.startsWith(path))) {
+    return next();
+  }
+
   const authHeader = req.headers.authorization;
   
   if (authHeader && authHeader.startsWith("Bearer ")) {

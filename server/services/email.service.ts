@@ -44,15 +44,15 @@ export async function sendInvitationEmail(email: string, token: string, role: st
   
   const baseUrl = baseUrlInput || process.env.APP_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '');
   if (!baseUrl) {
-    console.error("❌ No baseUrl found for invitation emails!");
+    console.warn("⚠️ No baseUrl provided or found in ENV, using fallback domain for invitation email.");
   }
   
   // Normalize the role variable to prevent undefined crashes and handle any casing.
   const normalizedRole = String(role || 'member').toLowerCase();
   
-  // Format the activation URLs safely. We support both root queries and direct paths.
-  // 必须严格使用我们自己的 Vercel 项目域名
-  const registerUrl = `https://1-eight-azure.vercel.app/accept-invite?token=${token}`;
+  // Format the activation URL dynamically using current APP_URL / origin
+  const domainUrl = baseUrl ? baseUrl.replace(/\/$/, '') : 'https://1-eight-azure.vercel.app';
+  const registerUrl = `${domainUrl}/accept-invite?token=${token}`;
   
   const html = `
     <div style="font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
@@ -67,7 +67,7 @@ export async function sendInvitationEmail(email: string, token: string, role: st
         <p style="font-size: 16px; color: #475569; line-height: 1.8;">请点击下方按钮进入激活页面，设置您的登录密码：</p>
         
         <div style="text-align: center; margin: 40px 0;">
-          <a href="${registerUrl}" style="background-color: #2563eb; color: white; padding: 14px 48px; border-radius: 8px; text-decoration: none; font-weight: bold; display: inline-block; font-size: 16px; box-shadow: 0 4px 6px rgba(37, 99, 235, 0.2);">激活账户</a>
+          <a href="${registerUrl}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" style="background-color: #2563eb; color: white; padding: 14px 48px; border-radius: 8px; text-decoration: none; font-weight: bold; display: inline-block; font-size: 16px; box-shadow: 0 4px 6px rgba(37, 99, 235, 0.2);">激活账户</a>
         </div>
         
         <div style="background-color: #f1f5f9; padding: 20px; border-radius: 8px; margin-top: 32px;">
