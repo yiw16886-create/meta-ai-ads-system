@@ -26,6 +26,10 @@ function setCachedApi(key: string, data: any, ttlSecs: number) {
 export async function getShopMaterialLeaderboard(req: Request, res: Response) {
   try {
     const userId = (req as any).user?.id;
+    if (!userId) {
+      return res.json({ success: true, data: [], total: 0 });
+    }
+
     // 1. 获取前端传来的筛选参数
     const { storeId, accountIds, startDate, endDate, materialType, page = 1, pageSize = 20 } = req.query;
     
@@ -33,8 +37,10 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
     const parsedPageSize = Number(pageSize);
     const skip = (parsedPage - 1) * parsedPageSize;
 
-    // 2. 第一步：以 AccountMapping 表为大闸，严格使用 storeId 和 fbAccountId 进行权限隔离
-    const accountMappingWhere: any = {};
+    // 2. 第一步：以 AccountMapping 表为大闸，严格使用 storeId、userId 和 fbAccountId 进行权限隔离
+    const accountMappingWhere: any = {
+      userId: Number(userId)
+    };
     if (storeId && storeId !== 'all') {
       accountMappingWhere.storeId = Number(storeId);
     }
@@ -47,7 +53,7 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
       }
     }
 
-    // 查询该店铺下所有合法绑定的 fbAccountId 集合
+    // 查询该用户与店铺下所有合法绑定的 fbAccountId 集合
     const validAccounts = await prisma.accountMapping.findMany({
       where: accountMappingWhere,
       select: { fbAccountId: true, storeId: true }
@@ -56,10 +62,11 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
     let allowedAccountIds = validAccounts.map(a => cleanFbAccountId(a.fbAccountId));
 
     if (allowedAccountIds.length === 0) {
-      const dbAccounts = await prisma.adAccount.findMany({
+      const userAccounts = await prisma.adAccount.findMany({
+        where: { userId: Number(userId) },
         select: { fb_account_id: true }
       });
-      allowedAccountIds = dbAccounts.map(a => cleanFbAccountId(a.fb_account_id));
+      allowedAccountIds = userAccounts.map(a => cleanFbAccountId(a.fb_account_id));
     }
 
     if (allowedAccountIds.length === 0) {
@@ -415,10 +422,16 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
 export async function getMaterialTrend(req: Request, res: Response) {
   try {
     const userId = (req as any).user?.id;
+    if (!userId) {
+      return res.json({ success: true, data: [] });
+    }
+
     const { storeId, accountId, startDate, endDate, materialType } = req.query;
 
     // Account filtering logic
-    const accountMappingWhere: any = {};
+    const accountMappingWhere: any = {
+      userId: Number(userId)
+    };
     if (storeId && storeId !== 'all') {
       accountMappingWhere.storeId = Number(storeId);
     }
@@ -437,10 +450,11 @@ export async function getMaterialTrend(req: Request, res: Response) {
     let allowedAccountIds = validAccounts.map(a => cleanFbAccountId(a.fbAccountId));
 
     if (allowedAccountIds.length === 0) {
-      const dbAccounts = await prisma.adAccount.findMany({
+      const userAccounts = await prisma.adAccount.findMany({
+        where: { userId: Number(userId) },
         select: { fb_account_id: true }
       });
-      allowedAccountIds = dbAccounts.map(a => cleanFbAccountId(a.fb_account_id));
+      allowedAccountIds = userAccounts.map(a => cleanFbAccountId(a.fb_account_id));
     }
 
     if (allowedAccountIds.length === 0) {

@@ -20,9 +20,15 @@ router.delete("/post/:postId", deletePagePost);
 
 
 // Get all mapped pages
-router.get("/", async (req, res) => {
+router.get("/", async (req: any, res) => {
   try {
-    const pages = await prisma.facebookPage.findMany();
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.json([]);
+    }
+    const pages = await prisma.facebookPage.findMany({
+      where: { userId: Number(userId) }
+    });
     res.json(pages);
   } catch (error: any) {
     res.json({ error: error.message });
@@ -66,9 +72,19 @@ router.post("/sync", authenticateJWT as any, async (req: any, res) => {
 });
 
 // Get posts from DB for a page
-router.get("/:pageId/posts", async (req, res) => {
+router.get("/:pageId/posts", async (req: any, res) => {
   try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.json([]);
+    }
     const { pageId } = req.params;
+    const page = await prisma.facebookPage.findFirst({
+      where: { id: pageId, userId: Number(userId) }
+    });
+    if (!page) {
+      return res.json([]);
+    }
     const posts = await prisma.facebookAdPost.findMany({
       where: { page_id: pageId },
       orderBy: { created_time: 'desc' }
@@ -80,9 +96,19 @@ router.get("/:pageId/posts", async (req, res) => {
 });
 
 // Get comments from DB for a post
-router.get("/post/:postId/comments", async (req, res) => {
+router.get("/post/:postId/comments", async (req: any, res) => {
   try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.json([]);
+    }
     const { postId } = req.params;
+    const post = await prisma.facebookAdPost.findFirst({
+      where: { id: postId, page: { userId: Number(userId) } }
+    });
+    if (!post) {
+      return res.json([]);
+    }
     const comments = await prisma.adPostComment.findMany({
       where: { post_id: postId },
       orderBy: { created_time: 'desc' }
@@ -94,9 +120,19 @@ router.get("/post/:postId/comments", async (req, res) => {
 });
 
 // Page ads fetch endpoint (Sync from Meta API)
-router.post("/:pageId/fetch-ads", async (req, res) => {
+router.post("/:pageId/fetch-ads", async (req: any, res) => {
   try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
     const { pageId } = req.params;
+    const page = await prisma.facebookPage.findFirst({
+      where: { id: pageId, userId: Number(userId) }
+    });
+    if (!page) {
+      return res.status(403).json({ error: "Forbidden: Page access denied" });
+    }
     const result = await MetaPageManagerService.fetchAdsPosts(pageId);
     res.json({ success: true, posts: result.posts, warnings: result.warnings });
   } catch (error: any) {

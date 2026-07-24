@@ -62,7 +62,7 @@ router.get("", async (req: any, res) => {
   // Fallback if no token is configured or live API failed
   try {
     const dbAccs = await prisma.adAccount.findMany({
-      where: userId ? { userId } : {},
+      where: { userId: Number(userId) },
       include: { store: true }
     });
     if (dbAccs.length > 0) {
@@ -417,20 +417,23 @@ router.get("/:accountId/audience-insights", async (req: any, res) => {
   const userId = req.user?.id;
   const cleanAccId = accountId.replace("act_", "").trim();
 
+  if (!userId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
   // Validate account ownership
   const ownsAccountAudience = await prisma.adAccount.findFirst({
     where: {
       fb_account_id: cleanAccId,
-      OR: [
-        { userId },
-        { userId: null },
-        ...(req.user?.org_id ? [{ user: { org_id: req.user.org_id } }] : [])
-      ]
+      userId: Number(userId)
     }
   });
   if (!ownsAccountAudience) {
     const mapping = await prisma.accountMapping.findFirst({
-      where: { fbAccountId: { contains: cleanAccId } }
+      where: {
+        fbAccountId: { contains: cleanAccId },
+        userId: Number(userId)
+      }
     });
     if (!mapping && req.user?.role !== "SUPER_ADMIN") {
       return res.status(403).json({ error: "Forbidden: You do not have access to this account." });
@@ -689,12 +692,16 @@ router.get("/list", async (req: any, res) => {
       }
     }
 
+    if (!userId) {
+      return res.json([]);
+    }
+
     const allAdAccounts = await prisma.adAccount.findMany({
-      where: userId ? { OR: [{ userId }, { userId: null }] } : {}
+      where: { userId: Number(userId) }
     });
     const allMonitoring = await prisma.metaAccountMonitoring.findMany({});
     const allMappings = await prisma.accountMapping.findMany({
-      where: userId ? { OR: [{ userId }, { userId: null }] } : {}
+      where: { userId: Number(userId) }
     });
     const allInsights = await prisma.adInsight.findMany({
       select: { accountId: true, accountName: true },

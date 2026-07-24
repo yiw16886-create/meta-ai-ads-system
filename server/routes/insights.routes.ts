@@ -60,19 +60,14 @@ router.get("/", async (req: any, res) => {
       return res.json([]);
     }
 
-    // Get Facebook account IDs assigned to this user, unassigned, or mapped
+    // Get Facebook account IDs assigned strictly to this user
     const adAccounts = await prisma.adAccount.findMany({
-      where: {
-        OR: [
-          { userId },
-          { userId: null },
-          ...(req.user?.org_id ? [{ user: { org_id: req.user.org_id } }] : [])
-        ]
-      },
+      where: { userId: Number(userId) },
       select: { fb_account_id: true }
     });
 
     const mappings = await prisma.accountMapping.findMany({
+      where: { userId: Number(userId) },
       select: { fbAccountId: true }
     });
 
@@ -93,6 +88,10 @@ router.get("/", async (req: any, res) => {
     });
 
     const isSuperAdmin = req.user?.role === "SUPER_ADMIN";
+    if (!isSuperAdmin && accountSet.size === 0) {
+      return res.json([]);
+    }
+
     const whereClause: any = {};
 
     if (startDate || endDate) {
@@ -101,7 +100,7 @@ router.get("/", async (req: any, res) => {
       if (endDate) whereClause.date.lte = String(endDate).slice(0, 10);
     }
 
-    if (!isSuperAdmin && accountSet.size > 0) {
+    if (!isSuperAdmin) {
       whereClause.accountId = { in: Array.from(accountSet) };
     }
 
