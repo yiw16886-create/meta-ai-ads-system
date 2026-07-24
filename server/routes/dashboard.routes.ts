@@ -13,8 +13,31 @@ router.get("/stats", async (req: any, res) => {
   const { startDate, endDate, accountId, storeId } = req.query;
 
   try {
+    const userId = req.user?.id ? Number(req.user.id) : null;
+    if (!userId) {
+      return res.json({
+        success: true,
+        summary: { grandSpend: 0, grandRevenue: 0, grandImpressions: 0, grandClicks: 0, grandPurchases: 0, grandAddToCart: 0, grandInitiateCheckout: 0, grandRoas: 0 },
+        accounts: []
+      });
+    }
+
     const sDate = startDate ? String(startDate).slice(0, 10) : undefined;
     const eDate = endDate ? String(endDate).slice(0, 10) : undefined;
+
+    const userAccounts = await prisma.adAccount.findMany({
+      where: { userId },
+      select: { fb_account_id: true }
+    });
+    const userAccountIds = userAccounts.map(a => a.fb_account_id.replace("act_", "").trim());
+
+    if (userAccountIds.length === 0) {
+      return res.json({
+        success: true,
+        summary: { grandSpend: 0, grandRevenue: 0, grandImpressions: 0, grandClicks: 0, grandPurchases: 0, grandAddToCart: 0, grandInitiateCheckout: 0, grandRoas: 0 },
+        accounts: []
+      });
+    }
 
     const whereClause: any = {};
 
@@ -26,17 +49,29 @@ router.get("/stats", async (req: any, res) => {
 
     if (accountId) {
       const cleanAccId = String(accountId).replace("act_", "").trim();
-      whereClause.accountId = cleanAccId;
+      if (userAccountIds.includes(cleanAccId)) {
+        whereClause.accountId = cleanAccId;
+      } else {
+        return res.json({
+          success: true,
+          summary: { grandSpend: 0, grandRevenue: 0, grandImpressions: 0, grandClicks: 0, grandPurchases: 0, grandAddToCart: 0, grandInitiateCheckout: 0, grandRoas: 0 },
+          accounts: []
+        });
+      }
     } else if (storeId) {
       const parsedStoreId = parseInt(String(storeId), 10);
       if (!isNaN(parsedStoreId)) {
         const storeAccounts = await prisma.adAccount.findMany({
-          where: { storeId: parsedStoreId },
+          where: { storeId: parsedStoreId, userId },
           select: { fb_account_id: true }
         });
         const accIds = storeAccounts.map(a => a.fb_account_id.replace("act_", "").trim());
         whereClause.accountId = { in: accIds };
+      } else {
+        whereClause.accountId = { in: userAccountIds };
       }
+    } else {
+      whereClause.accountId = { in: userAccountIds };
     }
 
     // 可以在 Prisma findMany 后按 accountId 进行 SUM 统计，或者用 prisma.adInsight.groupBy

@@ -416,9 +416,12 @@ router.post("/", async (req: any, res) => {
 router.get("/all-dashboard-summary", async (req: any, res) => {
   const { startDate, endDate } = req.query;
   try {
-    const userId = req.user?.id;
+    const userId = req.user?.id ? Number(req.user.id) : null;
+    if (!userId) {
+      return res.json({});
+    }
     const stores = await prisma.store.findMany({
-      where: userId ? { OR: [{ userId }, { userId: null }] } : {},
+      where: { userId },
     });
     const result: Record<string, any> = {};
 
