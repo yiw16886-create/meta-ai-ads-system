@@ -149,7 +149,7 @@ export function StoreDetailsPage({
         setAvailableAccounts(res.data);
       }
     } catch (err) {
-      console.error("Failed to fetch available accounts:", err);
+      console.error("Failed to fetch available accounts:", err?.message || err);
     } finally {
       setAccountsListLoading(false);
     }
@@ -231,7 +231,7 @@ export function StoreDetailsPage({
         setAdInsights(insightsRes.data);
       }
     } catch (error) {
-      console.error("Failed to fetch associated account data:", error);
+      console.error("Failed to fetch associated account data:", error?.message || error);
     } finally {
       setAccountsLoading(false);
     }
@@ -407,7 +407,7 @@ export function StoreDetailsPage({
         toast.error("添加广告账户失败");
       }
     } catch (error: any) {
-      console.error("Add account mappings error:", error);
+      console.error("Add account mappings error:", error?.message || error);
       toast.error(error.response?.data?.error || "添加广告账户出错");
     }
   };
@@ -437,7 +437,7 @@ export function StoreDetailsPage({
         toast.error("解除关联失败");
       }
     } catch (error) {
-      console.error("Failed to unmap account:", error);
+      console.error("Failed to unmap account:", error?.message || error);
       toast.error("解除关联失败");
     } finally {
       setAccountToUnmap(null);
@@ -490,7 +490,7 @@ export function StoreDetailsPage({
         loading: false 
       });
     } catch (err) {
-      console.error("Failed to fetch dashboard summary", err);
+      console.error("Failed to fetch dashboard summary", err?.message || err);
       setDashboardSummary(prev => ({ ...prev, loading: false }));
     }
   };

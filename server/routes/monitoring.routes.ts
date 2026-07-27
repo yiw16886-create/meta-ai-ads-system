@@ -34,7 +34,10 @@ router.get("/accounts", async (req: any, res) => {
     // 1. Fetch persistent cache or refresh if requested (Filtered by current user's mapped accounts)
     let cachedAccounts = await prisma.metaAccountMonitoring.findMany({
       where: {
-        adAccount: { userId: Number(userId) }
+        OR: [
+          { adAccount: { userId: Number(userId) } },
+          { adAccount: { userId: null } }
+        ]
       }
     });
     
@@ -80,7 +83,10 @@ router.get("/accounts", async (req: any, res) => {
       
       cachedAccounts = await prisma.metaAccountMonitoring.findMany({
         where: {
-          adAccount: { userId: Number(userId) }
+          OR: [
+            { adAccount: { userId: Number(userId) } },
+            { adAccount: { userId: null } }
+          ]
         }
       });
     }

@@ -58,7 +58,7 @@ export function AcceptInvitePage({ onLogin }: AcceptInvitePageProps) {
         }
       } catch (err: any) {
         if (!isMounted) return;
-        console.error("Failed to verify invite token:", err);
+        console.error("Failed to verify invite token:", err?.message || err);
         setValidToken(false);
         setErrorMessage(
           err.response?.data?.error || "邀请信息校验失败，链接可能已过期或已被使用。"
@@ -116,7 +116,7 @@ export function AcceptInvitePage({ onLogin }: AcceptInvitePageProps) {
         toast.error(res.data?.error || "激活失败，请重试");
       }
     } catch (err: any) {
-      console.error("Account activation error:", err);
+      console.error("Account activation error:", err?.message || err);
       toast.error(err.response?.data?.error || "账号激活失败，请联系系统管理员");
     } finally {
       setSubmitting(false);

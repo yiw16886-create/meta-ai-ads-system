@@ -99,7 +99,7 @@ export function CreativeIntelligenceDashboard({
         setStoresList(newStores);
         setAvailableAccounts(newAccounts);
       } catch (err) {
-        console.error("Failed to load stores/accounts mapping", err);
+        console.error("Failed to load stores/accounts mapping", err?.message || err);
       }
     };
     fetchStores();
@@ -361,7 +361,7 @@ export function CreativeIntelligenceDashboard({
       toast.success(`素材同步完成: 成功抓取 ${creativeCount} 个素材`, { id: syncToast });
       fetchCreativeData();
     } catch (error: any) {
-      console.error("Stream sync creatives error:", error);
+      console.error("Stream sync creatives error:", error?.message || error);
       toast.error(error.message || "素材同步失败，请重试", { id: syncToast });
     } finally {
       setIsSyncing(false);

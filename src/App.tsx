@@ -91,7 +91,7 @@ export default function App() {
       localStorage.clear();
       setIsAuthenticated(false);
     } catch (e) {
-      console.error("Failed to clear localStorage on logout", e);
+      console.error("Failed to clear localStorage on logout", e?.message || e);
     }
   };
 

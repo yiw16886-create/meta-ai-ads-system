@@ -10,40 +10,48 @@ router.get("/available-accounts", async (req: any, res) => {
       return res.json({ success: true, data: [] });
     }
 
-    const adAccounts = await prisma.adAccount.findMany({
-      where: { userId },
-      select: { fb_account_id: true, fb_account_name: true }
-    });
-
+    const numUserId = userId;
+    const isSuperAdmin = req.user?.role === "SUPER_ADMIN";
+    
     const mappings = await prisma.accountMapping.findMany({
-      where: { userId },
-      select: { fbAccountId: true, name: true }
+      ...(isSuperAdmin ? {} : { where: { OR: [{ userId: numUserId }, { userId: null }] } }),
+      include: { store: true },
     });
 
-    const userAccountIds = adAccounts.map(a => String(a.fb_account_id).replace("act_", "").trim());
+    const adAccountData = await prisma.adAccount.findMany({
+      ...(isSuperAdmin ? {} : { where: { OR: [{ userId: numUserId }, { userId: null }] } }),
+      select: { fb_account_id: true, fb_account_name: true },
+    });
 
-    const insights = userAccountIds.length > 0
-      ? await prisma.adInsight.findMany({
-          where: { accountId: { in: userAccountIds.flatMap(id => [id, `act_${id}`]) } },
-          select: { accountId: true, accountName: true },
-          distinct: ['accountId']
-        })
-      : [];
+    const monitoringData = await prisma.metaAccountMonitoring.findMany({
+      select: { accountId: true, accountName: true, activityStatus: true, status: true },
+    });
+
+    const insightData = await prisma.adInsight.findMany({
+      select: { accountId: true, accountName: true },
+      distinct: ['accountId']
+    });
 
     const uniqueMap = new Map();
-    adAccounts.forEach(a => {
+    monitoringData.forEach(m => {
+      const clean = String(m.accountId).replace("act_", "").trim();
+      uniqueMap.set(clean, { accountId: clean, accountName: m.accountName || clean });
+    });
+    adAccountData.forEach(a => {
       const clean = String(a.fb_account_id).replace("act_", "").trim();
-      uniqueMap.set(clean, { accountId: clean, accountName: a.fb_account_name || clean });
+      if (!uniqueMap.has(clean) || uniqueMap.get(clean).accountName === clean) {
+        uniqueMap.set(clean, { accountId: clean, accountName: a.fb_account_name || clean });
+      }
     });
     mappings.forEach(m => {
       const clean = String(m.fbAccountId).replace("act_", "").trim();
-      if (!uniqueMap.has(clean)) {
+      if (!uniqueMap.has(clean) || uniqueMap.get(clean).accountName === clean) {
         uniqueMap.set(clean, { accountId: clean, accountName: m.name || clean });
       }
     });
-    insights.forEach(i => {
+    insightData.forEach(i => {
       const clean = String(i.accountId).replace("act_", "").trim();
-      if (!uniqueMap.has(clean)) {
+      if (!uniqueMap.has(clean) || uniqueMap.get(clean).accountName === clean) {
         uniqueMap.set(clean, { accountId: clean, accountName: i.accountName || clean });
       }
     });
@@ -62,7 +70,7 @@ router.post("/", async (req: any, res) => {
       return res.status(401).json({ error: "用户未登录" });
     }
 
-    const { accountId, storeId, fbPageId, project, owner } = req.body;
+    const { accountId, storeId, fbPageId, project, owner, status } = req.body;
     if (!accountId) {
       return res.status(400).json({ error: "accountId is required" });
     }
@@ -70,40 +78,81 @@ router.post("/", async (req: any, res) => {
     const cleanAccId = String(accountId).replace("act_", "").trim();
     const targetStoreId = storeId ? Number(storeId) : null;
 
-    const mapping = await prisma.accountMapping.upsert({
-      where: { fbAccountId: cleanAccId },
-      update: {
-        storeId: targetStoreId,
-        userId,
-        fbPageId: fbPageId ? String(fbPageId) : null,
-        project: project ? String(project) : null,
-        owner: owner ? String(owner) : null,
-        updatedAt: new Date(),
-      },
-      create: {
-        fbAccountId: cleanAccId,
-        storeId: targetStoreId,
-        userId,
-        fbPageId: fbPageId ? String(fbPageId) : null,
-        project: project ? String(project) : null,
-        owner: owner ? String(owner) : null,
-      },
-    });
+    let statusVal = "ACTIVE";
+    if (status) {
+      const s = String(status).trim();
+      if (s === "停用" || s.toUpperCase() === "DISABLED" || s === "INACTIVE" || s === "2" || s === "0") {
+        statusVal = "DISABLED";
+      } else if (s === "正常" || s.toUpperCase() === "ACTIVE" || s === "1") {
+        statusVal = "ACTIVE";
+      }
+    }
 
-    if (targetStoreId) {
-      await prisma.adAccount.upsert({
-        where: { fb_account_id: cleanAccId },
+    let mapping;
+    try {
+      mapping = await prisma.accountMapping.upsert({
+        where: { fbAccountId: cleanAccId },
         update: {
           storeId: targetStoreId,
           userId,
+          fbPageId: fbPageId ? String(fbPageId) : null,
+          project: project ? String(project) : null,
+          owner: owner ? String(owner) : null,
+          status: statusVal,
+          updatedAt: new Date(),
         },
         create: {
-          fb_account_id: cleanAccId,
-          fb_account_name: cleanAccId,
+          fbAccountId: cleanAccId,
           storeId: targetStoreId,
           userId,
+          fbPageId: fbPageId ? String(fbPageId) : null,
+          project: project ? String(project) : null,
+          owner: owner ? String(owner) : null,
+          status: statusVal,
         },
       });
+    } catch (err: any) {
+      console.warn(`[Save Mapping] Retry fallback for ${cleanAccId}:`, err.message);
+      await prisma.accountMapping.updateMany({
+        where: { fbAccountId: cleanAccId },
+        data: {
+          storeId: targetStoreId,
+          userId,
+          fbPageId: fbPageId ? String(fbPageId) : null,
+          project: project ? String(project) : null,
+          owner: owner ? String(owner) : null,
+          status: statusVal,
+          updatedAt: new Date(),
+        },
+      });
+      mapping = await prisma.accountMapping.findFirst({ where: { fbAccountId: cleanAccId } });
+    }
+
+    if (targetStoreId) {
+      try {
+        await prisma.adAccount.upsert({
+          where: { fb_account_id: cleanAccId },
+          update: {
+            storeId: targetStoreId,
+            userId,
+          },
+          create: {
+            fb_account_id: cleanAccId,
+            fb_account_name: cleanAccId,
+            storeId: targetStoreId,
+            userId,
+          },
+        });
+      } catch (err: any) {
+        console.warn(`[Save AdAccount] Retry fallback for ${cleanAccId}:`, err.message);
+        await prisma.adAccount.updateMany({
+          where: { fb_account_id: cleanAccId },
+          data: {
+            storeId: targetStoreId,
+            userId,
+          },
+        });
+      }
     }
 
     return res.json({ success: true, mapping });
@@ -123,32 +172,26 @@ router.get("/", async (req: any, res) => {
       return res.json([]);
     }
 
+    const isSuperAdmin = req.user?.role === "SUPER_ADMIN";
+
     const mappings = await prisma.accountMapping.findMany({
-      where: { userId: numUserId },
+      ...(isSuperAdmin ? {} : { where: { OR: [{ userId: numUserId }, { userId: null }] } }),
       include: { store: true },
     });
 
     const adAccountData = await prisma.adAccount.findMany({
-      where: { userId: numUserId },
+      ...(isSuperAdmin ? {} : { where: { OR: [{ userId: numUserId }, { userId: null }] } }),
       select: { fb_account_id: true, fb_account_name: true },
     });
 
-    const userAccountIds = adAccountData.map(a => String(a.fb_account_id).replace("act_", "").trim());
+    const monitoringData = await prisma.metaAccountMonitoring.findMany({
+      select: { accountId: true, accountName: true, activityStatus: true, status: true },
+    });
 
-    const monitoringData = userAccountIds.length > 0
-      ? await prisma.metaAccountMonitoring.findMany({
-          where: { accountId: { in: userAccountIds.flatMap(id => [id, `act_${id}`]) } },
-          select: { accountId: true, accountName: true, activityStatus: true },
-        })
-      : [];
-
-    const insightData = userAccountIds.length > 0
-      ? await prisma.adInsight.findMany({
-          where: { accountId: { in: userAccountIds.flatMap(id => [id, `act_${id}`]) } },
-          select: { accountId: true, accountName: true },
-          distinct: ['accountId']
-        })
-      : [];
+    const insightData = await prisma.adInsight.findMany({
+      select: { accountId: true, accountName: true },
+      distinct: ['accountId']
+    });
 
     const nameMap = new Map<string, string>();
     for (const d of monitoringData) {
@@ -170,19 +213,19 @@ router.get("/", async (req: any, res) => {
       }
     }
 
-    // Left-Join minded unique mapping generation: gather all unique account IDs
+    // Gather all unique account IDs across all tables
     const uniqueIds = new Set<string>();
-    mappings.forEach((m) =>
-      uniqueIds.add(String(m.fbAccountId).replace("act_", "").trim()),
-    );
     monitoringData.forEach((d) =>
-      uniqueIds.add(String(d.accountId).replace("act_", "").trim()),
+      uniqueIds.add(String(d.accountId).replace("act_", "").trim())
+    );
+    mappings.forEach((m) =>
+      uniqueIds.add(String(m.fbAccountId).replace("act_", "").trim())
     );
     adAccountData.forEach((d) =>
-      uniqueIds.add(String(d.fb_account_id).replace("act_", "").trim()),
+      uniqueIds.add(String(d.fb_account_id).replace("act_", "").trim())
     );
     insightData.forEach((d) =>
-      uniqueIds.add(String(d.accountId).replace("act_", "").trim()),
+      uniqueIds.add(String(d.accountId).replace("act_", "").trim())
     );
 
     // Map them to format so frontend is happy
@@ -193,6 +236,19 @@ router.get("/", async (req: any, res) => {
       );
       const accId = m ? m.fbAccountId : cleanId;
       const displayName = nameMap.get(cleanId) || (m && m.name ? m.name : accId);
+      const monItem = monitoringData.find(
+        (d) => String(d.accountId).replace("act_", "").trim() === cleanId,
+      );
+
+      let statusVal = "ACTIVE";
+      if (m && m.status) {
+        statusVal = m.status;
+      } else if (monItem) {
+        if (monItem.activityStatus === 4 || monItem.status === 2 || monItem.status === 3) {
+          statusVal = "DISABLED";
+        }
+      }
+
       return {
         accountId: accId.startsWith("act_") ? accId : `act_${accId}`,
         accountName: displayName,
@@ -201,15 +257,13 @@ router.get("/", async (req: any, res) => {
         storeId: m ? m.storeId : null,
         project: m && m.project ? m.project : "未分配",
         owner: m && m.owner ? m.owner : "未分配",
-        activityStatus:
-          monitoringData.find(
-            (d) => String(d.accountId).replace("act_", "").trim() === cleanId,
-          )?.activityStatus || 1,
+        status: statusVal,
+        activityStatus: monItem?.activityStatus || 1,
       };
     });
 
     if (activeOnly === "true") {
-      mapped = mapped.filter((item) => (item.activityStatus || 0) < 4);
+      mapped = mapped.filter((item) => item.status !== "DISABLED" && (item.activityStatus || 0) < 4);
     }
 
     res.json(mapped);
@@ -239,105 +293,188 @@ router.post("/batch", async (req: any, res) => {
     // Filter out invalid mappings before updating DB
     const validMappings = mappings.filter((m: any) => m && m.accountId != null);
 
-    const results = await Promise.all(
-      validMappings.map(async (mapping: any) => {
-        const cleanAccId = String(mapping.accountId).replace("act_", "").trim();
-        const storeName = mapping.store ? String(mapping.store).trim() : null;
-        let targetStoreId: number | null = null;
+    // Deduplicate by cleanAccId (keep latest) to prevent self-collision in array
+    const deduplicatedMap = new Map<string, any>();
+    for (const mapping of validMappings) {
+      const cleanAccId = String(mapping.accountId).replace("act_", "").trim();
+      if (cleanAccId) {
+        deduplicatedMap.set(cleanAccId, mapping);
+      }
+    }
 
-        if (storeName && storeName !== "未分配" && storeName !== "Unknown") {
-          let store = await prisma.store.findFirst({
-            where: {
-              name: {
-                equals: storeName,
-                mode: "insensitive",
-              },
-            },
-          });
+    const uniqueMappings = Array.from(deduplicatedMap.values());
+    const results = [];
 
-          if (!store) {
-            try {
-              store = await prisma.store.upsert({
-                where: { name: storeName },
-                update: { userId },
-                create: {
-                  name: storeName,
-                  platform: "shopline",
-                  userId,
-                },
-              });
-            } catch (e) {
-              store = await prisma.store.findFirst({
-                where: {
-                  name: {
-                    equals: storeName,
-                    mode: "insensitive",
-                  },
-                },
-              });
-            }
-          }
-          if (store) {
-            targetStoreId = store.id;
+    // Pre-resolve all unique store names in one pass
+    const storeNames = new Set<string>();
+    for (const mapping of uniqueMappings) {
+      const name = mapping.store ? String(mapping.store).trim() : null;
+      if (name && name !== "未分配" && name !== "Unknown") {
+        storeNames.add(name);
+      }
+    }
+
+    const storeMap = new Map<string, number>();
+    if (storeNames.size > 0) {
+      const existingStores = await prisma.store.findMany();
+      for (const s of existingStores) {
+        storeMap.set(s.name.toLowerCase(), s.id);
+      }
+
+      for (const sName of storeNames) {
+        if (!storeMap.has(sName.toLowerCase())) {
+          try {
+            const newStore = await prisma.store.upsert({
+              where: { name: sName },
+              update: { userId },
+              create: { name: sName, platform: "shopline", userId },
+            });
+            storeMap.set(sName.toLowerCase(), newStore.id);
+          } catch (e) {
+            const found = await prisma.store.findFirst({
+              where: { name: { equals: sName, mode: "insensitive" } },
+            });
+            if (found) storeMap.set(sName.toLowerCase(), found.id);
           }
         }
+      }
+    }
 
-        const upMap = await prisma.accountMapping.upsert({
-          where: { fbAccountId: cleanAccId },
-          update: {
-            storeId: targetStoreId,
-            userId,
-            fbPageId: mapping.fbPageId ? String(mapping.fbPageId) : null,
-            project:
-              mapping.project && String(mapping.project).trim() !== "未分配"
-                ? String(mapping.project).trim()
-                : null,
-            owner:
-              mapping.owner && String(mapping.owner).trim() !== "未分配"
-                ? String(mapping.owner).trim()
-                : null,
-            updatedAt: new Date(),
-          },
-          create: {
-            storeId: targetStoreId,
-            userId,
-            fbAccountId: cleanAccId,
-            fbPageId: mapping.fbPageId ? String(mapping.fbPageId) : null,
-            project:
-              mapping.project && String(mapping.project).trim() !== "未分配"
-                ? String(mapping.project).trim()
-                : null,
-            owner:
-              mapping.owner && String(mapping.owner).trim() !== "未分配"
-                ? String(mapping.owner).trim()
-                : null,
-          },
-        });
+    // Process mappings in chunks to avoid single query bottleneck while remaining safe
+    const chunkSize = 20;
+    for (let i = 0; i < uniqueMappings.length; i += chunkSize) {
+      const chunk = uniqueMappings.slice(i, i + chunkSize);
+      await Promise.all(
+        chunk.map(async (mapping) => {
+          const cleanAccId = String(mapping.accountId).replace("act_", "").trim();
+          const storeName = mapping.store ? String(mapping.store).trim() : null;
+          let targetStoreId: number | null = null;
 
-        // Ensure AdAccount record exists and points to targetStoreId
-        await prisma.adAccount.upsert({
-          where: { fb_account_id: cleanAccId },
-          update: {
-            storeId: targetStoreId,
-            userId,
-            fb_account_name: mapping.accountName
-              ? String(mapping.accountName).trim()
-              : undefined,
-          },
-          create: {
-            fb_account_id: cleanAccId,
-            fb_account_name: mapping.accountName
-              ? String(mapping.accountName).trim()
-              : cleanAccId,
-            storeId: targetStoreId,
-            userId,
-          },
-        });
+          if (storeName && storeName !== "未分配" && storeName !== "Unknown") {
+            targetStoreId = storeMap.get(storeName.toLowerCase()) || null;
+          }
 
-        return upMap;
-      }),
-    );
-    res.json({ success: true, count: results.filter(Boolean).length });
+          const projectValue =
+            mapping.project && String(mapping.project).trim() !== "未分配"
+              ? String(mapping.project).trim()
+              : null;
+          const ownerValue =
+            mapping.owner && String(mapping.owner).trim() !== "未分配"
+              ? String(mapping.owner).trim()
+              : null;
+
+          let statusVal: string | undefined = undefined;
+          const rawStatus =
+            mapping.status ||
+            mapping.accountStatus ||
+            mapping["状态"] ||
+            mapping["账户状态"];
+          if (
+            rawStatus !== undefined &&
+            rawStatus !== null &&
+            String(rawStatus).trim() !== ""
+          ) {
+            const s = String(rawStatus).trim();
+            if (
+              s === "停用" ||
+              s.toUpperCase() === "DISABLED" ||
+              s === "INACTIVE" ||
+              s === "2" ||
+              s === "0"
+            ) {
+              statusVal = "DISABLED";
+            } else if (
+              s === "正常" ||
+              s.toUpperCase() === "ACTIVE" ||
+              s === "1"
+            ) {
+              statusVal = "ACTIVE";
+            } else {
+              statusVal = s;
+            }
+          }
+
+          let upMap;
+          try {
+            upMap = await prisma.accountMapping.upsert({
+              where: { fbAccountId: cleanAccId },
+              update: {
+                storeId: targetStoreId,
+                userId,
+                fbPageId: mapping.fbPageId ? String(mapping.fbPageId) : null,
+                project: projectValue,
+                owner: ownerValue,
+                ...(statusVal ? { status: statusVal } : {}),
+                updatedAt: new Date(),
+              },
+              create: {
+                storeId: targetStoreId,
+                userId,
+                fbAccountId: cleanAccId,
+                fbPageId: mapping.fbPageId ? String(mapping.fbPageId) : null,
+                project: projectValue,
+                owner: ownerValue,
+                status: statusVal || "ACTIVE",
+              },
+            });
+          } catch (mErr: any) {
+            await prisma.accountMapping.updateMany({
+              where: { fbAccountId: cleanAccId },
+              data: {
+                storeId: targetStoreId,
+                userId,
+                fbPageId: mapping.fbPageId ? String(mapping.fbPageId) : null,
+                project: projectValue,
+                owner: ownerValue,
+                ...(statusVal ? { status: statusVal } : {}),
+                updatedAt: new Date(),
+              },
+            });
+            upMap = await prisma.accountMapping.findFirst({
+              where: { fbAccountId: cleanAccId },
+            });
+          }
+
+          try {
+            await prisma.adAccount.upsert({
+              where: { fb_account_id: cleanAccId },
+              update: {
+                storeId: targetStoreId,
+                userId,
+                fb_account_name: mapping.accountName
+                  ? String(mapping.accountName).trim()
+                  : undefined,
+              },
+              create: {
+                fb_account_id: cleanAccId,
+                fb_account_name: mapping.accountName
+                  ? String(mapping.accountName).trim()
+                  : cleanAccId,
+                storeId: targetStoreId,
+                userId,
+              },
+            });
+          } catch (adErr: any) {
+            await prisma.adAccount.updateMany({
+              where: { fb_account_id: cleanAccId },
+              data: {
+                storeId: targetStoreId,
+                userId,
+                fb_account_name: mapping.accountName
+                  ? String(mapping.accountName).trim()
+                  : undefined,
+              },
+            });
+          }
+
+          if (upMap) {
+            results.push(upMap);
+          }
+        })
+      );
+    }
+
+    res.json({ success: true, count: results.length });
   } catch (err: any) {
     console.error("Batch save mappings error:", err);
     res

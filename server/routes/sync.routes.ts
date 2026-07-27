@@ -53,8 +53,13 @@ router.post("/sync", async (req: any, res) => {
     const DORMANT_ACCOUNT_IDS = ["26380439", "341040412"];
 
     // 仅同步已映射或已绑定的账户 (AccountMapping 或 AdAccount 中的账户)，避免全局请求几千个账户导致封禁
-    const dbMappings = await prisma.accountMapping.findMany();
-    const dbAdAccounts = await prisma.adAccount.findMany();
+    const currentUserId = req.user?.id ? Number(req.user.id) : null;
+    const dbMappings = await prisma.accountMapping.findMany({
+      where: currentUserId ? { OR: [{ userId: currentUserId }, { userId: null }] } : {}
+    });
+    const dbAdAccounts = await prisma.adAccount.findMany({
+      where: currentUserId ? { OR: [{ userId: currentUserId }, { userId: null }] } : {}
+    });
     const allowedAccountIds = new Set<string>();
     dbMappings.forEach(m => { if (m.fbAccountId) allowedAccountIds.add(m.fbAccountId.replace("act_", "")); });
     dbAdAccounts.forEach(a => { if (a.fb_account_id) allowedAccountIds.add(a.fb_account_id.replace("act_", "")); });
@@ -279,8 +284,13 @@ router.get("/cron/sync-monthly", async (req: any, res) => {
     const disabledAccountIds = disabledAccounts.map(a => a.accountId);
     const DORMANT_ACCOUNT_IDS = ["26380439", "341040412"];
 
-    const dbMappings = await prisma.accountMapping.findMany();
-    const dbAdAccounts = await prisma.adAccount.findMany();
+    const cronUserId = req.user?.id ? Number(req.user.id) : null;
+    const dbMappings = await prisma.accountMapping.findMany({
+      where: cronUserId ? { OR: [{ userId: cronUserId }, { userId: null }] } : {}
+    });
+    const dbAdAccounts = await prisma.adAccount.findMany({
+      where: cronUserId ? { OR: [{ userId: cronUserId }, { userId: null }] } : {}
+    });
     const allowedAccountIds = new Set<string>();
     dbMappings.forEach(m => { if (m.fbAccountId) allowedAccountIds.add(m.fbAccountId.replace("act_", "")); });
     dbAdAccounts.forEach(a => { if (a.fb_account_id) allowedAccountIds.add(a.fb_account_id.replace("act_", "")); });

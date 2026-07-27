@@ -112,7 +112,7 @@ export function MaterialPerformanceTable() {
         }));
         setAccountsList(formattedAccounts);
       } catch (err) {
-        console.error("加载店铺/帐号映射关系失败:", err);
+        console.error("加载店铺/帐号映射关系失败:", err?.message || err);
       }
     };
     loadConfiguration();
@@ -363,7 +363,7 @@ export function MaterialPerformanceTable() {
           setPreviewAllData(response.data.data || []);
         }
       } catch (error) {
-        console.error('获取全部预览数据失败:', error);
+        console.error('获取全部预览数据失败:', error?.message || error);
       } finally {
         if (active) {
           setPreviewLoading(false);
@@ -680,7 +680,7 @@ export function MaterialPerformanceTable() {
       toast.success(`素材同步完成: 成功抓取 ${creativeCount} 个素材`, { id: syncToast });
       refresh();
     } catch (error: any) {
-      console.error("Stream sync creatives error:", error);
+      console.error("Stream sync creatives error:", error?.message || error);
       toast.error(error.message || "素材同步失败，请重试", { id: syncToast });
     } finally {
       setIsSyncing(false);

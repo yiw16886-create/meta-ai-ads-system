@@ -212,10 +212,16 @@ router.get("/accounts", authenticateJWT as any, async (req: AuthenticatedRequest
     const token = await getMetaToken(userId);
 
     // 1. 本地 DB 查询 (AdAccount + AccountMapping)
+    const numUserId = userId ? Number(userId) : null;
+    if (!numUserId) {
+      return res.json({ success: true, accounts: [] });
+    }
     const dbAccounts = await prisma.adAccount.findMany({
+      where: { OR: [{ userId: numUserId }, { userId: null }] },
       select: { fb_account_id: true, fb_account_name: true }
     });
     const dbMappings = await prisma.accountMapping.findMany({
+      where: { OR: [{ userId: numUserId }, { userId: null }] },
       select: { fbAccountId: true, project: true }
     });
 
@@ -314,6 +320,42 @@ const handleSyncSingleAccount = async (req: AuthenticatedRequest, res: any) => {
 
     const cleanAccountId = String(accountId).replace("act_", "").trim();
 
+    const numUserId = userId ? Number(userId) : null;
+    if (!numUserId) {
+      return res.status(200).json({ success: false, error: "未登录或用户效验失败", isForbidden: true });
+    }
+
+    // 验证该账户是否属于当前用户或未绑定账户
+    const ownsAdAccount = await prisma.adAccount.findFirst({
+      where: { fb_account_id: { contains: cleanAccountId }, OR: [{ userId: numUserId }, { userId: null }] }
+    });
+    const ownsMapping = await prisma.accountMapping.findFirst({
+      where: { fbAccountId: { contains: cleanAccountId }, OR: [{ userId: numUserId }, { userId: null }] }
+    });
+
+    if (!ownsAdAccount && !ownsMapping && req.user?.role !== "SUPER_ADMIN") {
+      return res.status(200).json({
+        success: false,
+        accountId: cleanAccountId,
+        error: "无权访问或同步该广告账户",
+        isForbidden: true
+      });
+    }
+
+    // 如果账户未绑定 userId，自动归属给当前同步用户
+    if (ownsAdAccount && ownsAdAccount.userId === null) {
+      await prisma.adAccount.updateMany({
+        where: { fb_account_id: { contains: cleanAccountId } },
+        data: { userId: numUserId }
+      }).catch(() => null);
+    }
+    if (ownsMapping && ownsMapping.userId === null) {
+      await prisma.accountMapping.updateMany({
+        where: { fbAccountId: { contains: cleanAccountId } },
+        data: { userId: numUserId }
+      }).catch(() => null);
+    }
+
     const { format, subDays } = await import("date-fns");
     let sDate = startDate;
     let eDate = endDate;
@@ -340,7 +382,7 @@ const handleSyncSingleAccount = async (req: AuthenticatedRequest, res: any) => {
   } catch (error: any) {
     const rawAcc = req.body?.accountId || req.query?.accountId || "unknown";
     const metaErrorMsg = extractMetaError(error);
-    console.warn(`[Vercel-Safe Sync] Account ${rawAcc} access restriction or error:`, metaErrorMsg);
+    console.info(`[Sync Account Info] Account ${rawAcc} skipped or restricted: ${metaErrorMsg}`);
     const is403 = error.status === 403 || error.response?.status === 403 || (metaErrorMsg && (metaErrorMsg.includes("403") || metaErrorMsg.includes("OAuthException") || metaErrorMsg.includes("200")));
     return res.status(200).json({
       success: false,
@@ -408,12 +450,12 @@ const handleSyncAds = async (req: AuthenticatedRequest, res: any) => {
         console.error("[Stream Sync Ads] Failed to fetch accounts from Meta API, fallback to mapped:", apiErr.message);
       }
 
-      const dbMappings = await prisma.accountMapping.findMany({
-        where: userId ? { OR: [{ userId }, { userId: null }] } : {}
-      });
-      const dbAdAccounts = await prisma.adAccount.findMany({
-        where: userId ? { OR: [{ userId }, { userId: null }] } : {}
-      });
+      const dbMappings = userId ? await prisma.accountMapping.findMany({
+        where: { OR: [{ userId: Number(userId) }, { userId: null }] }
+      }) : [];
+      const dbAdAccounts = userId ? await prisma.adAccount.findMany({
+        where: { OR: [{ userId: Number(userId) }, { userId: null }] }
+      }) : [];
       const allowedAccountIds = new Set<string>();
       dbMappings.forEach(m => { if (m.fbAccountId) allowedAccountIds.add(m.fbAccountId.replace("act_", "")); });
       dbAdAccounts.forEach(a => { if (a.fb_account_id) allowedAccountIds.add(a.fb_account_id.replace("act_", "")); });

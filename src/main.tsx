@@ -44,7 +44,7 @@ axios.interceptors.response.use(
           window.location.reload();
         }
       } catch (e) {
-        console.error("Failed to clear local session", e);
+        console.error("Failed to clear local session", e?.message || e);
       }
     }
     return Promise.reject(error);

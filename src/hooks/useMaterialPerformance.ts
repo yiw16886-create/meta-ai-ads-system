@@ -59,7 +59,7 @@ export function useMaterialPerformance(filters: {
           setTotal(response.data.total);
         }
       } catch (error) {
-        console.error('前端拉取隔离数据失败:', error);
+        console.error('前端拉取隔离数据失败:', error?.message || error);
       } finally {
         if (active) {
           setLoading(false);

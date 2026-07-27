@@ -56,6 +56,7 @@ model AccountMapping {
   project     String?
   owner       String?
   name        String?
+  status      String?  @default("ACTIVE") // "ACTIVE" (正常) or "DISABLED" (停用)
   userId      Int?
   user        User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
   store       Store?   @relation(fields: [storeId], references: [id], onDelete: Cascade)

@@ -198,7 +198,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
         } catch (e) {}
       }
     } catch (error) {
-      console.error("Failed to fetch mappings:", error);
+      console.error("Failed to fetch mappings:", error?.message || error);
       setMappings({});
     }
   };
@@ -214,7 +214,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
       await axios.post("/api/mappings/batch", { mappings: mappingList });
       await fetchMappings();
     } catch (error) {
-      console.error("Failed to sync mappings to server:", error);
+      console.error("Failed to sync mappings to server:", error?.message || error);
       toast.error("同步映射到服务器失败，仅保存到本地");
     }
   };
@@ -230,7 +230,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
       const [response, summariesRes] = await Promise.all([
         axios.get("/api/insights", { params: dateParams }),
         axios.get("/api/stores/all-dashboard-summary", { params: dateParams }).catch(err => {
-          console.error("Failed to fetch store summaries", err);
+          console.error("Failed to fetch store summaries", err?.message || err);
           return { data: {} };
         })
       ]);
@@ -251,7 +251,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
       
       setStoreSummaries(summariesRes.data || {});
     } catch (error: any) {
-      console.error("fetchData error:", error.response?.data || error);
+      console.error("fetchData error:", error.response?.data || error.message);
       const errMsg = error.response?.data?.error;
       toast.error(typeof errMsg === 'string' ? errMsg : "数据加载失败，请检查数据库连接");
       setData([]);
@@ -365,7 +365,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
       setRefreshKey(prev => prev + 1);
       await fetchData();
     } catch (error: any) {
-      console.error("Vercel-Safe Meta sync error:", error);
+      console.error("Vercel-Safe Meta sync error:", error?.message || error);
       if (syncToast) {
         toast.error(error?.message || "同步异常，请稍后重试", { id: syncToast });
       }
@@ -1149,6 +1149,7 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
   const [batchProject, setBatchProject] = useState("");
   const [batchStore, setBatchStore] = useState("");
   const [batchOwner, setBatchOwner] = useState("");
+  const [batchStatus, setBatchStatus] = useState("");
   const [selectedAccountsForBatch, setSelectedAccountsForBatch] = useState<
     any[]
   >([]);
@@ -1161,6 +1162,7 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
 
   // All Mappings Table states
   const [mappingSearch, setMappingSearch] = useState("");
+  const [mappingStatusFilter, setMappingStatusFilter] = useState<"ALL" | "ACTIVE" | "DISABLED">("ALL");
   const [editingMappingId, setEditingMappingId] = useState<string | null>(null);
   const [editingRow, setEditingRow] = useState<any>({});
   
@@ -1170,7 +1172,7 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
     direction: "asc" | "desc";
   } | null>({ key: "accountId", direction: "asc" });
   const [mappingCurrentPage, setMappingCurrentPage] = useState(1);
-  const mappingPageSize = 20;
+  const [mappingPageSize, setMappingPageSize] = useState<number>(50);
 
   const requestMappingSort = (key: string) => {
     let direction: "asc" | "desc" = "asc";
@@ -1192,6 +1194,7 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
   const [singleProject, setSingleProject] = useState("");
   const [singleStore, setSingleStore] = useState("");
   const [singleOwner, setSingleOwner] = useState("");
+  const [singleStatus, setSingleStatus] = useState("ACTIVE");
 
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: "asc" | "desc" } | null>({ key: 'accountName', direction: 'asc' });
 
@@ -1212,6 +1215,7 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
     const dataToExport = Object.values(mappings).map((m: any) => ({
       账户ID: m.accountId,
       账户名称: m.accountName || "",
+      账户状态: m.status === "DISABLED" || m.status === "停用" ? "停用" : "正常",
       项目: m.project || "",
       店铺: m.store || "",
       负责人: m.owner || "",
@@ -1247,7 +1251,7 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
         data.forEach((row) => {
           const keys = Object.keys(row);
           
-          // Dynamically map column headers (supporting English or Chinese, case-insensitive, ignores spaces etc.)
+          // Dynamically map column headers
           const accountIdKey = keys.find(k => /账户\s*ID|帐户\s*ID|账户|帐户|Account\s*ID|id/i.test(k)) || keys[0];
           const accountId = accountIdKey ? row[accountIdKey]?.toString()?.trim() : null;
 
@@ -1258,6 +1262,17 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
             const projectKey = keys.find(k => /项目|Project|Proj/i.test(k));
             const storeKey = keys.find(k => /店铺|Store/i.test(k));
             const ownerKey = keys.find(k => /负责人|Owner/i.test(k));
+            const statusKey = keys.find(k => /账户状态|帐户状态|状态|Status/i.test(k));
+
+            let statusVal = existing.status || "ACTIVE";
+            if (statusKey !== undefined && row[statusKey] !== undefined) {
+              const rawS = String(row[statusKey]).trim();
+              if (rawS === "停用" || rawS.toUpperCase() === "DISABLED" || rawS === "0") {
+                statusVal = "DISABLED";
+              } else if (rawS === "正常" || rawS.toUpperCase() === "ACTIVE" || rawS === "1") {
+                statusVal = "ACTIVE";
+              }
+            }
 
             newMappings[accountId] = {
               accountId,
@@ -1265,6 +1280,7 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
               project: projectKey !== undefined && row[projectKey] !== undefined ? String(row[projectKey]).trim() : (existing.project || ""),
               store: storeKey !== undefined && row[storeKey] !== undefined ? String(row[storeKey]).trim() : (existing.store || ""),
               owner: ownerKey !== undefined && row[ownerKey] !== undefined ? String(row[ownerKey]).trim() : (existing.owner || ""),
+              status: statusVal,
             };
             count++;
           }
@@ -1279,7 +1295,7 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
           );
         }
       } catch (err) {
-        console.error("Import error:", err);
+        console.error("Import error:", err?.message || err);
         toast.error("导入失败：文件格式不正确或解析出错");
       }
     };
@@ -1297,7 +1313,7 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
         setAccounts([]);
       }
     } catch (err) {
-      console.error("Account list fetch failed:", err);
+      console.error("Account list fetch failed:", err?.message || err);
       toast.error("系统繁忙或数据库连接失败，无法获取账户");
       setAccounts([]);
     } finally {
@@ -1409,6 +1425,7 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
             batchProject || prevMapping.project || "",
           store: batchStore || prevMapping.store || "",
           owner: batchOwner || prevMapping.owner || "",
+          status: batchStatus || prevMapping.status || "ACTIVE",
         };
       });
 
@@ -1420,6 +1437,7 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
       setBatchProject("");
       setBatchStore("");
       setBatchOwner("");
+      setBatchStatus("");
       setSelectedAccountsForBatch([]);
     } catch (err) {
       toast.error("保存绑定失败");
@@ -1438,6 +1456,7 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
           map.set(cleanId, {
             ...m,
             cleanAccountId: cleanId,
+            status: m.status || (m.activityStatus >= 4 ? "DISABLED" : "ACTIVE"),
           });
         }
       });
@@ -1446,20 +1465,32 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
   }, [mappings]);
 
   const filteredMappingsList = useMemo(() => {
+    let list = uniqueMappingsList;
+
+    if (mappingStatusFilter === "ACTIVE") {
+      list = list.filter((m) => m.status === "ACTIVE" || m.status === "正常");
+    } else if (mappingStatusFilter === "DISABLED") {
+      list = list.filter((m) => m.status === "DISABLED" || m.status === "停用");
+    }
+
     const q = mappingSearch.toLowerCase().trim();
-    if (!q) return uniqueMappingsList;
-    return uniqueMappingsList.filter((m) =>
-      (m.accountId || "").toLowerCase().includes(q) ||
-      (m.accountName || "").toLowerCase().includes(q) ||
-      (m.project || "").toLowerCase().includes(q) ||
-      (m.store || "").toLowerCase().includes(q) ||
-      (m.owner || "").toLowerCase().includes(q)
-    );
-  }, [uniqueMappingsList, mappingSearch]);
+    if (!q) return list;
+    return list.filter((m) => {
+      const statusLabel = m.status === "DISABLED" || m.status === "停用" ? "停用" : "正常";
+      return (
+        (m.accountId || "").toLowerCase().includes(q) ||
+        (m.accountName || "").toLowerCase().includes(q) ||
+        (m.project || "").toLowerCase().includes(q) ||
+        (m.store || "").toLowerCase().includes(q) ||
+        (m.owner || "").toLowerCase().includes(q) ||
+        statusLabel.toLowerCase().includes(q)
+      );
+    });
+  }, [uniqueMappingsList, mappingSearch, mappingStatusFilter]);
 
   useEffect(() => {
     setMappingCurrentPage(1);
-  }, [mappingSearch]);
+  }, [mappingSearch, mappingStatusFilter]);
 
   const sortedMappingsList = useMemo(() => {
     if (!mappingSortConfig) return filteredMappingsList;
@@ -1489,6 +1520,7 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
       project: m.project || "",
       store: m.store || "",
       owner: m.owner || "",
+      status: m.status || "ACTIVE",
     });
   };
 
@@ -1502,6 +1534,7 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
         project: editingRow.project || "",
         store: editingRow.store || "",
         owner: editingRow.owner || "",
+        status: editingRow.status || "ACTIVE",
       };
       await onMappingsChange(newMappings);
       setEditingMappingId(null);
@@ -1540,6 +1573,7 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
       project: singleProject.trim() || "",
       store: singleStore.trim() || "",
       owner: singleOwner.trim() || "",
+      status: singleStatus || "ACTIVE",
     };
     await onMappingsChange(newMappings);
     toast.success("新建映射保存成功，已同步至服务器！");
@@ -1549,6 +1583,7 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
     setSingleProject("");
     setSingleStore("");
     setSingleOwner("");
+    setSingleStatus("ACTIVE");
   };
 
   if (fetching) {
@@ -1598,7 +1633,7 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
           </div>
         </CardHeader>
         <CardContent className="p-6 space-y-8">
-          <div className="grid grid-cols-3 gap-6">
+          <div className="grid grid-cols-4 gap-4">
             <div className="space-y-2">
               <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
                 分配项目 (Project)
@@ -1631,6 +1666,20 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
                 onChange={(e) => setBatchOwner(e.target.value)}
                 className="h-10"
               />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                账户状态 (Status)
+              </label>
+              <select
+                className="w-full h-10 border rounded-md px-3 bg-white text-xs font-medium focus:outline-none focus:ring-2 focus:ring-meta-blue"
+                value={batchStatus}
+                onChange={(e) => setBatchStatus(e.target.value)}
+              >
+                <option value="">不修改</option>
+                <option value="ACTIVE">🟢 正常</option>
+                <option value="DISABLED">🔴 停用</option>
+              </select>
             </div>
           </div>
 
@@ -1856,7 +1905,7 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
 
       {/* All Mapped Accounts Card */}
       <Card className="border-none shadow-sm rounded-[12px] overflow-hidden">
-        <CardHeader className="border-b bg-gray-50/50 flex flex-row items-center justify-between space-y-0">
+        <CardHeader className="border-b bg-gray-50/50 flex flex-col md:flex-row md:items-center justify-between gap-4 space-y-0">
           <div>
             <CardTitle className="text-xl flex items-center gap-2">
               📋 已关联的广告账户级数据与映射明细
@@ -1868,16 +1917,56 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
               查看并直接编辑数据库中保存的所有广告账户与项目、店铺、负责人的映射与绑定关系
             </p>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="relative w-64">
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Status Filter Tabs */}
+            <div className="flex items-center bg-gray-200/70 p-1 rounded-lg text-xs font-medium">
+              <button
+                type="button"
+                onClick={() => setMappingStatusFilter("ALL")}
+                className={`px-2.5 py-1 rounded-md transition-all ${
+                  mappingStatusFilter === "ALL"
+                    ? "bg-white text-gray-900 shadow-xs font-semibold"
+                    : "text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                全部 ({uniqueMappingsList.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setMappingStatusFilter("ACTIVE")}
+                className={`px-2.5 py-1 rounded-md transition-all flex items-center gap-1 ${
+                  mappingStatusFilter === "ACTIVE"
+                    ? "bg-white text-emerald-700 shadow-xs font-semibold"
+                    : "text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                正常 ({uniqueMappingsList.filter((m) => m.status === "ACTIVE" || m.status === "正常").length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setMappingStatusFilter("DISABLED")}
+                className={`px-2.5 py-1 rounded-md transition-all flex items-center gap-1 ${
+                  mappingStatusFilter === "DISABLED"
+                    ? "bg-white text-rose-700 shadow-xs font-semibold"
+                    : "text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+                停用 ({uniqueMappingsList.filter((m) => m.status === "DISABLED" || m.status === "停用").length})
+              </button>
+            </div>
+
+            <div className="relative w-56">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
               <Input
-                placeholder="搜索账户 ID、店铺或项目..."
+                placeholder="搜索账户 ID、店铺、状态..."
                 className="pl-9 h-9 text-xs"
                 value={mappingSearch}
                 onChange={(e) => setMappingSearch(e.target.value)}
               />
             </div>
+
             <Dialog open={showAddSingleModal} onOpenChange={setShowAddSingleModal}>
               <DialogTrigger
                 render={
@@ -1911,6 +2000,17 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
                       onChange={(e) => setSingleAccName(e.target.value)}
                       className="mt-1"
                     />
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-gray-600">账户状态</label>
+                    <select
+                      className="w-full mt-1 h-9 border rounded-md px-3 bg-white text-xs"
+                      value={singleStatus}
+                      onChange={(e) => setSingleStatus(e.target.value)}
+                    >
+                      <option value="ACTIVE">🟢 正常</option>
+                      <option value="DISABLED">🔴 停用</option>
+                    </select>
                   </div>
                   <div>
                     <label className="text-xs font-semibold text-gray-600">归属项目 (Project)</label>
@@ -1957,7 +2057,7 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
             <TableHeader className="bg-gray-50/80">
               <TableRow>
                 <TableHead
-                  className="w-[180px] cursor-pointer select-none hover:bg-gray-100/70 transition-colors"
+                  className="w-[170px] cursor-pointer select-none hover:bg-gray-100/70 transition-colors"
                   onClick={() => requestMappingSort("accountId")}
                 >
                   <div className="flex items-center gap-1 font-semibold text-gray-700">
@@ -1974,12 +2074,29 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
                   </div>
                 </TableHead>
                 <TableHead
-                  className="w-[200px] cursor-pointer select-none hover:bg-gray-100/70 transition-colors"
+                  className="w-[190px] cursor-pointer select-none hover:bg-gray-100/70 transition-colors"
                   onClick={() => requestMappingSort("accountName")}
                 >
                   <div className="flex items-center gap-1 font-semibold text-gray-700">
                     <span>账户名称</span>
                     {mappingSortConfig?.key === "accountName" ? (
+                      mappingSortConfig.direction === "asc" ? (
+                        <ArrowUp className="w-3.5 h-3.5 text-meta-blue" />
+                      ) : (
+                        <ArrowDown className="w-3.5 h-3.5 text-meta-blue" />
+                      )
+                    ) : (
+                      <ArrowUpDown className="w-3.5 h-3.5 text-gray-400 hover:text-gray-600" />
+                    )}
+                  </div>
+                </TableHead>
+                <TableHead
+                  className="w-[110px] cursor-pointer select-none hover:bg-gray-100/70 transition-colors"
+                  onClick={() => requestMappingSort("status")}
+                >
+                  <div className="flex items-center gap-1 font-semibold text-gray-700">
+                    <span>账户状态</span>
+                    {mappingSortConfig?.key === "status" ? (
                       mappingSortConfig.direction === "asc" ? (
                         <ArrowUp className="w-3.5 h-3.5 text-meta-blue" />
                       ) : (
@@ -2041,14 +2158,14 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
                     )}
                   </div>
                 </TableHead>
-                <TableHead className="text-right w-[140px]">操作</TableHead>
+                <TableHead className="text-right w-[130px]">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {paginatedMappingsList.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center py-12 text-gray-400 italic">
-                    暂无已映射的账户数据
+                  <TableCell colSpan={7} className="text-center py-12 text-gray-400 italic">
+                    暂无符合条件的账户数据
                   </TableCell>
                 </TableRow>
               ) : (
@@ -2069,6 +2186,30 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
                           />
                         ) : (
                           m.accountName || "Unknown"
+                        )}
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        {isEditing ? (
+                          <select
+                            className="h-8 text-xs border rounded px-2 bg-white w-full focus:outline-none focus:ring-1 focus:ring-meta-blue font-medium"
+                            value={editingRow.status}
+                            onChange={(e) => setEditingRow({ ...editingRow, status: e.target.value })}
+                          >
+                            <option value="ACTIVE">🟢 正常</option>
+                            <option value="DISABLED">🔴 停用</option>
+                          </select>
+                        ) : (
+                          m.status === "DISABLED" || m.status === "停用" ? (
+                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200/70">
+                              <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+                              停用
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200/70">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                              正常
+                            </span>
+                          )
                         )}
                       </TableCell>
                       <TableCell className="text-xs">
@@ -2164,16 +2305,35 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
           {/* Pagination Controls */}
           {sortedMappingsList.length > 0 && (
             <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t bg-gray-50/50 text-xs text-gray-600">
-              <div>
-                显示第{" "}
-                <span className="font-semibold text-gray-800">
-                  {(mappingCurrentPage - 1) * mappingPageSize + 1}
-                </span>{" "}
-                至{" "}
-                <span className="font-semibold text-gray-800">
-                  {Math.min(mappingCurrentPage * mappingPageSize, sortedMappingsList.length)}
-                </span>{" "}
-                条，共 <span className="font-semibold text-gray-800">{sortedMappingsList.length}</span> 条记录
+              <div className="flex items-center gap-3">
+                <span>
+                  显示第{" "}
+                  <span className="font-semibold text-gray-800">
+                    {(mappingCurrentPage - 1) * mappingPageSize + 1}
+                  </span>{" "}
+                  至{" "}
+                  <span className="font-semibold text-gray-800">
+                    {Math.min(mappingCurrentPage * mappingPageSize, sortedMappingsList.length)}
+                  </span>{" "}
+                  条，共 <span className="font-semibold text-gray-800">{sortedMappingsList.length}</span> 条记录
+                </span>
+                <div className="flex items-center gap-1.5 ml-2">
+                  <span className="text-gray-400">每页显示:</span>
+                  <select
+                    className="h-7 border rounded text-xs px-1.5 bg-white font-medium text-gray-700 focus:outline-none focus:ring-1 focus:ring-meta-blue"
+                    value={mappingPageSize}
+                    onChange={(e) => {
+                      setMappingPageSize(Number(e.target.value));
+                      setMappingCurrentPage(1);
+                    }}
+                  >
+                    <option value={20}>20 条/页</option>
+                    <option value={50}>50 条/页</option>
+                    <option value={100}>100 条/页</option>
+                    <option value={300}>300 条/页</option>
+                    <option value={1000}>显示全部</option>
+                  </select>
+                </div>
               </div>
               <div className="flex items-center gap-1.5">
                 <Button
@@ -2281,7 +2441,7 @@ function UsersManagementPage() {
         });
       }
     } catch (e) {
-      console.error("Failed to fetch users or settings", e);
+      console.error("Failed to fetch users or settings", e?.message || e);
     } finally {
       setFetching(false);
     }
@@ -2374,7 +2534,7 @@ function UsersManagementPage() {
         toast.error(res.data.error || "操作被拒绝", { id: toastId });
       }
     } catch (err: any) {
-      console.error("[Dashboard] ❌ Deletion failed:", err);
+      console.error("[Dashboard] ❌ Deletion failed:", err?.message || err);
       toast.error(err.response?.data?.error || "操作失败", { id: toastId });
     } finally {
       setIsDeleting(false);
@@ -2828,7 +2988,7 @@ function SettingsPage() {
       setShowEditFbUserModal(false);
       toast.success("成功更新 Facebook 真实个人 ID 及主页链接！");
     } catch (err) {
-      console.error("保存真实 ID 失败:", err);
+      console.error("保存真实 ID 失败:", err?.message || err);
       toast.error("保存失败，请稍后重试");
     } finally {
       setSavingFbUser(false);
@@ -2849,7 +3009,7 @@ function SettingsPage() {
         setHasFbClientSecret(!!res.data.meta_client_secret);
       }
     } catch (err) {
-      console.error("Failed to load admin settings", err);
+      console.error("Failed to load admin settings", err?.message || err);
     }
   };
 
@@ -2892,7 +3052,7 @@ function SettingsPage() {
         setFbUserLink("");
       }
     } catch (err) {
-      console.error("Failed to reload settings", err);
+      console.error("Failed to reload settings", err?.message || err);
     }
   };
 

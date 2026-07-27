@@ -62,12 +62,12 @@ router.get("/", async (req: any, res) => {
 
     // Get Facebook account IDs assigned strictly to this user
     const adAccounts = await prisma.adAccount.findMany({
-      where: { userId: Number(userId) },
+      where: { OR: [{ userId: Number(userId) }, { userId: null }] },
       select: { fb_account_id: true }
     });
 
     const mappings = await prisma.accountMapping.findMany({
-      where: { userId: Number(userId) },
+      where: { OR: [{ userId: Number(userId) }, { userId: null }] },
       select: { fbAccountId: true }
     });
 

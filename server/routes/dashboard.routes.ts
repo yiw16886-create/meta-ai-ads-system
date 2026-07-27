@@ -25,13 +25,24 @@ router.get("/stats", async (req: any, res) => {
     const sDate = startDate ? String(startDate).slice(0, 10) : undefined;
     const eDate = endDate ? String(endDate).slice(0, 10) : undefined;
 
+    const isSuperAdmin = req.user?.role === "SUPER_ADMIN";
+    
     const userAccounts = await prisma.adAccount.findMany({
-      where: { userId },
+      ...(isSuperAdmin ? {} : { where: { OR: [{ userId }, { userId: null }] } }),
       select: { fb_account_id: true }
     });
-    const userAccountIds = userAccounts.map(a => a.fb_account_id.replace("act_", "").trim());
+    const mappings = await prisma.accountMapping.findMany({
+      ...(isSuperAdmin ? {} : { where: { OR: [{ userId }, { userId: null }] } }),
+      select: { fbAccountId: true }
+    });
 
-    if (userAccountIds.length === 0) {
+    const accountSet = new Set<string>();
+    userAccounts.forEach(a => accountSet.add(a.fb_account_id.replace("act_", "").trim()));
+    mappings.forEach(m => accountSet.add(String(m.fbAccountId).replace("act_", "").trim()));
+
+    const userAccountIds = Array.from(accountSet);
+
+    if (!isSuperAdmin && userAccountIds.length === 0) {
       return res.json({
         success: true,
         summary: { grandSpend: 0, grandRevenue: 0, grandImpressions: 0, grandClicks: 0, grandPurchases: 0, grandAddToCart: 0, grandInitiateCheckout: 0, grandRoas: 0 },
@@ -62,9 +73,14 @@ router.get("/stats", async (req: any, res) => {
       const parsedStoreId = parseInt(String(storeId), 10);
       if (!isNaN(parsedStoreId)) {
         const storeAccounts = await prisma.adAccount.findMany({
-          where: { storeId: parsedStoreId, userId },
+          where: isSuperAdmin ? { storeId: parsedStoreId } : { storeId: parsedStoreId, OR: [{ userId }, { userId: null }] },
           select: { fb_account_id: true }
         });
+        const storeMappings = await prisma.accountMapping.findMany({
+          where: isSuperAdmin ? { storeId: parsedStoreId } : { storeId: parsedStoreId, OR: [{ userId }, { userId: null }] },
+          select: { fbAccountId: true }
+        });
+        storeMappings.forEach(m => storeAccounts.push({ fb_account_id: m.fbAccountId }));
         const accIds = storeAccounts.map(a => a.fb_account_id.replace("act_", "").trim());
         whereClause.accountId = { in: accIds };
       } else {

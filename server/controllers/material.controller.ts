@@ -39,7 +39,10 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
 
     // 2. 第一步：以 AccountMapping 表为大闸，严格使用 storeId、userId 和 fbAccountId 进行权限隔离
     const accountMappingWhere: any = {
-      userId: Number(userId)
+      OR: [
+        { userId: Number(userId) },
+        { userId: null }
+      ]
     };
     if (storeId && storeId !== 'all') {
       accountMappingWhere.storeId = Number(storeId);
@@ -63,7 +66,7 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
 
     if (allowedAccountIds.length === 0) {
       const userAccounts = await prisma.adAccount.findMany({
-        where: { userId: Number(userId) },
+        where: { OR: [{ userId: Number(userId) }, { userId: null }] },
         select: { fb_account_id: true }
       });
       allowedAccountIds = userAccounts.map(a => cleanFbAccountId(a.fb_account_id));

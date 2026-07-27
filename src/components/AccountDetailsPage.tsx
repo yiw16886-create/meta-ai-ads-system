@@ -201,7 +201,7 @@ export function AccountDetailsPage({ onLogout }: AccountDetailsPageProps) {
       setData(newData);
       dataCache.current[cacheKey] = { data: newData, timestamp: now };
     } catch (error: any) {
-      console.error("fetchData error:", error.response?.data || error);
+      console.error("fetchData error:", error.response?.data || error.message);
       toast.error(
         typeof error.response?.data?.error === "string"
           ? error.response.data.error

@@ -163,6 +163,7 @@ export async function getMetaToken(userId?: number | string): Promise<string | n
         return acc.accessToken.trim();
       }
 
+      // Strictly return null for specified user when no token is found (no cross-user token leakage)
       return null;
     }
   }
@@ -712,7 +713,7 @@ export async function syncSingleAccountAdData(accountId: string, startDate: stri
       });
     }
 
-    const store = dbAdAccount ? await prisma.store.findUnique({ where: { id: dbAdAccount.storeId } }) : null;
+    const store = dbAdAccount && dbAdAccount.storeId ? await prisma.store.findUnique({ where: { id: dbAdAccount.storeId } }) : null;
     const storeName = store ? store.name : null;
 
     // 2. Ensure/Sync AccountMapping

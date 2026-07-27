@@ -98,7 +98,7 @@ export function CampaignStructureDashboard({ startDate, endDate }: { startDate: 
           setSelectedAccount("");
         }
       } catch (e) {
-        console.error("Failed to fetch or filter accounts", e);
+        console.error("Failed to fetch or filter accounts", e?.message || e);
       }
     };
     fetchAccounts();

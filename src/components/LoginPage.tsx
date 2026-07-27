@@ -37,7 +37,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
             setToken(null);
           }
         } catch (e) {
-          console.error("Token verification error:", e);
+          console.error("Token verification error:", e?.message || e);
           toast.error("验证邀请码失败，请联系管理员");
           setToken(null);
         }

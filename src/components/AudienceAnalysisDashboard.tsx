@@ -51,7 +51,7 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
           setSelectedAccount(res.data[0].accountId); // Default to first account
         }
       } catch (e) {
-        console.error("Failed to fetch accounts", e);
+        console.error("Failed to fetch accounts", e?.message || e);
       }
     };
     fetchAccounts();

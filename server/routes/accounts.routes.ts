@@ -695,27 +695,19 @@ router.get("/list", async (req: any, res) => {
     }
 
     const allAdAccounts = await prisma.adAccount.findMany({
-      where: { userId: Number(userId) }
+      where: { OR: [{ userId: Number(userId) }, { userId: null }] }
     });
-    const userAccountIds = allAdAccounts.map(a => a.fb_account_id.replace("act_", "").trim());
 
-    const allMonitoring = userAccountIds.length > 0 
-      ? await prisma.metaAccountMonitoring.findMany({
-          where: { accountId: { in: userAccountIds.flatMap(id => [id, `act_${id}`]) } }
-        })
-      : [];
+    const allMonitoring = await prisma.metaAccountMonitoring.findMany();
 
     const allMappings = await prisma.accountMapping.findMany({
-      where: { userId: Number(userId) }
+      where: { OR: [{ userId: Number(userId) }, { userId: null }] }
     });
 
-    const allInsights = userAccountIds.length > 0 
-      ? await prisma.adInsight.findMany({
-          where: { accountId: { in: userAccountIds.flatMap(id => [id, `act_${id}`]) } },
-          select: { accountId: true, accountName: true },
-          distinct: ['accountId']
-        })
-      : [];
+    const allInsights = await prisma.adInsight.findMany({
+      select: { accountId: true, accountName: true },
+      distinct: ['accountId']
+    });
     
     const uniqueMap = new Map();
 
