@@ -205,16 +205,7 @@ export function MaterialPerformanceTable() {
     );
   }, [rawPerformanceData, searchQuery]);
 
-  // Helper to generate a stable number for a string with salt
-  const getDeterministicNum = (id: string, salt: number): number => {
-    let hash = salt;
-    for (let i = 0; i < id.length; i++) {
-      hash = (hash * 33) + id.charCodeAt(i);
-    }
-    return Math.abs(hash);
-  };
-
-  // Enhance each row with advanced metrics for the "素材指标" view
+  // Derived ratios use only real metrics returned by the backend.
   const enrichedTableData = useMemo(() => {
     return tableData.map(row => {
       const spendNum = parseFloat(row.spend || "0");
@@ -222,51 +213,18 @@ export function MaterialPerformanceTable() {
       const clicksNum = row.clicks || 0;
       const purchasesNum = row.purchases || 0;
 
-      // 1. 转化价值 (purchaseValue)
-      const seedValue = getDeterministicNum(row.creative_id, 101) % 55;
-      const purchaseValue = purchasesNum > 0 ? (purchasesNum * (48 + seedValue)) : 0;
-
-      // 2. ROAS
+      const purchaseValue = Number(row.purchaseValue || 0);
       const roas = spendNum > 0 ? purchaseValue / spendNum : 0;
-
-      // 3. 购物次数: purchasesNum
-
-      // 4. 单次购物费用 (cpp)
       const cpp = purchasesNum > 0 ? spendNum / purchasesNum : 0;
-
-      // 5. 展示次数: impressionsNum
-
-      // 6. 覆盖人数: reach
-      const frequency = 1.02 + (getDeterministicNum(row.creative_id, 303) % 48) / 100;
-      const reach = Math.max(1, Math.round(impressionsNum / frequency));
-
-      // 7. 频次
-      const actualFrequency = reach > 0 ? impressionsNum / reach : 1.00;
-
-      // 8. 点击量: clicksNum
-
-      // 9. 点击率: ctr
+      const reach = Number(row.reach || 0);
+      const actualFrequency = reach > 0 ? impressionsNum / reach : 0;
       const ctr = impressionsNum > 0 ? (clicksNum / impressionsNum) * 100 : 0;
-
-      // 10. CPC
       const cpc = clicksNum > 0 ? spendNum / clicksNum : 0;
-
-      // 11. 链接点击量: linkClicks
-      const linkClicksPct = 0.70 + (getDeterministicNum(row.creative_id, 404) % 20) / 100;
-      const linkClicks = Math.max(0, Math.round(clicksNum * linkClicksPct));
-
-      // 12. 链接点击率: linkClicksCtr
+      const linkClicks = Number(row.linkClicks || 0);
       const linkClicksCtr = impressionsNum > 0 ? (linkClicks / impressionsNum) * 100 : 0;
-
-      // 13. 加入购物车: addToCart
-      const seedAtc = 2 + (getDeterministicNum(row.creative_id, 505) % 4);
-      const addToCart = Math.max(purchasesNum * seedAtc, Math.round(clicksNum * (0.04 + (getDeterministicNum(row.creative_id, 506) % 6) / 100)));
-
-      // 14. 加购率: atcRate
+      const addToCart = Number(row.addToCart || 0);
       const atcRate = clicksNum > 0 ? (addToCart / clicksNum) * 100 : 0;
-
-      // 15. 发起结账量: initiateCheckout
-      const initiateCheckout = Math.max(purchasesNum, Math.round(addToCart * (0.4 + (getDeterministicNum(row.creative_id, 607) % 30) / 100)));
+      const initiateCheckout = Number(row.initiateCheckout || 0);
 
       return {
         ...row,
@@ -407,6 +365,11 @@ export function MaterialPerformanceTable() {
       impressions: number;
       clicks: number;
       purchases: number;
+      purchaseValue: number;
+      reach: number;
+      linkClicks: number;
+      addToCart: number;
+      initiateCheckout: number;
       items: any[];
     }> = {};
 
@@ -427,6 +390,11 @@ export function MaterialPerformanceTable() {
           impressions: 0,
           clicks: 0,
           purchases: 0,
+          purchaseValue: 0,
+          reach: 0,
+          linkClicks: 0,
+          addToCart: 0,
+          initiateCheckout: 0,
           items: []
         };
       }
@@ -437,6 +405,11 @@ export function MaterialPerformanceTable() {
       g.impressions += item.impressions || 0;
       g.clicks += item.clicks || 0;
       g.purchases += item.purchases || 0;
+      g.purchaseValue += item.purchaseValue || 0;
+      g.reach += item.reach || 0;
+      g.linkClicks += item.linkClicks || 0;
+      g.addToCart += item.addToCart || 0;
+      g.initiateCheckout += item.initiateCheckout || 0;
       g.items.push(item);
 
       if (item.material_name && item.material_name.length > g.material_name.length) {
@@ -453,22 +426,18 @@ export function MaterialPerformanceTable() {
       const clicksNum = g.clicks;
       const purchasesNum = g.purchases;
 
-      const seedValue = getDeterministicNum(g.landingKey || g.material_name, 101) % 55;
-      const purchaseValue = purchasesNum > 0 ? (purchasesNum * (48 + seedValue)) : 0;
+      const purchaseValue = g.purchaseValue;
       const roas = spendNum > 0 ? purchaseValue / spendNum : 0;
       const cpp = purchasesNum > 0 ? spendNum / purchasesNum : 0;
-      const frequency = 1.02 + (getDeterministicNum(g.landingKey || g.material_name, 303) % 48) / 100;
-      const reach = Math.max(1, Math.round(impressionsNum / frequency));
-      const actualFrequency = reach > 0 ? impressionsNum / reach : 1.00;
+      const reach = g.reach;
+      const actualFrequency = reach > 0 ? impressionsNum / reach : 0;
       const ctr = impressionsNum > 0 ? (clicksNum / impressionsNum) * 100 : 0;
       const cpc = clicksNum > 0 ? spendNum / clicksNum : 0;
-      const linkClicksPct = 0.70 + (getDeterministicNum(g.landingKey || g.material_name, 404) % 20) / 100;
-      const linkClicks = Math.max(0, Math.round(clicksNum * linkClicksPct));
+      const linkClicks = g.linkClicks;
       const linkClicksCtr = impressionsNum > 0 ? (linkClicks / impressionsNum) * 100 : 0;
-      const seedAtc = 2 + (getDeterministicNum(g.landingKey || g.material_name, 505) % 4);
-      const addToCart = Math.max(purchasesNum * seedAtc, Math.round(clicksNum * (0.04 + (getDeterministicNum(g.landingKey || g.material_name, 506) % 6) / 100)));
+      const addToCart = g.addToCart;
       const atcRate = clicksNum > 0 ? (addToCart / clicksNum) * 100 : 0;
-      const initiateCheckout = Math.max(purchasesNum, Math.round(addToCart * (0.4 + (getDeterministicNum(g.landingKey || g.material_name, 607) % 30) / 100)));
+      const initiateCheckout = g.initiateCheckout;
 
       return {
         ...g,

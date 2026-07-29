@@ -1,6 +1,5 @@
 import { Router } from "express";
 import prisma from "../../db/index.js";
-import { getMetaToken, syncSingleAccountAdData } from "../utils.js";
 
 const router = Router();
 

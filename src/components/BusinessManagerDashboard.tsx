@@ -384,9 +384,9 @@ export function BusinessManagerDashboard() {
         const res = await axios.get(`/api/bms/${selectedShareBm}/assets`);
         setAvailableAssets(res.data);
         setSelectedAssetId("");
-      } catch (e: any) {
-        const errMsg = e.response?.data?.error || e.response?.data?.details || e.message || "未知错误";
-        toast.error(`拉取该 BM 下辖资产失败: ${typeof errMsg === "object" ? JSON.stringify(errMsg) : errMsg}`);
+      } catch (e) {
+        setAvailableAssets({ pixels: [], pages: [], adAccounts: [] });
+        toast.error("拉取该 BM 下辖资产失败，未加载任何模拟资产");
       } finally {
         setIsFetchingAssets(false);
       }
@@ -430,9 +430,21 @@ export function BusinessManagerDashboard() {
         setTargetBmId("");
         setSelectedAssetId("");
         setCustomAssetId("");
+      } else {
+        throw new Error(res.data.details || res.data.error || "Meta 未确认共享成功");
       }
     } catch (err: any) {
-      toast.error(err.response?.data?.error || "资产共享失败，请确认权限与资产 ID 关系", { id: shareToast });
+      const responseData = err.response?.data;
+      const requestId = responseData?.meta?.requestId;
+      const errorMessage =
+        responseData?.details ||
+        responseData?.error ||
+        err.message ||
+        "资产共享失败，请确认权限与资产 ID 关系";
+      toast.error(
+        requestId ? `${errorMessage}（Meta 请求 ID：${requestId}）` : errorMessage,
+        { id: shareToast, duration: 8000 }
+      );
     } finally {
       setIsSharingAsset(false);
     }

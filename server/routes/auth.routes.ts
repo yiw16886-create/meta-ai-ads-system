@@ -709,10 +709,6 @@ router.post("/facebook/delete", async (req, res) => {
     const fbUserId = data.user_id || data.userId;
     console.log(`✅ Signature verified. Facebook requested deletion of user_id: ${fbUserId}`);
 
-    if (fbUserId) {
-      console.log(`✅ Signature verified. Facebook requested deletion of user_id: ${fbUserId}`);
-    }
-
     const confirmationCode = "DEL-" + crypto.randomBytes(6).toString("hex").toUpperCase();
     const host = req.get("host");
     const protocol = req.protocol === "https" || req.headers["x-forwarded-proto"] === "https" ? "https" : "http";
