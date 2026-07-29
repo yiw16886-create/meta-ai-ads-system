@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server/server.ts",
-    "build": "prisma generate && prisma migrate deploy && vite build && esbuild server/server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "build": "prisma generate && vite build && esbuild server/server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "db:migrate": "prisma migrate deploy",
     "postinstall": "prisma generate",
     "start": "node dist/server.cjs",
     "preview": "vite preview",
