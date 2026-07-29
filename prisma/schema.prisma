@@ -34,6 +34,29 @@ model AdInsight {
   @@unique([accountId, date])
 }
 
+model AdPerformanceDaily {
+  id               Int      @id @default(autoincrement())
+  date             String
+  accountId        String
+  adId             String
+  creativeId       String?
+  spend            Float    @default(0)
+  impressions      Int      @default(0)
+  reach            Int      @default(0)
+  clicks           Int      @default(0)
+  linkClicks       Int      @default(0)
+  purchases        Int      @default(0)
+  purchaseValue    Float    @default(0)
+  addToCart        Int      @default(0)
+  initiateCheckout Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([adId, date])
+  @@index([accountId, date])
+  @@index([creativeId, date])
+}
+
 model Setting {
   key   String @id
   value String

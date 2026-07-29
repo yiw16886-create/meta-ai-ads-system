@@ -2,7 +2,7 @@ import { Router } from "express";
 import prisma from "../../db/index.js";
 import { authenticateJWT, AuthenticatedRequest } from "../middlewares/auth.middleware.js";
 import axios from "axios";
-import { getMetaToken, extractMetaError, evaluateActivityStatus, syncSingleAccountAdData } from "../utils.js";
+import { getMetaToken, extractMetaError, evaluateActivityStatus, syncSingleAccountAdData, callMetaApiWithRetry } from "../utils.js";
 import { logContext } from "../logger.js";
 import { extractMetaAssetHash } from "../services/metaFetchPatch.service.js";
 
@@ -705,130 +705,419 @@ router.get("/sync-ads", authenticateJWT as any, handleSyncAds);
 router.post("/sync-ads", authenticateJWT as any, handleSyncAds);
 
 // GET & POST /api/meta/sync-creatives (Streaming NDJSON format)
-const handleSyncCreatives = async (req: AuthenticatedRequest, res: any) => {
+const handleSyncCreatives = async (
+  req: AuthenticatedRequest,
+  res: any
+) => {
+  const writeStream = (payload: Record<string, any>) => {
+    if (!res.writableEnded) {
+      res.write(`${JSON.stringify(payload)}\n`);
+    }
+  };
+
+  const parseNumber = (value: any): number => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  const getActionValue = (
+    actions: any[],
+    acceptedTypes: string[]
+  ): number => {
+    if (!Array.isArray(actions)) return 0;
+    const item = actions.find((action: any) =>
+      acceptedTypes.includes(String(action?.action_type || ""))
+    );
+    return parseNumber(item?.value);
+  };
+
   try {
-    const userId = req.user?.id;
-    const token = await getMetaToken(userId);
-    if (!token) {
-      res.setHeader('Content-Type', 'application/json');
-      return res.status(200).json({ success: true, message: "未绑定 Facebook 账号或 Token 已清空" });
+    const userId = Number(req.user?.id);
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: "用户未登录或会话已过期"
+      });
     }
 
-    const { startDate, endDate } = { ...req.query, ...req.body } as { startDate?: string; endDate?: string };
-    const { format } = await import("date-fns");
-    const todayStr = format(new Date(), "yyyy-MM-dd");
-    const sDate = startDate || todayStr;
-    const eDate = endDate || todayStr;
+    const token = await getMetaToken(userId);
+    if (!token) {
+      return res.status(400).json({
+        success: false,
+        error: "未绑定 Facebook 账号或 Token 已失效"
+      });
+    }
+
+    const requestData = {
+      ...req.query,
+      ...(req.body || {})
+    } as {
+      startDate?: string;
+      endDate?: string;
+    };
+
+    const today = new Date().toISOString().slice(0, 10);
+    const sevenDaysAgo = new Date(Date.now() - 6 * 86400000)
+      .toISOString()
+      .slice(0, 10);
+    const startDate = requestData.startDate || sevenDaysAgo;
+    const endDate = requestData.endDate || today;
 
     const accounts = await prisma.adAccount.findMany({
       where: { userId },
       include: { store: true }
     });
 
-    res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
-    res.setHeader('Transfer-Encoding', 'chunked');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
+    res.status(200);
+    res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders?.();
 
-    console.log(`[Stream Sync Creatives] Starting streaming sync for ${accounts.length} accounts`);
+    writeStream({
+      type: "start",
+      status: "started",
+      accountCount: accounts.length,
+      startDate,
+      endDate
+    });
 
-    for (const acc of accounts) {
-      if (acc.activityStatus > 3) continue;
-      const actId = acc.fb_account_id.startsWith('act_') ? acc.fb_account_id : `act_${acc.fb_account_id}`;
-      
-      try {
-        const creativesUrl = `https://graph.facebook.com/v19.0/${actId}/adcreatives`;
-        const creativesRes = await axios.get(creativesUrl, {
-          params: {
-            fields: "id,name,object_type,status,image_hash,image_url,thumbnail_url,video_id,effective_object_story_id,object_story_spec,asset_feed_spec",
-            limit: 100,
-            access_token: token
-          }
+    let totalAds = 0;
+    let totalCreatives = 0;
+    let totalInsights = 0;
+    let successfulAccounts = 0;
+    let failedAccounts = 0;
+
+    for (const account of accounts) {
+      if (account.activityStatus > 3) {
+        writeStream({
+          type: "account_skipped",
+          status: "skipped",
+          accountId: account.fb_account_id,
+          message: "账户处于停用或休眠状态"
         });
-        const creatives = creativesRes.data?.data || [];
+        continue;
+      }
 
-        for (const creative of creatives) {
-          const extracted = await extractMetaAssetHash(creative.id, token);
-          const videoId = extracted?.videoId || creative.video_id || null;
-          const imageHash = extracted?.imageHash || creative.image_hash || null;
-          const previewUrl = extracted?.previewUrl || creative.thumbnail_url || creative.image_url || null;
-          const type = videoId ? "VIDEO" : getCreativeType(creative.object_type);
-          
-          await prisma.adCreative.upsert({
-            where: { creativeId: creative.id },
-            update: {
-              name: creative.name,
-              type: type,
-              mediaType: type,
-              storeId: acc.storeId,
-              imageHash,
-              videoId,
-              previewUrl,
-              landingUrl: extracted?.landingUrl || null,
-              pageId: extracted?.pageId || null,
-              pageName: extracted?.pageName || null,
-              effectivePostId: extracted?.effectivePostId || null,
-              metaAssetId: imageHash || videoId
+      const cleanAccountId = String(account.fb_account_id)
+        .replace(/^act_/, "")
+        .trim();
+      const actId = `act_${cleanAccountId}`;
+
+      writeStream({
+        type: "account_start",
+        status: "processing",
+        accountId: cleanAccountId,
+        accountName: account.fb_account_name || cleanAccountId
+      });
+
+      try {
+        let adsNextUrl: string | null =
+          `https://graph.facebook.com/v21.0/${actId}/ads`;
+        let isFirstAdsRequest = true;
+        let accountAdCount = 0;
+        let accountCreativeCount = 0;
+
+        while (adsNextUrl) {
+          const adsResponse = await callMetaApiWithRetry(
+            adsNextUrl,
+            {
+              method: "GET",
+              params: isFirstAdsRequest
+                ? {
+                    fields:
+                      "id,name,status,adset_id,campaign_id,creative{id,name}",
+                    limit: 100,
+                    access_token: token
+                  }
+                : undefined,
+              timeout: 45000
             },
-            create: {
-              creativeId: creative.id,
-              fbAccountId: acc.fb_account_id,
-              mediaType: type || "IMAGE",
-              storeId: acc.storeId,
-              name: creative.name || `Creative ${creative.id}`,
-              type: type,
-              hookRate: 0,
-              imageHash,
-              videoId,
-              previewUrl,
-              landingUrl: extracted?.landingUrl || null,
-              pageId: extracted?.pageId || null,
-              pageName: extracted?.pageName || null,
-              effectivePostId: extracted?.effectivePostId || null,
-              metaAssetId: imageHash || videoId
-            }
-          });
+            3
+          );
 
-          // Stream the newly processed creative back to client
-          res.write(JSON.stringify({
-            id: creative.id,
-            creativeId: creative.id,
-            name: creative.name || `Creative ${creative.id}`,
-            type,
-            accountId: acc.fb_account_id,
-            storeName: acc.store ? acc.store.name : "未分配",
-            previewUrl,
-            landingUrl: extracted?.landingUrl || null,
-            status: "success"
-          }) + "\n");
+          isFirstAdsRequest = false;
+          const metaAds = Array.isArray(adsResponse.data?.data)
+            ? adsResponse.data.data
+            : [];
+
+          for (const metaAd of metaAds) {
+            const adId = String(metaAd.id || "").trim();
+            const creativeId = String(metaAd.creative?.id || "").trim();
+            if (!adId) continue;
+
+            const adsetId =
+              String(metaAd.adset_id || "").trim() ||
+              `unknown-adset-${adId}`;
+            const campaignId =
+              String(metaAd.campaign_id || "").trim() ||
+              `unknown-campaign-${adId}`;
+
+            if (creativeId) {
+              const extracted = await extractMetaAssetHash(creativeId, token);
+              const videoId = extracted?.videoId || null;
+              const imageHash = extracted?.imageHash || null;
+              const previewUrl = extracted?.previewUrl || null;
+              const materialType = videoId
+                ? "VIDEO"
+                : getCreativeType(extracted?.data?.object_type || "");
+
+              await prisma.adCreative.upsert({
+                where: { creativeId },
+                update: {
+                  fbAccountId: cleanAccountId,
+                  name:
+                    metaAd.creative?.name ||
+                    extracted?.data?.name ||
+                    `Creative ${creativeId}`,
+                  type: materialType,
+                  mediaType: materialType,
+                  storeId: account.storeId,
+                  imageHash,
+                  videoId,
+                  previewUrl,
+                  imageUrl: extracted?.data?.image_url || previewUrl,
+                  landingUrl: extracted?.landingUrl || null,
+                  pageId: extracted?.pageId || null,
+                  pageName: extracted?.pageName || null,
+                  effectivePostId: extracted?.effectivePostId || null,
+                  metaAssetId: imageHash || videoId || null
+                },
+                create: {
+                  creativeId,
+                  fbAccountId: cleanAccountId,
+                  mediaType: materialType,
+                  storeId: account.storeId,
+                  name:
+                    metaAd.creative?.name ||
+                    extracted?.data?.name ||
+                    `Creative ${creativeId}`,
+                  type: materialType,
+                  hookRate: 0,
+                  imageHash,
+                  videoId,
+                  previewUrl,
+                  imageUrl: extracted?.data?.image_url || previewUrl,
+                  landingUrl: extracted?.landingUrl || null,
+                  pageId: extracted?.pageId || null,
+                  pageName: extracted?.pageName || null,
+                  effectivePostId: extracted?.effectivePostId || null,
+                  metaAssetId: imageHash || videoId || null
+                }
+              });
+
+              accountCreativeCount++;
+              totalCreatives++;
+            }
+
+            await prisma.ad.upsert({
+              where: { id: adId },
+              update: {
+                name: metaAd.name || `Ad ${adId}`,
+                adsetId,
+                campaignId,
+                accountId: cleanAccountId,
+                creativeId: creativeId || null,
+                storeId: account.storeId
+              },
+              create: {
+                id: adId,
+                name: metaAd.name || `Ad ${adId}`,
+                adsetId,
+                campaignId,
+                accountId: cleanAccountId,
+                creativeId: creativeId || null,
+                storeId: account.storeId
+              }
+            });
+
+            accountAdCount++;
+            totalAds++;
+
+            writeStream({
+              type: "ad_synced",
+              status: "success",
+              accountId: cleanAccountId,
+              adId,
+              creativeId: creativeId || null,
+              name: metaAd.name || `Ad ${adId}`
+            });
+          }
+
+          adsNextUrl = adsResponse.data?.paging?.next || null;
         }
-      } catch (err: any) {
-        console.error(`[Stream Sync Creatives] Error syncing creatives for ${acc.fb_account_id}:`, err.message);
+
+        let insightsNextUrl: string | null =
+          `https://graph.facebook.com/v21.0/${actId}/insights`;
+        let isFirstInsightsRequest = true;
+        let accountInsightCount = 0;
+
+        while (insightsNextUrl) {
+          const insightsResponse = await callMetaApiWithRetry(
+            insightsNextUrl,
+            {
+              method: "GET",
+              params: isFirstInsightsRequest
+                ? {
+                    level: "ad",
+                    time_range: JSON.stringify({
+                      since: startDate,
+                      until: endDate
+                    }),
+                    time_increment: 1,
+                    fields:
+                      "date_start,ad_id,spend,impressions,reach,clicks,inline_link_clicks,actions,action_values",
+                    limit: 500,
+                    access_token: token
+                  }
+                : undefined,
+              timeout: 45000
+            },
+            3
+          );
+
+          isFirstInsightsRequest = false;
+          const insights = Array.isArray(insightsResponse.data?.data)
+            ? insightsResponse.data.data
+            : [];
+
+          for (const insight of insights) {
+            const adId = String(insight.ad_id || "").trim();
+            const date = String(insight.date_start || "").trim();
+            if (!adId || !date) continue;
+
+            const databaseAd = await prisma.ad.findUnique({
+              where: { id: adId },
+              select: { creativeId: true }
+            });
+
+            const purchases = getActionValue(insight.actions, [
+              "purchase",
+              "omni_purchase",
+              "offsite_conversion.fb_pixel_purchase"
+            ]);
+            const purchaseValue = getActionValue(insight.action_values, [
+              "purchase",
+              "omni_purchase",
+              "offsite_conversion.fb_pixel_purchase"
+            ]);
+            const addToCart = getActionValue(insight.actions, [
+              "add_to_cart",
+              "omni_add_to_cart",
+              "offsite_conversion.fb_pixel_add_to_cart"
+            ]);
+            const initiateCheckout = getActionValue(insight.actions, [
+              "initiate_checkout",
+              "omni_initiated_checkout",
+              "offsite_conversion.fb_pixel_initiate_checkout"
+            ]);
+
+            const insightData = {
+              accountId: cleanAccountId,
+              creativeId: databaseAd?.creativeId || null,
+              spend: parseNumber(insight.spend),
+              impressions: Math.trunc(parseNumber(insight.impressions)),
+              reach: Math.trunc(parseNumber(insight.reach)),
+              clicks: Math.trunc(parseNumber(insight.clicks)),
+              linkClicks: Math.trunc(
+                parseNumber(insight.inline_link_clicks)
+              ),
+              purchases: Math.trunc(purchases),
+              purchaseValue,
+              addToCart: Math.trunc(addToCart),
+              initiateCheckout: Math.trunc(initiateCheckout)
+            };
+
+            await prisma.adPerformanceDaily.upsert({
+              where: {
+                adId_date: { adId, date }
+              },
+              update: insightData,
+              create: {
+                date,
+                adId,
+                ...insightData
+              }
+            });
+
+            accountInsightCount++;
+            totalInsights++;
+          }
+
+          insightsNextUrl = insightsResponse.data?.paging?.next || null;
+        }
+
+        successfulAccounts++;
+        writeStream({
+          type: "account_complete",
+          status: "success",
+          accountId: cleanAccountId,
+          ads: accountAdCount,
+          creatives: accountCreativeCount,
+          insights: accountInsightCount
+        });
+      } catch (error: any) {
+        failedAccounts++;
+        const metaError = error.response?.data?.error;
+        const errorMessage =
+          metaError?.message || error.message || "素材与指标同步失败";
+
+        console.error(
+          `[Stream Sync Creatives] Error syncing account ${cleanAccountId}:`,
+          {
+            status: error.response?.status || null,
+            code: metaError?.code || null,
+            subcode: metaError?.error_subcode || null,
+            type: metaError?.type || null,
+            message: errorMessage
+          }
+        );
+
+        writeStream({
+          type: "account_error",
+          status: "error",
+          accountId: cleanAccountId,
+          error: errorMessage,
+          statusCode: error.response?.status || null,
+          errorCode: metaError?.code || null,
+          errorSubcode: metaError?.error_subcode || null
+        });
       }
     }
 
-    // Trigger aggregateData for creatives in the background (non-blocking)
-    try {
-      const { aggregateData } = await import("../services/aggregation.service.js");
-      Promise.resolve().then(async () => {
-        try {
-          console.log("[Stream Sync Creatives Background] Running aggregation...");
-          await aggregateData(sDate, eDate, { syncProduct: false, syncCreative: true });
-          console.log("[Stream Sync Creatives Background] Aggregation done.");
-        } catch (aggErr: any) {
-          console.error("[Stream Sync Creatives Background] Aggregation error:", aggErr.message);
-        }
-      });
-    } catch (e) {}
+    writeStream({
+      type: "complete",
+      status: failedAccounts > 0 ? "partial_success" : "success",
+      totalAds,
+      totalCreatives,
+      totalInsights,
+      successfulAccounts,
+      failedAccounts
+    });
 
-    res.end();
+    return res.end();
   } catch (error: any) {
-    console.error("[Stream Sync Creatives] Global failure:", error.message);
+    const errorMessage =
+      error.response?.data?.error?.message ||
+      error.message ||
+      "素材同步失败";
+
+    console.error("[Stream Sync Creatives] Global failure:", errorMessage);
+
     if (!res.headersSent) {
-      res.status(500).json({ error: error.message || "素材流式同步失败" });
-    } else {
-      res.end();
+      return res.status(500).json({
+        success: false,
+        error: errorMessage
+      });
     }
+
+    writeStream({
+      type: "global_error",
+      status: "error",
+      error: errorMessage
+    });
+    return res.end();
   }
 };
 

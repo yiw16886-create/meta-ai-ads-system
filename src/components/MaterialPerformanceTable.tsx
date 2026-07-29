@@ -47,6 +47,7 @@ export function MaterialPerformanceTable() {
   const [previewAllData, setPreviewAllData] = useState<any[]>([]);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewPage, setPreviewPage] = useState(1);
+  const [previewRefreshTrigger, setPreviewRefreshTrigger] = useState(0);
 
   // Helper to calculate basic stable hash code for assets
   const getStableHash = (str: string): string => {
@@ -181,13 +182,14 @@ export function MaterialPerformanceTable() {
   }, [selectedAccounts, filteredAccountsForSelection]);
 
   // Fetch performance data with custom hook
-  const { 
-    data: rawPerformanceData, 
-    loading, 
-    total, 
-    page, 
-    setPage, 
-    refresh 
+  const {
+    data: rawPerformanceData,
+    loading,
+    total,
+    page,
+    setPage,
+    refresh,
+    refreshVersion
   } = useMaterialPerformance({
     storeId,
     accountIds: accountIdsParam,
@@ -274,7 +276,7 @@ export function MaterialPerformanceTable() {
 
     const roas = spend > 0 ? purchaseValue / spend : 0;
     const cpp = purchases > 0 ? spend / purchases : 0;
-    const frequency = reach > 0 ? impressions / reach : 1.00;
+    const frequency = reach > 0 ? impressions / reach : 0;
     const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
     const cpc = clicks > 0 ? spend / clicks : 0;
     const linkClicksCtr = impressions > 0 ? (linkClicks / impressions) * 100 : 0;
@@ -334,7 +336,15 @@ export function MaterialPerformanceTable() {
     return () => {
       active = false;
     };
-  }, [storeId, accountIdsParam.join(','), dateParams[0], dateParams[1], materialType]);
+  }, [
+    storeId,
+    accountIdsParam.join(','),
+    dateParams[0],
+    dateParams[1],
+    materialType,
+    refreshVersion,
+    previewRefreshTrigger
+  ]);
 
   // Client-side search filters for previewAllData
   const filteredPreviewAllData = useMemo(() => {
@@ -499,7 +509,7 @@ export function MaterialPerformanceTable() {
 
     const roas = spend > 0 ? purchaseValue / spend : 0;
     const cpp = purchases > 0 ? spend / purchases : 0;
-    const frequency = reach > 0 ? impressions / reach : 1.00;
+    const frequency = reach > 0 ? impressions / reach : 0;
     const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
     const cpc = clicks > 0 ? spend / clicks : 0;
     const linkClicksCtr = impressions > 0 ? (linkClicks / impressions) * 100 : 0;
@@ -536,60 +546,91 @@ export function MaterialPerformanceTable() {
   const [isSyncing, setIsSyncing] = useState(false);
 
   const handleSyncCreativeHash = async () => {
+    if (isSyncing) return;
+
     setIsSyncing(true);
-    const syncToast = toast.loading("正在流式同步素材...");
-    setPreviewAllData([]); // Clear list to show streaming imports
+    const syncToast = toast.loading(
+      "正在同步广告、素材和真实指标..."
+    );
 
     try {
       const token = localStorage.getItem("token");
-      const userStr = localStorage.getItem("user");
       const headers: Record<string, string> = {
-        "Content-Type": "application/json"
+        Accept: "application/x-ndjson"
       };
+
       if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-      }
-      if (userStr) {
-        try {
-          const user = JSON.parse(userStr);
-          if (user && user.id) {
-            headers["x-user-id"] = String(user.id);
-          }
-        } catch (e) {}
+        headers.Authorization = `Bearer ${token}`;
       }
 
-      const sDateStr = dateParams[0] || "";
-      const eDateStr = dateParams[1] || "";
-
-      const response = await fetch(`/api/meta/sync-creatives?startDate=${sDateStr}&endDate=${eDateStr}`, {
-        method: "GET",
-        headers
+      const params = new URLSearchParams({
+        startDate: dateParams[0],
+        endDate: dateParams[1]
       });
 
-      if (!response.ok) {
-        if (response.status === 401 || response.status === 403) {
-          console.warn("Unauthorized access on creatives sync - clearing session");
-          localStorage.clear();
-          window.location.href = "/";
-          return;
+      const response = await fetch(
+        `/api/meta/sync-creatives?${params.toString()}`,
+        {
+          method: "GET",
+          headers,
+          cache: "no-store"
         }
-        throw new Error(`HTTP Error: ${response.status}`);
-      }
+      );
 
-      const contentType = response.headers.get("content-type") || "";
-      if (contentType.includes("text/html") || contentType.includes("html")) {
-        console.warn("Received HTML instead of JSON stream - server may be restarting or unauthenticated.");
-        return;
+      if (!response.ok) {
+        let errorMessage = `同步请求失败：HTTP ${response.status}`;
+        try {
+          const errorBody = await response.json();
+          errorMessage = errorBody?.error || errorMessage;
+        } catch (_) {}
+        throw new Error(errorMessage);
       }
 
       const reader = response.body?.getReader();
       if (!reader) {
-        throw new Error("Failed to get response reader");
+        throw new Error("服务器未返回有效的同步数据流");
       }
 
       const decoder = new TextDecoder("utf-8");
       let buffer = "";
-      let creativeCount = 0;
+      let syncedAds = 0;
+      let syncedCreatives = 0;
+      let syncedInsights = 0;
+      let failedAccounts = 0;
+      let completed = false;
+
+      const handleStreamItem = (item: any) => {
+        if (!item || typeof item !== "object") return;
+
+        if (item.type === "ad_synced") syncedAds++;
+
+        if (item.type === "account_complete") {
+          syncedCreatives += Number(item.creatives || 0);
+          syncedInsights += Number(item.insights || 0);
+        }
+
+        if (
+          item.type === "account_error" ||
+          item.type === "global_error"
+        ) {
+          failedAccounts++;
+          console.error("[Material Sync] account failed:", item);
+        }
+
+        if (item.type === "complete") {
+          completed = true;
+          syncedAds = Number(item.totalAds ?? syncedAds);
+          syncedCreatives = Number(
+            item.totalCreatives ?? syncedCreatives
+          );
+          syncedInsights = Number(
+            item.totalInsights ?? syncedInsights
+          );
+          failedAccounts = Number(
+            item.failedAccounts ?? failedAccounts
+          );
+        }
+      };
 
       while (true) {
         const { value, done } = await reader.read();
@@ -601,56 +642,49 @@ export function MaterialPerformanceTable() {
 
         for (const line of lines) {
           const trimmed = line.trim();
-          if (trimmed) {
-            if (trimmed.startsWith("<")) {
-              continue;
-            }
-            try {
-              const creativeItem = JSON.parse(line);
-              
-              const formattedItem = {
-                id: creativeItem.id || creativeItem.creativeId,
-                name: creativeItem.name,
-                creativeId: creativeItem.creativeId,
-                storeName: creativeItem.storeName || "未分配",
-                accountId: creativeItem.accountId,
-                accountName: creativeItem.accountName || creativeItem.accountId,
-                status: "ACTIVE",
-                spend: 0,
-                impressions: 0,
-                clicks: 0,
-                reach: 0,
-                purchases: 0,
-                purchaseValue: 0,
-                type: creativeItem.type || "IMAGE",
-                roas: 0,
-                cpp: 0,
-                cpc: 0,
-                ctr: 0,
-                cpm: 0
-              };
+          if (!trimmed) continue;
 
-              setPreviewAllData(prev => {
-                const safePrev = Array.isArray(prev) ? prev : [];
-                const exists = safePrev.some(item => item.creativeId === formattedItem.creativeId);
-                if (exists) {
-                  return safePrev.map(item => item.creativeId === formattedItem.creativeId ? { ...item, ...formattedItem } : item);
-                }
-                return [...safePrev, formattedItem];
-              });
-              creativeCount++;
-            } catch (err) {
-              console.error("Failed to parse streamed creative line:", err, line);
-            }
+          try {
+            handleStreamItem(JSON.parse(trimmed));
+          } catch (parseError) {
+            console.error("同步数据流解析失败:", trimmed, parseError);
           }
         }
       }
 
-      toast.success(`素材同步完成: 成功抓取 ${creativeCount} 个素材`, { id: syncToast });
+      const remaining = buffer.trim();
+      if (remaining) {
+        try {
+          handleStreamItem(JSON.parse(remaining));
+        } catch (parseError) {
+          console.error("同步尾部数据解析失败:", remaining);
+        }
+      }
+
+      if (!completed && syncedAds === 0) {
+        throw new Error("同步连接结束，但没有收到有效广告数据");
+      }
+
       refresh();
+      setPreviewRefreshTrigger(previous => previous + 1);
+
+      if (failedAccounts > 0) {
+        toast.warning(
+          `同步部分完成：${syncedAds}条广告，${syncedCreatives}个素材，${syncedInsights}条指标；${failedAccounts}个账户失败`,
+          { id: syncToast, duration: 8000 }
+        );
+      } else {
+        toast.success(
+          `同步完成：${syncedAds}条广告，${syncedCreatives}个素材，${syncedInsights}条真实指标`,
+          { id: syncToast, duration: 6000 }
+        );
+      }
     } catch (error: any) {
-      console.error("Stream sync creatives error:", error?.message || error);
-      toast.error(error.message || "素材同步失败，请重试", { id: syncToast });
+      console.error("Stream sync creatives error:", error);
+      toast.error(error?.message || "素材与指标同步失败", {
+        id: syncToast,
+        duration: 8000
+      });
     } finally {
       setIsSyncing(false);
     }
@@ -853,8 +887,20 @@ export function MaterialPerformanceTable() {
                 <DownloadCloud className={cn("w-4 h-4", isSyncing && "animate-pulse text-meta-blue")} /> 
                 {isSyncing ? "素材同步中..." : "素材同步"}
               </Button>
-              <Button variant="outline" size="sm" onClick={refresh} disabled={loading} className="text-[13px] h-9 gap-2 font-semibold text-slate-700 bg-white border-slate-200">
-                <RefreshCw className={cn("w-4 h-4", loading && "animate-spin")} /> {loading ? "刷新中..." : "刷新数据"}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={refresh}
+                disabled={loading || previewLoading}
+                className="text-[13px] h-9 gap-2 font-semibold text-slate-700 bg-white border-slate-200"
+              >
+                <RefreshCw
+                  className={cn(
+                    "w-4 h-4",
+                    (loading || previewLoading) && "animate-spin"
+                  )}
+                />
+                {loading || previewLoading ? "刷新中..." : "刷新数据"}
               </Button>
             </div>
           </div>
@@ -1045,7 +1091,7 @@ export function MaterialPerformanceTable() {
 
                         {/* 13. 频次 */}
                         <TableCell className="py-3 text-right font-mono text-[13px] text-slate-700 px-4">
-                          {row.actualFrequency.toFixed(2)}
+                          {row.reach > 0 ? row.actualFrequency.toFixed(2) : "—"}
                         </TableCell>
 
                         {/* 14. 点击量 */}
@@ -1435,7 +1481,9 @@ export function MaterialPerformanceTable() {
 
                         {/* 12. 频次 */}
                         <TableCell className="py-2.5 text-right font-mono text-[13px] text-slate-700 px-4">
-                          {(row as any).actualFrequency?.toFixed(2) || "1.00"}
+                          {(row as any).reach > 0
+                            ? (row as any).actualFrequency.toFixed(2)
+                            : "—"}
                         </TableCell>
 
                         {/* 13. 点击量 */}

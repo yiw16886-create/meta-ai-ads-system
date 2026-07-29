@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 
 export interface MaterialPerformanceItem {
@@ -36,7 +36,12 @@ export function useMaterialPerformance(filters: {
   const [page, setPage] = useState(1);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
-  // Extract primitives to prevent reference change triggering infinite re-renders
+  // 手动强制刷新成功后递增，通知素材预览重新读取最新缓存数据。
+  const [refreshVersion, setRefreshVersion] = useState(0);
+
+  // 只有用户点击“刷新数据”时才绕过服务端缓存。
+  const forceRefreshRef = useRef(false);
+
   const { storeId, materialType } = filters;
   const accountIdsStr = filters.accountIds.join(',');
   const startDate = filters.dateRange[0];
@@ -44,9 +49,13 @@ export function useMaterialPerformance(filters: {
 
   useEffect(() => {
     let active = true;
+    const forceRefresh = forceRefreshRef.current;
+
     setLoading(true);
 
     const fetchData = async () => {
+      let requestSucceeded = false;
+
       try {
         const response = await axios.get('/api/materials/leaderboard', {
           params: {
@@ -55,19 +64,34 @@ export function useMaterialPerformance(filters: {
             startDate,
             endDate,
             materialType,
-            page: page,
-            pageSize: 20
+            page,
+            pageSize: 20,
+            // 后端已支持 force_refresh=true。
+            // 普通筛选和分页不绕过缓存，只有手动刷新才绕过。
+            force_refresh: forceRefresh ? 'true' : undefined
           }
         });
-        if (active && response.data && response.data.success) {
-          setData(response.data.data);
-          setTotal(response.data.total);
+
+        if (active && response.data?.success) {
+          setData(Array.isArray(response.data.data) ? response.data.data : []);
+          setTotal(Number(response.data.total || 0));
+          requestSucceeded = true;
         }
-      } catch (error) {
-        console.error('前端拉取隔离数据失败:', error?.message || error);
+      } catch (error: any) {
+        console.error('前端拉取素材真实指标失败:', error?.message || error);
       } finally {
+        if (forceRefresh) {
+          forceRefreshRef.current = false;
+        }
+
         if (active) {
           setLoading(false);
+
+          // 强制刷新完成后，让素材预览重新请求。
+          // 预览请求会读取刚刚写入的最新服务端缓存，避免重复请求 Meta。
+          if (forceRefresh && requestSucceeded) {
+            setRefreshVersion(prev => prev + 1);
+          }
         }
       }
     };
@@ -77,11 +101,28 @@ export function useMaterialPerformance(filters: {
     return () => {
       active = false;
     };
-  }, [storeId, accountIdsStr, startDate, endDate, materialType, page, refreshTrigger]);
+  }, [
+    storeId,
+    accountIdsStr,
+    startDate,
+    endDate,
+    materialType,
+    page,
+    refreshTrigger
+  ]);
 
   const refresh = useCallback(() => {
+    forceRefreshRef.current = true;
     setRefreshTrigger(prev => prev + 1);
   }, []);
 
-  return { data, loading, total, page, setPage, refresh };
+  return {
+    data,
+    loading,
+    total,
+    page,
+    setPage,
+    refresh,
+    refreshVersion
+  };
 }

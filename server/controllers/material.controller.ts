@@ -166,11 +166,12 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
                     since: String(startDate || new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10)),
                     until: String(endDate || new Date().toISOString().slice(0, 10)),
                   }),
-                  fields: 'ad_id,spend,impressions,reach,inline_link_clicks,clicks,actions,action_values',
+                  time_increment: 1,
+                  fields: 'date_start,ad_id,spend,impressions,reach,inline_link_clicks,clicks,actions,action_values',
                   limit: 1000,
                   access_token: useToken
                 },
-                timeout: 15000,
+                timeout: 45000,
               },
               3
             );
@@ -181,8 +182,27 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
 
           return { actId, insights };
         } catch (err: any) {
-          console.log(`[Material Controller] Handled query fallback for account ${actId}`);
-          return { actId, insights: [] };
+          const metaError = err.response?.data?.error;
+          const errorMessage =
+            metaError?.message ||
+            err.message ||
+            "Meta广告级指标请求失败";
+
+          console.error(
+            `[Material Controller] Failed to fetch real insights for account ${actId}:`,
+            {
+              status: err.response?.status || null,
+              code: metaError?.code || null,
+              subcode: metaError?.error_subcode || null,
+              message: errorMessage
+            }
+          );
+
+          return {
+            actId,
+            insights: [],
+            error: errorMessage
+          };
         }
       });
 
@@ -240,7 +260,112 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
             metrics.purchaseValue += itemPurchaseValue;
             metrics.addToCart += itemAddToCart;
             metrics.initiateCheckout += itemInitiateCheckout;
+
+            const insightDate = String(stat.date_start || "").trim();
+
+            if (adId && insightDate) {
+              const relatedAd = ads.find(currentAd => currentAd.id === adId);
+
+              try {
+                await prisma.adPerformanceDaily.upsert({
+                  where: {
+                    adId_date: {
+                      adId,
+                      date: insightDate
+                    }
+                  },
+                  update: {
+                    accountId: cleanFbAccountId(actId),
+                    creativeId: relatedAd?.creativeId || null,
+                    spend: parseFloat(stat.spend || "0"),
+                    impressions: parseInt(stat.impressions || "0", 10),
+                    reach: parseInt(stat.reach || "0", 10),
+                    clicks: parseInt(stat.clicks || "0", 10),
+                    linkClicks: parseInt(stat.inline_link_clicks || "0", 10),
+                    purchases: itemPurchases,
+                    purchaseValue: itemPurchaseValue,
+                    addToCart: itemAddToCart,
+                    initiateCheckout: itemInitiateCheckout
+                  },
+                  create: {
+                    date: insightDate,
+                    accountId: cleanFbAccountId(actId),
+                    adId,
+                    creativeId: relatedAd?.creativeId || null,
+                    spend: parseFloat(stat.spend || "0"),
+                    impressions: parseInt(stat.impressions || "0", 10),
+                    reach: parseInt(stat.reach || "0", 10),
+                    clicks: parseInt(stat.clicks || "0", 10),
+                    linkClicks: parseInt(stat.inline_link_clicks || "0", 10),
+                    purchases: itemPurchases,
+                    purchaseValue: itemPurchaseValue,
+                    addToCart: itemAddToCart,
+                    initiateCheckout: itemInitiateCheckout
+                  }
+                });
+              } catch (databaseError: any) {
+                console.error(
+                  `[Material Controller] Failed to persist ad insight ${adId}/${insightDate}:`,
+                  databaseError.message
+                );
+              }
+            }
           }
+        }
+      }
+    }
+
+    if (ads.length > 0) {
+      const fallbackStartDate = String(
+        startDate ||
+          new Date(Date.now() - 7 * 86400000)
+            .toISOString()
+            .slice(0, 10)
+      );
+      const fallbackEndDate = String(
+        endDate || new Date().toISOString().slice(0, 10)
+      );
+
+      const storedMetrics = await prisma.adPerformanceDaily.findMany({
+        where: {
+          adId: { in: ads.map(ad => ad.id) },
+          date: {
+            gte: fallbackStartDate,
+            lte: fallbackEndDate
+          }
+        }
+      });
+
+      const storedByAd: Record<
+        string,
+        ReturnType<typeof emptyMetrics>
+      > = {};
+
+      for (const row of storedMetrics) {
+        if (!storedByAd[row.adId]) {
+          storedByAd[row.adId] = emptyMetrics();
+        }
+
+        const target = storedByAd[row.adId];
+        target.spend += Number(row.spend || 0);
+        target.impressions += Number(row.impressions || 0);
+        target.reach += Number(row.reach || 0);
+        target.clicks += Number(row.clicks || 0);
+        target.linkClicks += Number(row.linkClicks || 0);
+        target.purchases += Number(row.purchases || 0);
+        target.purchaseValue += Number(row.purchaseValue || 0);
+        target.addToCart += Number(row.addToCart || 0);
+        target.initiateCheckout += Number(row.initiateCheckout || 0);
+      }
+
+      for (const ad of ads) {
+        const current = adMetrics[ad.id] || emptyMetrics();
+        const stored = storedByAd[ad.id];
+        const liveHasData =
+          current.spend > 0 || current.impressions > 0;
+
+        if (!liveHasData && stored) {
+          adMetrics[ad.id] = stored;
         }
       }
     }
