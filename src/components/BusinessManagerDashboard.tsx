@@ -384,8 +384,9 @@ export function BusinessManagerDashboard() {
         const res = await axios.get(`/api/bms/${selectedShareBm}/assets`);
         setAvailableAssets(res.data);
         setSelectedAssetId("");
-      } catch (e) {
-        toast.error("拉取该 BM 下辖资产失败，已自动加载模拟/缓存列表以进行操作");
+      } catch (e: any) {
+        const errMsg = e.response?.data?.error || e.response?.data?.details || e.message || "未知错误";
+        toast.error(`拉取该 BM 下辖资产失败: ${typeof errMsg === "object" ? JSON.stringify(errMsg) : errMsg}`);
       } finally {
         setIsFetchingAssets(false);
       }

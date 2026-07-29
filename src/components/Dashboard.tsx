@@ -33,7 +33,8 @@ import {
   Image as ImageIcon,
   ChevronDown,
   Building2,
-  Edit3
+  Edit3,
+  Megaphone
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
@@ -47,6 +48,7 @@ import { CampaignStructureDashboard } from "./CampaignStructureDashboard";
 import { StoreDataDashboard } from "./StoreDataDashboard";
 import { MaterialPerformanceTable } from "./MaterialPerformanceTable";
 import { BusinessManagerDashboard } from "./BusinessManagerDashboard";
+import { AdOperationsCenter } from "./AdOperationsCenter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -137,10 +139,11 @@ export function Dashboard({ onLogout }: DashboardProps) {
     | "creative_intelligence"
     | "pages"
     | "bms"
+    | "ad_operations"
     || "overview";
 
   const [currentTab, setCurrentTab] = useState<
-    "dashboard" | "campaign_structure" | "audience_analysis" | "creative_analysis" | "store_data" | "settings" | "category" | "accounts" | "stores" | "users" | "monitoring" | "overview" | "product_intelligence" | "creative_intelligence" | "pages" | "bms"
+    "dashboard" | "campaign_structure" | "audience_analysis" | "creative_analysis" | "store_data" | "settings" | "category" | "accounts" | "stores" | "users" | "monitoring" | "overview" | "product_intelligence" | "creative_intelligence" | "pages" | "bms" | "ad_operations"
   >(initialTab);
 
   const currentUser = JSON.parse(localStorage.getItem("user") || "{}");
@@ -616,6 +619,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
           {[
             { id: "category", icon: LayoutGrid, label: "项目类别看板" },
             { id: "monitoring", icon: TrendingUp, label: "账户健康监控" },
+            { id: "ad_operations", icon: Megaphone, label: "智能广告中心" },
             { id: "bms", icon: Building2, label: "BM 批量管理" },
             { id: "stores", icon: Store, label: "店铺管理" },
             { id: "pages", icon: Flag, label: "公共主页管理" },
@@ -1125,6 +1129,8 @@ export function Dashboard({ onLogout }: DashboardProps) {
           />
         ) : currentTab === "stores" ? (
           <StoresDashboard startDate={startDate} endDate={endDate} />
+        ) : currentTab === "ad_operations" ? (
+          <AdOperationsCenter />
         ) : currentTab === "bms" ? (
           <BusinessManagerDashboard />
         ) : currentTab === "pages" ? (
