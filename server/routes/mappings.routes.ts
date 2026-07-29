@@ -70,13 +70,37 @@ router.post("/", async (req: any, res) => {
       return res.status(401).json({ error: "用户未登录" });
     }
 
-    const { accountId, storeId, fbPageId, project, owner, status } = req.body;
+    const { accountId, storeId, store, fbPageId, project, owner, status, accountName } = req.body;
     if (!accountId) {
       return res.status(400).json({ error: "accountId is required" });
     }
 
     const cleanAccId = String(accountId).replace("act_", "").trim();
-    const targetStoreId = storeId ? Number(storeId) : null;
+    let targetStoreId = storeId ? Number(storeId) : null;
+
+    if (!targetStoreId && store && String(store).trim() !== "未分配" && String(store).trim() !== "Unknown") {
+      const sName = String(store).trim();
+      const existing = await prisma.store.findFirst({
+        where: { name: { equals: sName, mode: "insensitive" } },
+      });
+      if (existing) {
+        targetStoreId = existing.id;
+      } else if (!isNaN(Number(sName))) {
+        targetStoreId = Number(sName);
+      } else {
+        try {
+          const newStore = await prisma.store.create({
+            data: { name: sName, platform: "shopline", userId },
+          });
+          targetStoreId = newStore.id;
+        } catch (e) {
+          const found = await prisma.store.findFirst({
+            where: { name: { equals: sName, mode: "insensitive" } },
+          });
+          if (found) targetStoreId = found.id;
+        }
+      }
+    }
 
     let statusVal = "ACTIVE";
     if (status) {
@@ -88,6 +112,9 @@ router.post("/", async (req: any, res) => {
       }
     }
 
+    const projectValue = project && String(project).trim() !== "未分配" ? String(project).trim() : null;
+    const ownerValue = owner && String(owner).trim() !== "未分配" ? String(owner).trim() : null;
+
     let mapping;
     try {
       mapping = await prisma.accountMapping.upsert({
@@ -96,8 +123,8 @@ router.post("/", async (req: any, res) => {
           storeId: targetStoreId,
           userId,
           fbPageId: fbPageId ? String(fbPageId) : null,
-          project: project ? String(project) : null,
-          owner: owner ? String(owner) : null,
+          project: projectValue,
+          owner: ownerValue,
           status: statusVal,
           updatedAt: new Date(),
         },
@@ -106,8 +133,8 @@ router.post("/", async (req: any, res) => {
           storeId: targetStoreId,
           userId,
           fbPageId: fbPageId ? String(fbPageId) : null,
-          project: project ? String(project) : null,
-          owner: owner ? String(owner) : null,
+          project: projectValue,
+          owner: ownerValue,
           status: statusVal,
         },
       });
@@ -119,8 +146,8 @@ router.post("/", async (req: any, res) => {
           storeId: targetStoreId,
           userId,
           fbPageId: fbPageId ? String(fbPageId) : null,
-          project: project ? String(project) : null,
-          owner: owner ? String(owner) : null,
+          project: projectValue,
+          owner: ownerValue,
           status: statusVal,
           updatedAt: new Date(),
         },
@@ -128,31 +155,31 @@ router.post("/", async (req: any, res) => {
       mapping = await prisma.accountMapping.findFirst({ where: { fbAccountId: cleanAccId } });
     }
 
-    if (targetStoreId) {
-      try {
-        await prisma.adAccount.upsert({
-          where: { fb_account_id: cleanAccId },
-          update: {
-            storeId: targetStoreId,
-            userId,
-          },
-          create: {
-            fb_account_id: cleanAccId,
-            fb_account_name: cleanAccId,
-            storeId: targetStoreId,
-            userId,
-          },
-        });
-      } catch (err: any) {
-        console.warn(`[Save AdAccount] Retry fallback for ${cleanAccId}:`, err.message);
-        await prisma.adAccount.updateMany({
-          where: { fb_account_id: cleanAccId },
-          data: {
-            storeId: targetStoreId,
-            userId,
-          },
-        });
-      }
+    try {
+      await prisma.adAccount.upsert({
+        where: { fb_account_id: cleanAccId },
+        update: {
+          storeId: targetStoreId,
+          userId,
+          fb_account_name: accountName ? String(accountName).trim() : undefined,
+        },
+        create: {
+          fb_account_id: cleanAccId,
+          fb_account_name: accountName ? String(accountName).trim() : cleanAccId,
+          storeId: targetStoreId,
+          userId,
+        },
+      });
+    } catch (err: any) {
+      console.warn(`[Save AdAccount] Retry fallback for ${cleanAccId}:`, err.message);
+      await prisma.adAccount.updateMany({
+        where: { fb_account_id: cleanAccId },
+        data: {
+          storeId: targetStoreId,
+          userId,
+          fb_account_name: accountName ? String(accountName).trim() : undefined,
+        },
+      });
     }
 
     return res.json({ success: true, mapping });

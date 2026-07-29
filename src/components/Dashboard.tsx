@@ -1132,7 +1132,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
         ) : currentTab === "monitoring" ? (
           <MonitoringDashboard />
         ) : currentTab === "accounts" ? (
-          <AccountManagementPage mappings={mappings} onMappingsChange={syncMappingsToDb} />
+          <AccountManagementPage mappings={mappings} onMappingsChange={syncMappingsToDb} fetchMappings={fetchMappings} />
         ) : currentTab === "users" ? (
           <UsersManagementPage />
         ) : (
@@ -1143,7 +1143,15 @@ export function Dashboard({ onLogout }: DashboardProps) {
   );
 }
 
-function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Record<string, any>, onMappingsChange: (m: Record<string, any>) => void }) {
+function AccountManagementPage({
+  mappings,
+  onMappingsChange,
+  fetchMappings,
+}: {
+  mappings: Record<string, any>;
+  onMappingsChange: (m: Record<string, any>) => void;
+  fetchMappings?: () => Promise<void>;
+}) {
   const [fetching, setFetching] = useState(true);
   const [accounts, setAccounts] = useState<any[]>([]);
   const [batchProject, setBatchProject] = useState("");
@@ -1414,22 +1422,26 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
     }
     setSubmittingBatch(true);
     try {
-      const newMappings = { ...mappings };
-
-      selectedAccountsForBatch.forEach((acc) => {
+      const batchItems = selectedAccountsForBatch.map((acc) => {
         const prevMapping = getMappingForAccount(acc.accountId, mappings) || {};
-        newMappings[acc.accountId] = {
+        return {
           accountId: acc.accountId,
           accountName: acc.accountName,
-          project:
-            batchProject || prevMapping.project || "",
+          project: batchProject || prevMapping.project || "",
           store: batchStore || prevMapping.store || "",
           owner: batchOwner || prevMapping.owner || "",
           status: batchStatus || prevMapping.status || "ACTIVE",
         };
       });
 
-      await onMappingsChange(newMappings);
+      const res = await axios.post("/api/mappings/batch", { mappings: batchItems });
+      if (res.data && res.data.error) {
+        toast.error(res.data.error || "保存绑定失败");
+        return;
+      }
+      if (fetchMappings) {
+        await fetchMappings();
+      }
 
       toast.success(
         `成功更新 ${selectedAccountsForBatch.length} 个账户的绑定关系，已同步至服务器。`,
@@ -1439,8 +1451,9 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
       setBatchOwner("");
       setBatchStatus("");
       setSelectedAccountsForBatch([]);
-    } catch (err) {
-      toast.error("保存绑定失败");
+    } catch (err: any) {
+      console.error("Batch save mappings error:", err);
+      toast.error(err.response?.data?.error || "保存绑定失败");
     } finally {
       setSubmittingBatch(false);
     }
@@ -1452,7 +1465,8 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
       Object.values(mappings).forEach((m: any) => {
         if (!m || !m.accountId) return;
         const cleanId = String(m.accountId).replace("act_", "").trim();
-        if (!map.has(cleanId) || (m.store && m.store !== "未分配")) {
+        if (!cleanId) return;
+        if (!map.has(cleanId)) {
           map.set(cleanId, {
             ...m,
             cleanAccountId: cleanId,
@@ -1517,30 +1531,48 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
     setEditingRow({
       accountId: m.accountId,
       accountName: m.accountName || "",
-      project: m.project || "",
-      store: m.store || "",
-      owner: m.owner || "",
+      project: m.project && m.project !== "未分配" ? m.project : "",
+      store: m.store && m.store !== "未分配" ? m.store : "",
+      owner: m.owner && m.owner !== "未分配" ? m.owner : "",
       status: m.status || "ACTIVE",
     });
   };
 
   const handleSaveSingleRow = async (cleanAccId: string) => {
     try {
-      const newMappings = { ...mappings };
-      const formattedAccId = editingRow.accountId || `act_${cleanAccId}`;
-      newMappings[formattedAccId] = {
-        accountId: formattedAccId,
-        accountName: editingRow.accountName || formattedAccId,
-        project: editingRow.project || "",
-        store: editingRow.store || "",
-        owner: editingRow.owner || "",
-        status: editingRow.status || "ACTIVE",
+      const formattedAccId = editingRow.accountId?.startsWith("act_")
+        ? editingRow.accountId
+        : `act_${cleanAccId}`;
+      const payload = {
+        mappings: [
+          {
+            accountId: formattedAccId,
+            accountName: editingRow.accountName || formattedAccId,
+            project: editingRow.project || "",
+            store: editingRow.store || "",
+            owner: editingRow.owner || "",
+            status: editingRow.status || "ACTIVE",
+          },
+        ],
       };
-      await onMappingsChange(newMappings);
+      const res = await axios.post("/api/mappings/batch", payload);
+      if (res.data && res.data.error) {
+        toast.error(res.data.error || "保存映射失败");
+        return;
+      }
+      if (fetchMappings) {
+        await fetchMappings();
+      } else {
+        const newMappings = { ...mappings };
+        newMappings[formattedAccId] = payload.mappings[0];
+        newMappings[cleanAccId] = payload.mappings[0];
+        await onMappingsChange(newMappings);
+      }
       setEditingMappingId(null);
       toast.success("映射信息已保存并同步");
-    } catch (e) {
-      toast.error("保存映射失败");
+    } catch (e: any) {
+      console.error("Save single mapping error:", e);
+      toast.error(e.response?.data?.error || "保存映射失败");
     }
   };
 
@@ -1548,13 +1580,18 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
     try {
       const cleanAccId = String(accountId).replace("act_", "").trim();
       await axios.delete(`/api/mappings/${cleanAccId}`);
-      const newMappings = { ...mappings };
-      delete newMappings[accountId];
-      delete newMappings[cleanAccId];
-      delete newMappings[`act_${cleanAccId}`];
-      await onMappingsChange(newMappings);
+      if (fetchMappings) {
+        await fetchMappings();
+      } else {
+        const newMappings = { ...mappings };
+        delete newMappings[accountId];
+        delete newMappings[cleanAccId];
+        delete newMappings[`act_${cleanAccId}`];
+        await onMappingsChange(newMappings);
+      }
       toast.success("已解除该账户关联");
-    } catch (e) {
+    } catch (e: any) {
+      console.error("Delete mapping error:", e);
       toast.error("解除关联失败");
     }
   };
@@ -1566,24 +1603,44 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
     }
     const cleanId = singleAccId.replace("act_", "").trim();
     const formattedId = `act_${cleanId}`;
-    const newMappings = { ...mappings };
-    newMappings[formattedId] = {
-      accountId: formattedId,
-      accountName: singleAccName.trim() || formattedId,
-      project: singleProject.trim() || "",
-      store: singleStore.trim() || "",
-      owner: singleOwner.trim() || "",
-      status: singleStatus || "ACTIVE",
-    };
-    await onMappingsChange(newMappings);
-    toast.success("新建映射保存成功，已同步至服务器！");
-    setShowAddSingleModal(false);
-    setSingleAccId("");
-    setSingleAccName("");
-    setSingleProject("");
-    setSingleStore("");
-    setSingleOwner("");
-    setSingleStatus("ACTIVE");
+    try {
+      const payload = {
+        mappings: [
+          {
+            accountId: formattedId,
+            accountName: singleAccName.trim() || formattedId,
+            project: singleProject.trim() || "",
+            store: singleStore.trim() || "",
+            owner: singleOwner.trim() || "",
+            status: singleStatus || "ACTIVE",
+          },
+        ],
+      };
+      const res = await axios.post("/api/mappings/batch", payload);
+      if (res.data && res.data.error) {
+        toast.error(res.data.error || "新建映射保存失败");
+        return;
+      }
+      if (fetchMappings) {
+        await fetchMappings();
+      } else {
+        const newMappings = { ...mappings };
+        newMappings[formattedId] = payload.mappings[0];
+        newMappings[cleanId] = payload.mappings[0];
+        await onMappingsChange(newMappings);
+      }
+      toast.success("新建映射保存成功，已同步至服务器！");
+      setShowAddSingleModal(false);
+      setSingleAccId("");
+      setSingleAccName("");
+      setSingleProject("");
+      setSingleStore("");
+      setSingleOwner("");
+      setSingleStatus("ACTIVE");
+    } catch (e: any) {
+      console.error("Add single mapping error:", e);
+      toast.error(e.response?.data?.error || "新建映射保存失败");
+    }
   };
 
   if (fetching) {
@@ -2170,7 +2227,10 @@ function AccountManagementPage({ mappings, onMappingsChange }: { mappings: Recor
                 </TableRow>
               ) : (
                 paginatedMappingsList.map((m) => {
-                  const isEditing = editingMappingId === m.cleanAccountId;
+                  const isEditing =
+                    editingMappingId === m.cleanAccountId ||
+                    editingMappingId === m.accountId ||
+                    editingMappingId === `act_${m.cleanAccountId}`;
                   return (
                     <TableRow key={m.cleanAccountId} className="hover:bg-gray-50/50">
                       <TableCell className="font-mono text-xs font-semibold text-gray-700">

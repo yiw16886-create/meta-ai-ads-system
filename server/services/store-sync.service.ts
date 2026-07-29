@@ -1,12 +1,27 @@
 import axios from "axios";
 import prisma from "../../db/index.js";
-import { getTimezoneOffsetStr } from "../utils.js";
+import { getTimezoneOffsetStr, mapOffsetToIana } from "../utils.js";
 import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc.js";
 import timezone from "dayjs/plugin/timezone.js";
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
+
+function formatApiErrorMessage(err: any): string {
+  if (!err) return "Unknown error";
+  const data = err.response?.data;
+  if (typeof data === "string") {
+    if (data.includes("<html") || data.includes("Just a moment") || data.includes("Cloudflare")) {
+      return `Cloudflare WAF / Anti-Bot protection triggered (HTTP ${err.response?.status || 403})`;
+    }
+    return data.length > 200 ? data.slice(0, 200) + "..." : data;
+  }
+  if (data && typeof data === "object") {
+    return JSON.stringify(data);
+  }
+  return err.message || String(err);
+}
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -212,7 +227,7 @@ async function syncShoplineStoreData(store: any, startDate: string, endDate: str
     try {
       res = await axios.get(ordersUrl, { headers });
     } catch(e: any) {
-      console.error(`[Shopline Sync] Failed to fetch orders for ${store.id}:`, e.response?.data || e.message);
+      console.error(`[Shopline Sync] Failed to fetch orders for ${store.id}:`, formatApiErrorMessage(e));
       break;
     }
     
@@ -518,7 +533,7 @@ async function syncShopifyStoreData(store: any, startDate: string, endDate: stri
         }
         console.log(`[Store Sync] Total order items synced for store ${store.id}: ${ordersCount}`);
       } catch (err: any) {
-        console.error(`[Store Sync] Failed API call for shopify store ${store.id}:`, err?.response?.data || err?.message || err);
+        console.error(`[Store Sync] Failed API call for shopify store ${store.id}:`, formatApiErrorMessage(err));
       }
 }
 
@@ -571,7 +586,7 @@ async function syncShoplazzaStoreData(store: any, startDate: string, endDate: st
     let ordersCount = 0;
 
     // Use dayjs specifying store.timezone or America/Los_Angeles with proper UTC conversion
-    const storeTz = store.timezone || "America/Los_Angeles";
+    const storeTz = mapOffsetToIana(store.timezone);
     const formattedMin = dayjs.tz(`${startDate}T00:00:00`, storeTz).utc().format();
     const formattedMax = dayjs.tz(`${endDate}T23:59:59`, storeTz).utc().format();
 
@@ -585,7 +600,7 @@ async function syncShoplazzaStoreData(store: any, startDate: string, endDate: st
       try {
         res = await axios.get(ordersUrl, { headers });
       } catch (e: any) {
-        console.error(`[Shoplazza Sync] Failed to fetch orders for ${store.id} at page ${page}:`, e.response?.data || e.message);
+        console.error(`[Shoplazza Sync] Failed to fetch orders for ${store.id} at page ${page}:`, formatApiErrorMessage(e));
         break;
       }
 
@@ -691,6 +706,6 @@ async function syncShoplazzaStoreData(store: any, startDate: string, endDate: st
     }
     console.log(`[Shoplazza Sync] Total order items synced for store ${store.id}: ${ordersCount}`);
   } catch (err: any) {
-    console.error(`[Shoplazza Sync] Failed API call for shoplazza store ${store.id}:`, err?.response?.data || err?.message || err);
+    console.error(`[Shoplazza Sync] Failed API call for shoplazza store ${store.id}:`, formatApiErrorMessage(err));
   }
 }
