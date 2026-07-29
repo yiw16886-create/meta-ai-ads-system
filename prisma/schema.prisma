@@ -91,6 +91,35 @@ model User {
   accountMappings  AccountMapping[]
   stores           Store[]
   facebookPages    FacebookPage[]
+  metaActionLogs   MetaActionLog[]
+}
+
+model MetaActionLog {
+  id           String   @id @default(uuid())
+  userId       Int
+  orgId        String?
+  action       String
+  accountId    String?
+  status       String
+  requestJson  Json?
+  resultJson   Json?
+  errorMessage String?  @db.Text
+  createdAt    DateTime @default(now())
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([orgId, createdAt])
+}
+
+model DataDeletionRequest {
+  confirmationCode String    @id
+  fbUserId         String?
+  status           String    @default("RECEIVED")
+  requestedAt      DateTime  @default(now())
+  completedAt      DateTime?
+  errorMessage     String?   @db.Text
+
+  @@index([fbUserId, requestedAt])
 }
 
 model Invitation {

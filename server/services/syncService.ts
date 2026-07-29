@@ -88,13 +88,3 @@ export async function batchUpsertDailyInsights(insights: DailyInsightPayload[]) 
   }
   return count;
 }
-
-/**
- * 重置脏数据清理
- */
-export async function cleanDirtyInsightsData() {
-  console.log("🧹 [Clean Data] Truncating dirty AdInsight records...");
-  const result = await prisma.adInsight.deleteMany({});
-  console.log(`🧹 [Clean Data] Cleared ${result.count} records from AdInsight.`);
-  return result;
-}

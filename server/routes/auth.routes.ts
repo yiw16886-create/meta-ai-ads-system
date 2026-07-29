@@ -710,49 +710,139 @@ router.post("/facebook/delete", async (req, res) => {
     console.log(`✅ Signature verified. Facebook requested deletion of user_id: ${fbUserId}`);
 
     if (fbUserId) {
-      // Look up current active authorized Facebook user in DB
-      const currentFbUserSetting = await prisma.setting.findUnique({
-        where: { key: "FB_AUTHORIZED_USER_ID" }
-      });
-
-      if (currentFbUserSetting && currentFbUserSetting.value === fbUserId) {
-        console.log(`Unbinding active Facebook account and removing all tokens, cached BM data...`);
-
-        // Delete settings keys
-        await prisma.setting.deleteMany({
-          where: {
-            key: {
-              in: ["META_ACCESS_TOKEN", "META_TOKEN_UPDATED_AT", "FB_AUTHORIZED_USER_ID", "FB_AUTHORIZED_USER_LINK"]
-            }
-          }
-        });
-
-        // Set ad accounts access tokens to null
-        await prisma.adAccount.updateMany({
-          data: {
-            fb_access_token: null
-          }
-        });
-
-        // Delete/purge BM status and cached Business Manager structures
-        await prisma.facebookBusinessManager.deleteMany({});
-
-        // Delete page access tokens cached in our FacebookPage table
-        await prisma.facebookPage.deleteMany({});
-        
-        console.log("Successfully cleared all data associated with Facebook User ID");
-      } else {
-        console.warn(`Facebook User ID ${fbUserId} does not match current active authorized user ID: ${currentFbUserSetting?.value}`);
-      }
+      console.log(`✅ Signature verified. Facebook requested deletion of user_id: ${fbUserId}`);
     }
 
-    // Generate response required by Meta
     const confirmationCode = "DEL-" + crypto.randomBytes(6).toString("hex").toUpperCase();
     const host = req.get("host");
     const protocol = req.protocol === "https" || req.headers["x-forwarded-proto"] === "https" ? "https" : "http";
     const statusUrl = `${protocol}://${host}/deletion-status?id=${confirmationCode}`;
 
-    console.log(`Responding to Meta with Confirmation Code: ${confirmationCode}`);
+    await prisma.dataDeletionRequest.create({
+      data: {
+        confirmationCode,
+        fbUserId: fbUserId ? String(fbUserId) : null,
+        status: "RECEIVED",
+      },
+    });
+
+    try {
+      if (!fbUserId) {
+        throw new Error("删除请求未包含 Facebook User ID");
+      }
+
+      const [binding, facebookAccount, user] = await Promise.all([
+        prisma.userFacebookBinding.findFirst({
+          where: { fb_user_id: String(fbUserId) },
+          select: { user_id: true },
+        }),
+        prisma.facebookAccount.findFirst({
+          where: { facebookId: String(fbUserId) },
+          select: { userId: true },
+        }),
+        prisma.user.findFirst({
+          where: { fb_user_id: String(fbUserId) },
+          select: { id: true },
+        }),
+      ]);
+      const matchedUserId = binding?.user_id || facebookAccount?.userId || user?.id;
+
+      if (!matchedUserId) {
+        await prisma.dataDeletionRequest.update({
+          where: { confirmationCode },
+          data: {
+            status: "NO_DATA",
+            completedAt: new Date(),
+          },
+        });
+      } else {
+        const ownedAccounts = await prisma.adAccount.findMany({
+          where: { userId: matchedUserId },
+          select: { fb_account_id: true },
+        });
+        const accountIds = Array.from(new Set(
+          ownedAccounts.flatMap(({ fb_account_id }) => {
+            const cleanId = fb_account_id.replace(/^act_/, "").trim();
+            return [cleanId, `act_${cleanId}`];
+          }),
+        ));
+        await performFullUnbindAndPurge(matchedUserId);
+
+        const [
+          remainingUserToken,
+          remainingBindings,
+          remainingFacebookAccounts,
+          remainingAdAccounts,
+          remainingBms,
+          remainingPages,
+          remainingInsights,
+          remainingAds,
+          remainingAdSets,
+          remainingCampaigns,
+        ] = await Promise.all([
+          prisma.user.count({
+            where: {
+              id: matchedUserId,
+              OR: [
+                { fb_access_token: { not: null } },
+                { fb_user_id: { not: null } },
+              ],
+            },
+          }),
+          prisma.userFacebookBinding.count({ where: { user_id: matchedUserId } }),
+          prisma.facebookAccount.count({ where: { userId: matchedUserId } }),
+          prisma.adAccount.count({ where: { userId: matchedUserId } }),
+          prisma.facebookBusinessManager.count({ where: { userId: matchedUserId } }),
+          prisma.facebookPage.count({ where: { userId: matchedUserId } }),
+          accountIds.length
+            ? prisma.adInsight.count({ where: { accountId: { in: accountIds } } })
+            : 0,
+          accountIds.length
+            ? prisma.ad.count({ where: { accountId: { in: accountIds } } })
+            : 0,
+          accountIds.length
+            ? prisma.adSet.count({ where: { accountId: { in: accountIds } } })
+            : 0,
+          accountIds.length
+            ? prisma.campaign.count({ where: { accountId: { in: accountIds } } })
+            : 0,
+        ]);
+        const remainingRecords =
+          remainingUserToken +
+          remainingBindings +
+          remainingFacebookAccounts +
+          remainingAdAccounts +
+          remainingBms +
+          remainingPages +
+          remainingInsights +
+          remainingAds +
+          remainingAdSets +
+          remainingCampaigns;
+
+        if (remainingRecords > 0) {
+          throw new Error(`删除后核验失败，仍有 ${remainingRecords} 组 Facebook 关联记录`);
+        }
+
+        await prisma.dataDeletionRequest.update({
+          where: { confirmationCode },
+          data: {
+            status: "COMPLETED",
+            completedAt: new Date(),
+          },
+        });
+      }
+    } catch (deletionError: any) {
+      console.error("Facebook data deletion execution failed:", deletionError);
+      await prisma.dataDeletionRequest.update({
+        where: { confirmationCode },
+        data: {
+          status: "FAILED",
+          errorMessage: deletionError.message || "删除处理失败",
+        },
+      }).catch(() => null);
+    }
+
+    console.log(`Responding to Meta with persisted Confirmation Code: ${confirmationCode}`);
     return res.json({
       url: statusUrl,
       confirmation_code: confirmationCode
@@ -761,6 +851,27 @@ router.post("/facebook/delete", async (req, res) => {
     console.error("Unhandled error in Facebook data deletion callback:", error);
     return res.status(500).json({ error: "Internal server error during data deletion" });
   }
+});
+
+router.get("/facebook/deletion-status/:confirmationCode", async (req, res) => {
+  const confirmationCode = String(req.params.confirmationCode || "").trim();
+  if (!/^DEL-[A-F0-9]{12}$/.test(confirmationCode)) {
+    return res.status(400).json({ success: false, error: "无效的删除确认编号" });
+  }
+
+  const deletionRequest = await prisma.dataDeletionRequest.findUnique({
+    where: { confirmationCode },
+    select: {
+      confirmationCode: true,
+      status: true,
+      requestedAt: true,
+      completedAt: true,
+    },
+  });
+  if (!deletionRequest) {
+    return res.status(404).json({ success: false, error: "未找到该删除申请" });
+  }
+  return res.json({ success: true, deletionRequest });
 });
 
 // GET /api/auth/facebook/profile-link - Fetch user's actual profile link dynamically

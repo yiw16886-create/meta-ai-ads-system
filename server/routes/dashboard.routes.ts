@@ -1,6 +1,5 @@
 import { Router } from "express";
 import prisma from "../../db/index.js";
-import { cleanDirtyInsightsData } from "../services/syncService.js";
 import { getMetaToken, syncSingleAccountAdData } from "../utils.js";
 
 const router = Router();
@@ -185,45 +184,11 @@ router.get("/stats", async (req: any, res) => {
  * 重置脏数据清理 & 重新触发同步
  */
 router.post("/clean-dirty-data", async (req: any, res) => {
-  try {
-    const { resync, startDate, endDate } = req.body || {};
-    const deleteResult = await cleanDirtyInsightsData();
-
-    let reSyncedAccounts = 0;
-
-    if (resync) {
-      const token = await getMetaToken(req.user?.id);
-      if (token) {
-        const mappings = await prisma.accountMapping.findMany({
-          select: { fbAccountId: true }
-        });
-
-        const sDate = startDate || new Date(Date.now() - 30 * 86400000).toISOString().split("T")[0];
-        const eDate = endDate || new Date().toISOString().split("T")[0];
-
-        for (const m of mappings) {
-          if (m.fbAccountId) {
-            try {
-              await syncSingleAccountAdData(m.fbAccountId, sDate, eDate, token);
-              reSyncedAccounts++;
-            } catch (syncErr: any) {
-              console.warn(`[Clean & Resync] Failed for account ${m.fbAccountId}:`, syncErr.message);
-            }
-          }
-        }
-      }
-    }
-
-    res.json({
-      success: true,
-      message: "脏数据清理成功！",
-      deletedRecords: deleteResult.count,
-      reSyncedAccounts
-    });
-  } catch (error: any) {
-    console.error("Clean dirty data error:", error);
-    res.json({ success: false, message: error?.message });
-  }
+  return res.status(410).json({
+    success: false,
+    error: "该全表清理接口已停用",
+    details: "请使用 /api/settings/cleanup-dirty-data 的预览与确认批次流程。",
+  });
 });
 
 export default router;

@@ -914,13 +914,25 @@ router.get("/:id/assets", async (req: any, res) => {
 router.post("/share-asset", async (req: any, res) => {
   const { bmId, assetType, assetId, targetBmId, permitRole } = req.body;
   const userId = req.user?.id;
+  const allowedAssetTypes = new Set(["pixel", "page", "ad_account"]);
+  const requestJson = {
+    bmId: String(bmId || ""),
+    assetType: String(assetType || ""),
+    assetId: String(assetId || ""),
+    targetBmId: String(targetBmId || ""),
+    permitRole: String(permitRole || "MANAGE"),
+  };
 
   if (!userId) {
-    return res.status(401).json({ error: "用户未登录或会话已过期" });
+    return res.status(401).json({ success: false, error: "用户未登录或会话已过期" });
   }
 
   if (!bmId || !assetType || !assetId || !targetBmId) {
-    return res.status(400).json({ error: "缺少共享资产必要参数" });
+    return res.status(400).json({ success: false, error: "缺少共享资产必要参数" });
+  }
+
+  if (!allowedAssetTypes.has(String(assetType))) {
+    return res.status(400).json({ success: false, error: "不支持的资产类型" });
   }
 
   try {
@@ -929,74 +941,143 @@ router.post("/share-asset", async (req: any, res) => {
     });
 
     if (!bm) {
-      return res.status(404).json({ error: "找不到指定的源商务管理平台 (BM)" });
+      return res.status(404).json({ success: false, error: "找不到指定的源商务管理平台 (BM)" });
     }
 
-    let success = false;
-    let message = "";
-
+    const actor = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { org_id: true },
+    });
+    let response: any;
+    let message: string;
     try {
       // 核心业务：根据资产类型调用 Meta 相应的分配、共享接口
       if (assetType === "pixel") {
         // 共享像素给目标 BM 
-        const response = await axios.post(
+        response = await axios.post(
           `https://graph.facebook.com/v19.0/${assetId}/shared_businesses`,
           {
             business: targetBmId,
             access_token: bm.systemToken,
-          }
+          },
+          { timeout: 15000 }
         );
-        if (response.data?.success) {
-          success = true;
-          message = "像素成功共享到商务管理平台: " + targetBmId;
-        }
+        message = "像素成功共享到商务管理平台: " + targetBmId;
       } else if (assetType === "page") {
         // 共享主页代理权限
-        const response = await axios.post(
+        response = await axios.post(
           `https://graph.facebook.com/v19.0/${assetId}/agencies`,
           {
             target_id: targetBmId,
             permit_roles: permitRole ? [permitRole] : ["MANAGE"],
             access_token: bm.systemToken,
-          }
+          },
+          { timeout: 15000 }
         );
-        if (response.data?.success) {
-          success = true;
-          message = "公共主页使用代理权限已分配到 BM: " + targetBmId;
-        }
+        message = "公共主页使用代理权限已分配到 BM: " + targetBmId;
       } else if (assetType === "ad_account") {
         // 共享广告账户代理权限
         const cleanId = assetId.startsWith("act_") ? assetId : `act_${assetId}`;
-        const response = await axios.post(
+        response = await axios.post(
           `https://graph.facebook.com/v19.0/${cleanId}/agencies`,
           {
             target_id: targetBmId,
             permit_roles: permitRole ? [permitRole] : ["MANAGE"],
             access_token: bm.systemToken,
-          }
+          },
+          { timeout: 15000 }
         );
-        if (response.data?.success) {
-          success = true;
-          message = "广告账户代理权限已分配到 BM: " + targetBmId;
-        }
+        message = "广告账户代理权限已分配到 BM: " + targetBmId;
       }
     } catch (fbErr: any) {
-      const errMsg = fbErr.response?.data?.error?.message || fbErr.message;
-      console.log(`[Meta API Share] Notice: Sharing failed (${errMsg}). Invoking compliant offline simulation flow.`);
-      
-      // 在本地开发/预览环境，没有真实的 Meta API 可到达时，提供合规的自动化流程反馈，满足系统需求
-      success = true;
-      message = `[自动化模拟] 已通过 BM 系统用户 Token 安全地调用 Meta 批量共享，成功将 [${assetType}] "${assetId}" 分享至目标 BM "${targetBmId}"（配置权限: ${permitRole || "管理员权限"}）`;
+      const metaError = fbErr.response?.data?.error;
+      const details = metaError?.message || fbErr.message || "Meta API 请求失败";
+      const requestId =
+        metaError?.fbtrace_id ||
+        fbErr.response?.headers?.["x-fb-trace-id"] ||
+        null;
+      const meta = {
+        code: metaError?.code ?? null,
+        subcode: metaError?.error_subcode ?? null,
+        type: metaError?.type ?? null,
+        requestId,
+      };
+      console.error("[Meta API Share] Asset sharing failed:", {
+        assetType,
+        assetId,
+        targetBmId,
+        ...meta,
+        message: details,
+      });
+      await prisma.metaActionLog.create({
+        data: {
+          userId,
+          orgId: actor?.org_id,
+          action: "SHARE_BM_ASSET",
+          accountId: assetType === "ad_account" ? String(assetId).replace(/^act_/, "") : null,
+          status: "FAILED",
+          requestJson,
+          resultJson: { meta },
+          errorMessage: details,
+        },
+      }).catch(() => null);
+
+      const metaStatus = Number(fbErr.response?.status);
+      const responseStatus = metaStatus === 401 || metaStatus === 403 ? 403 : 502;
+      return res.status(responseStatus).json({
+        success: false,
+        error: "Meta 未完成资产共享",
+        details,
+        meta,
+      });
     }
 
-    if (success) {
-      return res.json({ success: true, message });
-    } else {
-      return res.status(400).json({ error: "共享资产请求失败", details: message || "API 未返回正确结果" });
+    if (response?.data?.success !== true) {
+      const details = "Meta API 未明确返回 success: true";
+      await prisma.metaActionLog.create({
+        data: {
+          userId,
+          orgId: actor?.org_id,
+          action: "SHARE_BM_ASSET",
+          accountId: assetType === "ad_account" ? String(assetId).replace(/^act_/, "") : null,
+          status: "FAILED",
+          requestJson,
+          resultJson: { metaResponse: response?.data ?? null },
+          errorMessage: details,
+        },
+      }).catch(() => null);
+      return res.status(502).json({
+        success: false,
+        error: "Meta 未确认资产共享成功",
+        details,
+      });
     }
+
+    const requestId = response.headers?.["x-fb-trace-id"] || null;
+    await prisma.metaActionLog.create({
+      data: {
+        userId,
+        orgId: actor?.org_id,
+        action: "SHARE_BM_ASSET",
+        accountId: assetType === "ad_account" ? String(assetId).replace(/^act_/, "") : null,
+        status: "SUCCESS",
+        requestJson,
+        resultJson: {
+          metaResponse: response.data,
+          requestId,
+        },
+      },
+    }).catch((auditError: any) => {
+      console.error("[Meta API Share] Failed to write success audit log:", auditError.message);
+    });
+    return res.json({ success: true, message, requestId });
   } catch (error: any) {
     console.error("Share asset error:", error);
-    return res.json({ error: "资产分发及分配失败", details: error.message });
+    return res.status(500).json({
+      success: false,
+      error: "资产共享处理失败",
+      details: error.message,
+    });
   }
 });
 

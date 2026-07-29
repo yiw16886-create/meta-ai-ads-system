@@ -59,8 +59,21 @@ export function authenticateJWT(req: AuthenticatedRequest, res: Response, next: 
 
   const reqPath = req.path || '';
   const originalUrl = req.originalUrl || '';
+  const cleanOriginalUrl = originalUrl.split("?")[0];
+  const isPublicDeletionCallback =
+    reqPath === "/facebook/delete" ||
+    reqPath === "/auth/facebook/delete" ||
+    cleanOriginalUrl === "/api/auth/facebook/delete";
+  const isPublicDeletionStatus =
+    reqPath.startsWith("/facebook/deletion-status/") ||
+    reqPath.startsWith("/auth/facebook/deletion-status/") ||
+    cleanOriginalUrl.startsWith("/api/auth/facebook/deletion-status/");
 
-  if (publicPaths.some(path => reqPath.startsWith(path) || originalUrl.startsWith(path))) {
+  if (
+    isPublicDeletionCallback ||
+    isPublicDeletionStatus ||
+    publicPaths.some(path => reqPath.startsWith(path) || originalUrl.startsWith(path))
+  ) {
     return next();
   }
 

@@ -4,6 +4,7 @@ import { authenticateJWT, AuthenticatedRequest } from "../middlewares/auth.middl
 import axios from "axios";
 import { getMetaToken, extractMetaError, evaluateActivityStatus, syncSingleAccountAdData } from "../utils.js";
 import { logContext } from "../logger.js";
+import { extractMetaAssetHash } from "../services/metaFetchPatch.service.js";
 
 const router = Router();
 
@@ -382,13 +383,21 @@ const handleSyncSingleAccount = async (req: AuthenticatedRequest, res: any) => {
   } catch (error: any) {
     const rawAcc = req.body?.accountId || req.query?.accountId || "unknown";
     const metaErrorMsg = extractMetaError(error);
-    console.info(`[Sync Account Info] Account ${rawAcc} skipped or restricted: ${metaErrorMsg}`);
+    const is502 = error.status === 502 || error.response?.status === 502 || (metaErrorMsg && (metaErrorMsg.includes("502") || metaErrorMsg.includes("网关")));
     const is403 = error.status === 403 || error.response?.status === 403 || (metaErrorMsg && (metaErrorMsg.includes("403") || metaErrorMsg.includes("OAuthException") || metaErrorMsg.includes("200")));
+
+    if (is502) {
+      console.warn(`[Sync Account Info] Account ${rawAcc} transient gateway error (502): ${metaErrorMsg}`);
+    } else {
+      console.info(`[Sync Account Info] Account ${rawAcc} skipped or restricted: ${metaErrorMsg}`);
+    }
+
     return res.status(200).json({
       success: false,
       accountId: rawAcc,
       error: metaErrorMsg || "同步该账户失败",
-      isForbidden: is403
+      isForbidden: is403,
+      isGatewayError: is502
     });
   }
 };
@@ -730,19 +739,36 @@ const handleSyncCreatives = async (req: AuthenticatedRequest, res: any) => {
       try {
         const creativesUrl = `https://graph.facebook.com/v19.0/${actId}/adcreatives`;
         const creativesRes = await axios.get(creativesUrl, {
-          params: { fields: "id,name,object_type,status", limit: 100, access_token: token }
+          params: {
+            fields: "id,name,object_type,status,image_hash,image_url,thumbnail_url,video_id,effective_object_story_id,object_story_spec,asset_feed_spec",
+            limit: 100,
+            access_token: token
+          }
         });
         const creatives = creativesRes.data?.data || [];
 
         for (const creative of creatives) {
-          const type = getCreativeType(creative.object_type);
+          const extracted = await extractMetaAssetHash(creative.id, token);
+          const videoId = extracted?.videoId || creative.video_id || null;
+          const imageHash = extracted?.imageHash || creative.image_hash || null;
+          const previewUrl = extracted?.previewUrl || creative.thumbnail_url || creative.image_url || null;
+          const type = videoId ? "VIDEO" : getCreativeType(creative.object_type);
           
           await prisma.adCreative.upsert({
             where: { creativeId: creative.id },
             update: {
               name: creative.name,
               type: type,
-              storeId: acc.storeId
+              mediaType: type,
+              storeId: acc.storeId,
+              imageHash,
+              videoId,
+              previewUrl,
+              landingUrl: extracted?.landingUrl || null,
+              pageId: extracted?.pageId || null,
+              pageName: extracted?.pageName || null,
+              effectivePostId: extracted?.effectivePostId || null,
+              metaAssetId: imageHash || videoId
             },
             create: {
               creativeId: creative.id,
@@ -751,7 +777,15 @@ const handleSyncCreatives = async (req: AuthenticatedRequest, res: any) => {
               storeId: acc.storeId,
               name: creative.name || `Creative ${creative.id}`,
               type: type,
-              hookRate: 0
+              hookRate: 0,
+              imageHash,
+              videoId,
+              previewUrl,
+              landingUrl: extracted?.landingUrl || null,
+              pageId: extracted?.pageId || null,
+              pageName: extracted?.pageName || null,
+              effectivePostId: extracted?.effectivePostId || null,
+              metaAssetId: imageHash || videoId
             }
           });
 
@@ -763,6 +797,8 @@ const handleSyncCreatives = async (req: AuthenticatedRequest, res: any) => {
             type,
             accountId: acc.fb_account_id,
             storeName: acc.store ? acc.store.name : "未分配",
+            previewUrl,
+            landingUrl: extracted?.landingUrl || null,
             status: "success"
           }) + "\n");
         }

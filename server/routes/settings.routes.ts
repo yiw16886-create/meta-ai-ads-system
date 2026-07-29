@@ -230,118 +230,242 @@ router.post("/test-smtp", async (req, res) => {
   }
 });
 
-// Clean up dirty historical mock/dummy database records & caches
-router.post("/cleanup-dirty-data", async (req: any, res) => {
-  try {
-    console.log("🧹 Admin request: Cleaning up all mock/dummy database records...");
+const dirtyIdMarkers = ["mock", "dummy", "fake", "sample"];
+const knownFabricatedInsightWindow = {
+  accountId: "1352072466719315",
+  date: { gte: "2026-06-08", lte: "2026-06-15" },
+};
 
-    // 1. Delete AdInsights with mock/dummy accountIds
-    const deletedInsights = await prisma.adInsight.deleteMany({
+function dirtyEntityWhere() {
+  return {
+    OR: dirtyIdMarkers.flatMap((marker) => [
+      { id: { contains: marker, mode: "insensitive" as const } },
+      { accountId: { contains: marker, mode: "insensitive" as const } },
+    ]),
+  };
+}
+
+function markerInsightWhere() {
+  return {
+    OR: dirtyIdMarkers.map((marker) => ({
+      accountId: { contains: marker, mode: "insensitive" as const },
+    })),
+  };
+}
+
+async function inspectDirtyData(client: any = prisma) {
+  const [markerInsights, fabricatedWindowInsights, ads, adSets, campaigns, dirtyHealthBms, unverifiedStatusBms] = await Promise.all([
+    client.adInsight.count({ where: markerInsightWhere() }),
+    client.adInsight.count({ where: knownFabricatedInsightWindow }),
+    client.ad.count({ where: dirtyEntityWhere() }),
+    client.adSet.count({ where: dirtyEntityWhere() }),
+    client.campaign.count({ where: dirtyEntityWhere() }),
+    client.facebookBusinessManager.count({
       where: {
         OR: [
-          { accountId: { contains: "mock" } },
-          { accountId: { contains: "dummy" } },
-          { accountId: { contains: "fake" } },
-          { accountId: { contains: "sample" } }
-        ]
-      }
-    });
-
-    // 2. Delete Ads, AdSets, Campaigns with mock/dummy indicators
-    const deletedAds = await prisma.ad.deleteMany({
-      where: {
-        OR: [
-          { id: { contains: "mock" } },
-          { id: { contains: "dummy" } },
-          { name: { contains: "mock" } },
-          { name: { contains: "dummy" } },
-          { name: { contains: "sample" } },
-          { accountId: { contains: "mock" } },
-          { accountId: { contains: "dummy" } }
-        ]
-      }
-    });
-
-    const deletedAdSets = await prisma.adSet.deleteMany({
-      where: {
-        OR: [
-          { id: { contains: "mock" } },
-          { id: { contains: "dummy" } },
-          { name: { contains: "mock" } },
-          { name: { contains: "dummy" } },
-          { name: { contains: "sample" } },
-          { accountId: { contains: "mock" } },
-          { accountId: { contains: "dummy" } }
-        ]
-      }
-    });
-
-    const deletedCampaigns = await prisma.campaign.deleteMany({
-      where: {
-        OR: [
-          { id: { contains: "mock" } },
-          { id: { contains: "dummy" } },
-          { name: { contains: "mock" } },
-          { name: { contains: "dummy" } },
-          { name: { contains: "sample" } },
-          { accountId: { contains: "mock" } },
-          { accountId: { contains: "dummy" } }
-        ]
-      }
-    });
-
-    // 3. Clean up BMs which might have mock data in healthDetails
-    const bms = await prisma.facebookBusinessManager.findMany();
-    let updatedBmsCount = 0;
-    for (const bm of bms) {
-      if (bm.healthDetails && (bm.healthDetails.includes("mock") || bm.healthDetails.includes("dummy"))) {
-        const cleanHealth = JSON.stringify({
-          adAccounts: { total: 0, active: 0, disabled: 0, pendingReview: 0, details: [] },
-          pages: { total: 0, published: 0, unpublished: 0, details: [] },
-          pixels: { total: 0, details: [] },
-          lastSynced: new Date().toISOString()
-        });
-
-        await prisma.facebookBusinessManager.update({
-          where: { id: bm.id },
-          data: { healthDetails: cleanHealth }
-        });
-        updatedBmsCount++;
-      }
-    }
-
-    // 4. 把数据库里所有尚未经过 Meta API 验证、却被误标记为 DISABLED / RESTRICTED / UNKNOWN 的 BM 状态批量重置为 PENDING_SYNC
-    const resetBms = await prisma.facebookBusinessManager.updateMany({
+          { healthDetails: { contains: "mock", mode: "insensitive" } },
+          { healthDetails: { contains: "dummy", mode: "insensitive" } },
+          { healthDetails: { contains: "fake", mode: "insensitive" } },
+        ],
+      },
+    }),
+    client.facebookBusinessManager.count({
       where: {
         status: { in: ["DISABLED", "RESTRICTED", "UNKNOWN"] },
         OR: [
           { syncStatus: { not: "SUCCESS" } },
-          { syncError: { not: null } }
-        ]
+          { syncError: { not: null } },
+        ],
       },
-      data: {
-        status: "PENDING_SYNC"
+    }),
+  ]);
+  return {
+    markerInsights,
+    fabricatedWindowInsights,
+    ads,
+    adSets,
+    campaigns,
+    dirtyHealthBms,
+    unverifiedStatusBms,
+  };
+}
+
+// Historical fake-data cleanup is always two-step: preview first, then explicit apply.
+router.post("/cleanup-dirty-data", async (req: any, res) => {
+  const userId = Number(req.user?.id);
+  const actor = userId
+    ? await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, role: true, org_id: true, status: true },
+      })
+    : null;
+  const normalizedRole = String(actor?.role || "").toUpperCase();
+  if (!actor || actor.status !== "ACTIVE" || !["ADMIN", "SUPER_ADMIN"].includes(normalizedRole)) {
+    return res.status(403).json({ success: false, error: "仅管理员可检查或处理历史虚假数据" });
+  }
+
+  try {
+    const { apply = false, batchId, confirmation, includeBmRepair = false } = req.body || {};
+    if (!apply) {
+      const candidates = await inspectDirtyData();
+      const batch = await prisma.metaActionLog.create({
+        data: {
+          userId: actor.id,
+          orgId: actor.org_id,
+          action: "CLEANUP_HISTORICAL_FAKE_DATA",
+          status: "PENDING",
+          requestJson: {
+            mode: "PREVIEW",
+            knownFabricatedWindow: knownFabricatedInsightWindow,
+            idMarkers: dirtyIdMarkers,
+          },
+          resultJson: { candidates },
+        },
+      });
+      return res.json({
+        success: true,
+        applied: false,
+        batchId: batch.id,
+        confirmation: `DELETE_FAKE_DATA_${batch.id}`,
+        candidates,
+        warning: "当前仅完成预览，没有修改数据库。BM 健康状态默认不会修改；确认数量后再提交 apply=true。",
+      });
+    }
+
+    if (!batchId || confirmation !== `DELETE_FAKE_DATA_${batchId}`) {
+      return res.status(400).json({ success: false, error: "清理批次或确认字符串不正确" });
+    }
+    const batch = await prisma.metaActionLog.findFirst({
+      where: {
+        id: String(batchId),
+        userId: actor.id,
+        action: "CLEANUP_HISTORICAL_FAKE_DATA",
+        status: "PENDING",
+      },
+    });
+    if (!batch) {
+      return res.status(404).json({ success: false, error: "清理批次不存在、已执行或不属于当前用户" });
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const before = await inspectDirtyData(tx);
+      const deletedMarkerInsights = await tx.adInsight.deleteMany({ where: markerInsightWhere() });
+      const sanitizedWindowInsights = await tx.adInsight.updateMany({
+        where: knownFabricatedInsightWindow,
+        data: {
+          addToCart: 0,
+          initiateCheckout: 0,
+          purchases: 0,
+          purchaseValue: 0,
+          atcRate: 0,
+          checkoutRate: 0,
+          cpp: 0,
+          roas: 0,
+        },
+      });
+      const deletedAds = await tx.ad.deleteMany({ where: dirtyEntityWhere() });
+      const deletedAdSets = await tx.adSet.deleteMany({ where: dirtyEntityWhere() });
+      const deletedCampaigns = await tx.campaign.deleteMany({ where: dirtyEntityWhere() });
+
+      let cleanedBmHealth = 0;
+      let resetBmStatus = 0;
+      if (includeBmRepair === true) {
+        const dirtyBms = await tx.facebookBusinessManager.findMany({
+          where: {
+            OR: [
+              { healthDetails: { contains: "mock", mode: "insensitive" } },
+              { healthDetails: { contains: "dummy", mode: "insensitive" } },
+              { healthDetails: { contains: "fake", mode: "insensitive" } },
+            ],
+          },
+          select: { id: true },
+        });
+        for (const bm of dirtyBms) {
+          await tx.facebookBusinessManager.update({
+            where: { id: bm.id },
+            data: {
+              healthDetails: null,
+              status: "PENDING_SYNC",
+              syncStatus: "FAILED",
+              syncError: "历史非真实健康数据已清除，等待重新同步 Meta",
+            },
+          });
+        }
+        const resetBms = await tx.facebookBusinessManager.updateMany({
+          where: {
+            status: { in: ["DISABLED", "RESTRICTED", "UNKNOWN"] },
+            OR: [
+              { syncStatus: { not: "SUCCESS" } },
+              { syncError: { not: null } },
+            ],
+          },
+          data: { status: "PENDING_SYNC" },
+        });
+        cleanedBmHealth = dirtyBms.length;
+        resetBmStatus = resetBms.count;
       }
+
+      return {
+        before,
+        deleted: {
+          markerInsights: deletedMarkerInsights.count,
+          ads: deletedAds.count,
+          adSets: deletedAdSets.count,
+          campaigns: deletedCampaigns.count,
+          cleanedBmHealth,
+          resetBmStatus,
+        },
+        bmRepairApplied: includeBmRepair === true,
+        sanitized: {
+          fabricatedWindowInsights: sanitizedWindowInsights.count,
+          preservedFields: ["spend", "reach", "impressions", "clicks", "cpc", "ctr"],
+          resetFields: [
+            "addToCart",
+            "initiateCheckout",
+            "purchases",
+            "purchaseValue",
+            "atcRate",
+            "checkoutRate",
+            "cpp",
+            "roas",
+          ],
+        },
+      };
     });
 
-    res.json({
+    await prisma.metaActionLog.update({
+      where: { id: batch.id },
+      data: {
+        status: "SUCCESS",
+        resultJson: result,
+      },
+    });
+    return res.json({
       success: true,
-      message: "成功清理數據庫中所有的歷史虛假與 Mock 數據！",
-      details: {
-        deletedInsightsCount: deletedInsights.count,
-        deletedCampaignsCount: deletedCampaigns.count,
-        deletedAdSetsCount: deletedAdSets.count,
-        deletedAdsCount: deletedAds.count,
-        updatedBmsCount,
-        resetBmsCount: resetBms.count
-      }
+      applied: true,
+      batchId: batch.id,
+      result,
+      message: "测试 ID 记录已清理；污染时间窗保留真实基础指标，仅转化指标归零并等待重新同步 Meta。",
     });
   } catch (error: any) {
-    console.error("Failed to cleanup mock database records:", error);
-    res.json({
+    if (req.body?.batchId) {
+      await prisma.metaActionLog.updateMany({
+        where: {
+          id: String(req.body.batchId),
+          userId: actor.id,
+          status: "PENDING",
+        },
+        data: {
+          status: "FAILED",
+          errorMessage: error.message,
+        },
+      }).catch(() => null);
+    }
+    console.error("Failed to cleanup historical fake data:", error);
+    return res.status(500).json({
       success: false,
-      error: "清理數據庫失敗",
-      details: error.message
+      error: "清理数据库失败",
+      details: error.message,
     });
   }
 });

@@ -6,6 +6,11 @@ import { upsertDailyInsightRecord } from "./services/syncService.js";
 // CACHE map for utils
 const queryCache = new Map();
 
+export function cleanFbAccountId(id: string | null | undefined): string {
+  if (!id) return "";
+  return String(id).replace(/^act_/, "").trim();
+}
+
 export async function isUserFacebookConnected(userId?: number | string): Promise<boolean> {
   if (!userId) return false;
   const numUserId = Number(userId);
@@ -376,9 +381,76 @@ export function getTimezoneOffsetStr(timezone: string | null | undefined): strin
 
 export function extractMetaError(error: any): string {
   if (axios.isAxiosError(error)) {
-    return error.response?.data?.error?.message || error.message;
+    const status = error.response?.status;
+    const msg = error.response?.data?.error?.message;
+    if (msg) return msg;
+
+    if (status === 502) {
+      return "Meta API 接口网关不可用 (502 Bad Gateway)，上游服务暂无响应，请稍后重试";
+    }
+    if (status === 503) {
+      return "Meta API 接口服务暂不可用 (503 Service Unavailable)，请稍后重试";
+    }
+    if (status === 504) {
+      return "Meta API 响应超时 (504 Gateway Timeout)，请稍后重试";
+    }
+    if (error.code === "ECONNABORTED" || error.message?.includes("timeout")) {
+      return "Meta API 请求超时，网络连接不稳定，请稍后重试";
+    }
+    return error.message;
   }
   return error instanceof Error ? error.message : String(error);
+}
+
+export async function callMetaApiWithRetry<T = any>(
+  url: string,
+  config: any = {},
+  maxRetries: number = 3
+): Promise<any> {
+  let attempt = 0;
+  const method = (config.method || "GET").toUpperCase();
+  const timeoutMs = config.timeout || 15000;
+  const mergedConfig = {
+    method,
+    url,
+    timeout: timeoutMs,
+    headers: {
+      Accept: "application/json",
+      "User-Agent": "MetaGraphClient/1.0",
+      ...(config.headers || {}),
+    },
+    ...config,
+  };
+
+  let lastError: any;
+  while (attempt < maxRetries) {
+    attempt++;
+    try {
+      return await axios(mergedConfig);
+    } catch (err: any) {
+      lastError = err;
+      const status = err.response?.status;
+      const isRetryableStatus =
+        status === 502 || status === 503 || status === 504 || status === 500 || status === 429;
+      const isNetworkError =
+        !status ||
+        err.code === "ECONNRESET" ||
+        err.code === "ETIMEDOUT" ||
+        err.code === "ECONNREFUSED" ||
+        err.code === "ERR_BAD_RESPONSE";
+
+      if ((isRetryableStatus || isNetworkError) && attempt < maxRetries) {
+        const delayMs = attempt * 800;
+        console.warn(
+          `[Meta API Retry] ${method} request to ${url.split("?")[0]} failed (${status || err.code || err.message}). Retrying in ${delayMs}ms (Attempt ${attempt}/${maxRetries})...`
+        );
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      } else {
+        break;
+      }
+    }
+  }
+  throw lastError;
 }
 
 export async function evaluateActivityStatus(
@@ -593,7 +665,7 @@ export async function syncSingleAccountAdData(accountId: string, startDate: stri
   
   let insightsResponse;
   try {
-    insightsResponse = await axios.get(
+    insightsResponse = await callMetaApiWithRetry(
       url,
       {
         params: {
@@ -608,14 +680,37 @@ export async function syncSingleAccountAdData(accountId: string, startDate: stri
           limit: 1000,
           access_token: token,
         },
+        timeout: 15000,
       },
+      3
     );
   } catch (err: any) {
     const metaErr = extractMetaError(err);
     console.warn(`[Unified Ad Sync] Meta API error for account ${cleanAccountId}: ${metaErr}`);
+
+    const isGatewayError =
+      err.response?.status === 502 ||
+      err.response?.status === 503 ||
+      err.response?.status === 504 ||
+      (metaErr && metaErr.includes("502"));
+
+    if (isGatewayError) {
+      const existingInsightsCount = await prisma.adInsight.count({
+        where: {
+          accountId: { in: [cleanAccountId, `act_${cleanAccountId}`] },
+          date: { gte: startDate, lte: endDate }
+        }
+      }).catch(() => 0);
+
+      if (existingInsightsCount > 0) {
+        console.info(`[Unified Ad Sync] Meta API returned ${err.response?.status || 502} after retries. Preserving existing ${existingInsightsCount} DB records for account ${cleanAccountId}.`);
+        return existingInsightsCount;
+      }
+    }
+
     const customError: any = new Error(metaErr);
     customError.response = err.response;
-    customError.status = err.response?.status || 403;
+    customError.status = err.response?.status || (isGatewayError ? 502 : 403);
     throw customError;
   }
 

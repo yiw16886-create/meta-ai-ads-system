@@ -65,12 +65,6 @@ async function main() {
       const fbImpressions = parseInt(row.impressions || "0", 10);
       const fbClicks = parseInt(row.inline_link_clicks || row.clicks || "0", 10);
 
-      // Same simulated fallback for demo/draft purposes if needed, 
-      // but let's record actual values first
-      if (!fbPurchases && fbClicks > 0 && fbSpend > 0) fbPurchases = Math.max(1, Math.floor(fbClicks * 0.012));
-      if (!fbPurchaseVal && fbPurchases > 0) fbPurchaseVal = fbPurchases * 45;
-      if (!fbAddToCart && fbClicks > 0) fbAddToCart = Math.floor(fbClicks * 0.1);
-      if (!fbIC && fbAddToCart > 0) fbIC = Math.floor(fbAddToCart * 0.5);
 
       await prisma.adInsight.upsert({
         where: {

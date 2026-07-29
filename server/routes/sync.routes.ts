@@ -180,6 +180,25 @@ router.post("/sync", async (req: any, res) => {
       console.error("Aggregation error during sync:", aggErr);
     }
 
+    const actor = req.user?.id
+      ? await prisma.user.findUnique({
+          where: { id: req.user.id },
+          select: { org_id: true },
+        })
+      : null;
+
+    await prisma.metaActionLog.create({
+      data: {
+        userId: req.user?.id ? Number(req.user.id) : null,
+        orgId: actor?.org_id,
+        action: "SYNC_AD_INSIGHTS",
+        status: stopSync && totalSynced === 0 ? "FAILED" : "SUCCESS",
+        requestJson: { startDate, endDate, requestedAccounts },
+        resultJson: { totalSynced },
+        errorMessage: stopSync ? lastError : null,
+      },
+    }).catch(() => null);
+
     res.json({
       success: true,
       count: totalSynced,
@@ -189,6 +208,25 @@ router.post("/sync", async (req: any, res) => {
     const msg = extractMetaError(error);
     const errorMsg = error.response?.data?.error?.message || error.response?.data?.message || error.message;
     console.error(`Sync error: ${errorMsg}`);
+
+    const actor = req.user?.id
+      ? await prisma.user.findUnique({
+          where: { id: req.user.id },
+          select: { org_id: true },
+        })
+      : null;
+
+    await prisma.metaActionLog.create({
+      data: {
+        userId: req.user?.id ? Number(req.user.id) : null,
+        orgId: actor?.org_id,
+        action: "SYNC_AD_INSIGHTS",
+        status: "FAILED",
+        requestJson: { startDate, endDate, requestedAccounts },
+        errorMessage: errorMsg,
+      },
+    }).catch(() => null);
+
     res.json({ error: msg });
   }
 });

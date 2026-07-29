@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import prisma from '../../db/index.js';
 import axios from 'axios';
-import { collapseRequest, getMetaToken } from '../utils.js';
+import { collapseRequest, getMetaToken, callMetaApiWithRetry } from '../utils.js';
 
 // Helper function to clean leading act_ prefix for reliable ID comparisons
 function cleanFbAccountId(id: string | null | undefined): string {
@@ -108,16 +108,36 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
       }
     });
 
-    const adMetrics: Record<string, { spend: number; impressions: number; clicks: number; purchases: number; purchaseValue: number }> = {};
+    type RealAdMetrics = {
+      spend: number;
+      impressions: number;
+      reach: number;
+      clicks: number;
+      linkClicks: number;
+      purchases: number;
+      purchaseValue: number;
+      addToCart: number;
+      initiateCheckout: number;
+    };
+    const emptyMetrics = (): RealAdMetrics => ({
+      spend: 0,
+      impressions: 0,
+      reach: 0,
+      clicks: 0,
+      linkClicks: 0,
+      purchases: 0,
+      purchaseValue: 0,
+      addToCart: 0,
+      initiateCheckout: 0,
+    });
+    const adMetrics: Record<string, RealAdMetrics> = {};
     
     // 初始化每一个 ad 零值指标
     for (const ad of ads) {
-      adMetrics[ad.id] = { spend: 0, impressions: 0, clicks: 0, purchases: 0, purchaseValue: 0 };
+      adMetrics[ad.id] = emptyMetrics();
     }
 
     const forceRefresh = req.query.force_refresh === 'true';
-    const liveFetchedAccountIds = new Set<string>();
-
     if (allowedAccountIds.length > 0) {
       console.log(`[Material Controller] Fetching insights for accounts: ${allowedAccountIds.join(', ')}`);
       
@@ -137,15 +157,23 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
           const url = `https://graph.facebook.com/v21.0/${fbActId}/insights`;
           
           const insights = await collapseRequest(cacheKey, async () => {
-            const res = await axios.get(url, {
-              params: {
-                level: 'ad',
-                time_range: JSON.stringify({ since: startDate || '2026-05-01', until: endDate || '2026-06-09' }),
-                fields: 'ad_id,spend,impressions,inline_link_clicks,clicks,actions,action_values',
-                limit: 1000,
-                access_token: useToken
-              }
-            });
+            const res = await callMetaApiWithRetry(
+              url,
+              {
+                params: {
+                  level: 'ad',
+                  time_range: JSON.stringify({
+                    since: String(startDate || new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10)),
+                    until: String(endDate || new Date().toISOString().slice(0, 10)),
+                  }),
+                  fields: 'ad_id,spend,impressions,reach,inline_link_clicks,clicks,actions,action_values',
+                  limit: 1000,
+                  access_token: useToken
+                },
+                timeout: 15000,
+              },
+              3
+            );
             const fetched = res.data?.data || [];
             setCachedApi(cacheKey, fetched, 1800); // cache for 30 minutes
             return fetched;
@@ -166,15 +194,19 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
           const adId = stat.ad_id;
           if (adId) {
             if (!adMetrics[adId]) {
-              adMetrics[adId] = { spend: 0, impressions: 0, clicks: 0, purchases: 0, purchaseValue: 0 };
+              adMetrics[adId] = emptyMetrics();
             }
             const metrics = adMetrics[adId];
             metrics.spend += parseFloat(stat.spend || '0');
             metrics.impressions += parseInt(stat.impressions || '0', 10);
-            metrics.clicks += parseInt(stat.inline_link_clicks || stat.clicks || '0', 10);
+            metrics.reach += parseInt(stat.reach || '0', 10);
+            metrics.clicks += parseInt(stat.clicks || '0', 10);
+            metrics.linkClicks += parseInt(stat.inline_link_clicks || '0', 10);
 
             let itemPurchases = 0;
             let itemPurchaseValue = 0;
+            let itemAddToCart = 0;
+            let itemInitiateCheckout = 0;
             if (stat.actions && Array.isArray(stat.actions)) {
               const purchaseAction = stat.actions.find((act: any) => 
                 act.action_type === 'purchase' || 
@@ -183,6 +215,16 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
               if (purchaseAction) {
                 itemPurchases = parseInt(purchaseAction.value || '0', 10);
               }
+              const addToCartAction = stat.actions.find((act: any) =>
+                act.action_type === 'add_to_cart' ||
+                act.action_type === 'offsite_conversion.fb_pixel_add_to_cart'
+              );
+              const checkoutAction = stat.actions.find((act: any) =>
+                act.action_type === 'initiate_checkout' ||
+                act.action_type === 'offsite_conversion.fb_pixel_initiate_checkout'
+              );
+              itemAddToCart = parseInt(addToCartAction?.value || '0', 10);
+              itemInitiateCheckout = parseInt(checkoutAction?.value || '0', 10);
             }
             if (stat.action_values && Array.isArray(stat.action_values)) {
               const purchaseValAction = stat.action_values.find((act: any) => 
@@ -196,136 +238,15 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
 
             metrics.purchases += itemPurchases;
             metrics.purchaseValue += itemPurchaseValue;
-          }
-        }
-        liveFetchedAccountIds.add(cleanFbAccountId(actId));
-      }
-    }
-
-    // 5. 【真实数据集成与智能仿真规划】对于未成功走 live 的账户，优先查询本地的真实日度广告表现 AdInsight 数据并关联数字
-    const fallbackAccountIds = allowedAccountIds.filter(id => !liveFetchedAccountIds.has(cleanFbAccountId(id)));
-
-    if (fallbackAccountIds.length > 0) {
-      const startStr = String(startDate || '2026-06-02');
-      const endStr = String(endDate || '2026-06-09');
-      const fallbackDbAccounts = new Set<string>();
-
-      try {
-        const dbInsights = await prisma.adInsight.findMany({
-          where: {
-            accountId: { in: fallbackAccountIds },
-            date: { gte: startStr, lte: endStr }
-          }
-        });
-
-        if (dbInsights && dbInsights.length > 0) {
-          // 按 fbAccountId 归集在筛选日期段内的累加基础真实数据
-          const accountMetrics: Record<string, { spend: number; impressions: number; clicks: number; purchases: number; purchaseValue: number }> = {};
-          for (const record of dbInsights) {
-            const accId = cleanFbAccountId(record.accountId);
-            if (!accountMetrics[accId]) {
-              accountMetrics[accId] = { spend: 0, impressions: 0, clicks: 0, purchases: 0, purchaseValue: 0 };
-            }
-            accountMetrics[accId].spend += record.spend || 0;
-            accountMetrics[accId].impressions += record.impressions || 0;
-            accountMetrics[accId].clicks += record.clicks || 0;
-            accountMetrics[accId].purchases += record.purchases || 0;
-            accountMetrics[accId].purchaseValue += record.purchaseValue || 0;
-          }
-
-          // 按账户分类已加载的广告 ad 列表并关联
-          const adsByAccount: Record<string, typeof ads> = {};
-          for (const ad of ads) {
-            const accId = cleanFbAccountId(ad.accountId);
-            if (fallbackAccountIds.includes(accId)) {
-              if (!adsByAccount[accId]) {
-                adsByAccount[accId] = [];
-              }
-              adsByAccount[accId].push(ad);
-            }
-          }
-
-          const seedRandom = (str: string) => {
-            let hash = 0;
-            for (let i = 0; i < str.length; i++) {
-              hash = str.charCodeAt(i) + ((hash << 5) - hash);
-            }
-            return Math.abs(hash);
-          };
-
-          for (const accId of Object.keys(adsByAccount)) {
-            const accountAds = adsByAccount[accId];
-            const metrics = accountMetrics[accId];
-
-            if (metrics && (metrics.spend > 0 || metrics.impressions > 0)) {
-              fallbackDbAccounts.add(accId); // 确立成功匹配到真实本地日期段数据
-
-              // 改进真实感：不要把账户总限额平均摊给几百个广告（会导致每个广告显示滑稽的5美金均匀消耗）
-              // 现实中，哪怕有几百个广告，绝大多数都是休眠、暂停的，只有最核心的 5% 的广告有投放消耗。
-              const limit = Math.max(5, Math.min(accountAds.length, Math.ceil(accountAds.length * 0.05)));
-              
-              // 结合 determinism 挑选分配这批预算的广告
-              const adsWithSeed = accountAds.map(ad => ({
-                ad,
-                seed: seedRandom(ad.id)
-              }));
-              adsWithSeed.sort((a, b) => b.seed - a.seed);
-
-              const selectedActiveAds = adsWithSeed.slice(0, limit);
-
-              let totalWeight = 0;
-              const weights = selectedActiveAds.map(item => {
-                const weight = 0.5 + (item.seed % 100) / 100; // 0.5 ~ 1.5 范围
-                totalWeight += weight;
-                return weight;
-              });
-
-              for (let i = 0; i < selectedActiveAds.length; i++) {
-                const targetAd = selectedActiveAds[i].ad;
-                const ratio = totalWeight > 0 ? (weights[i] / totalWeight) : (1 / selectedActiveAds.length);
-                adMetrics[targetAd.id] = {
-                  spend: metrics.spend * ratio,
-                  impressions: Math.round(metrics.impressions * ratio),
-                  clicks: Math.round(metrics.clicks * ratio),
-                  purchases: Math.round((metrics.purchases || 0) * ratio),
-                  purchaseValue: (metrics.purchaseValue || 0) * ratio
-                };
-              }
-            }
-          }
-        }
-      } catch (dbErr: any) {
-        // Fallback database check skipped
-      }
-
-      // 剩余依然未得到真实指标数据的 fallback 账户，不进行模拟，返回空数据
-      const remainingSimulationAccountIds = fallbackAccountIds.filter(id => !fallbackDbAccounts.has(id));
-      if (remainingSimulationAccountIds.length > 0) {
-        for (const ad of ads) {
-          const accId = cleanFbAccountId(ad.accountId);
-          if (remainingSimulationAccountIds.includes(accId)) {
-            adMetrics[ad.id] = {
-              spend: 0,
-              impressions: 0,
-              clicks: 0,
-              purchases: 0,
-              purchaseValue: 0
-            };
+            metrics.addToCart += itemAddToCart;
+            metrics.initiateCheckout += itemInitiateCheckout;
           }
         }
       }
     }
 
-    // Fetch all stores to build domain mapping for fallback landing URLs
-    const storeIdsJoined = Array.from(new Set(validAccounts.map(a => a.storeId).filter(Boolean))) as number[];
-    const storesList = await prisma.store.findMany({
-      where: { id: { in: storeIdsJoined } },
-      select: { id: true, domain: true, name: true }
-    });
-    const storeDomainMap: Record<number, string> = {};
-    for (const s of storesList) {
-      storeDomainMap[s.id] = s.domain || `${s.name}.myshopline.com`;
-    }
+    // 5. 广告级指标只接受 Meta API 的 level=ad 返回值。
+    // AdInsight 当前只有账户级数据，不能再将账户总量人工分摊到具体广告。
 
     // 6. 转换结果并组装，拼装创意素材和所属店铺
     const formattedData: any[] = [];
@@ -341,7 +262,7 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
         if (materialType === 'carousel' && typeMatch !== 'carousel') continue;
       }
 
-      const metrics = adMetrics[ad.id] || { spend: 0, impressions: 0, clicks: 0, purchases: 0, purchaseValue: 0 };
+      const metrics = adMetrics[ad.id] || emptyMetrics();
       
       const totalSpend = Number(metrics.spend);
       const totalImpressions = Number(metrics.impressions);
@@ -373,13 +294,7 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
       }
 
       const calcStoreId = currentMapping?.storeId || ad.storeId || null;
-      let finalLandingUrl = creative?.landingUrl || null;
-      if (!finalLandingUrl && calcStoreId) {
-        const domain = storeDomainMap[calcStoreId];
-        if (domain) {
-          finalLandingUrl = `https://${domain}/products/${ad.creativeId || ad.id}`;
-        }
-      }
+      const finalLandingUrl = creative?.landingUrl || null;
 
       formattedData.push({
         creative_id: ad.id,               // 映射为 creative_id 以兼容前端字段结构，实为广告 ID
@@ -393,8 +308,12 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
         spend: totalSpend.toFixed(2),
         impressions: totalImpressions,
         clicks: totalClicks,
+        reach: Number(metrics.reach || 0),
+        linkClicks: Number(metrics.linkClicks || 0),
         purchases: totalPurchases,
         purchaseValue: totalPurchaseValue,
+        addToCart: Number(metrics.addToCart || 0),
+        initiateCheckout: Number(metrics.initiateCheckout || 0),
         roas: roas,
         cpm: cpm.toFixed(2),
         pageId: creative?.pageId || null,
@@ -464,8 +383,8 @@ export async function getMaterialTrend(req: Request, res: Response) {
       return res.json({ success: true, data: [] });
     }
 
-    const startStr = String(startDate || '2026-06-08');
-    const endStr = String(endDate || '2026-06-15');
+    const startStr = String(startDate || new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10));
+    const endStr = String(endDate || new Date().toISOString().slice(0, 10));
 
     const globalToken = await getMetaToken(userId);
 
@@ -480,6 +399,19 @@ export async function getMaterialTrend(req: Request, res: Response) {
 
     const forceRefresh = req.query.force_refresh === 'true';
     const dailyMap: Record<string, any> = {};
+    const trendAds = await prisma.ad.findMany({
+      where: { accountId: { in: [...allowedAccountIds, ...allowedAccountIds.map(id => `act_${id}`)] } },
+      include: { creative: true },
+    });
+    const allowedTrendAdIds = new Set(
+      trendAds
+        .filter((ad) => {
+          if (!materialType || materialType === 'all') return true;
+          const actualType = String(ad.creative?.type || ad.creative?.mediaType || '').toUpperCase();
+          return actualType === String(materialType).toUpperCase();
+        })
+        .map(ad => ad.id),
+    );
 
     const fetchPromises = allowedAccountIds.map(async (actId) => {
       const cleanActId = cleanFbAccountId(actId);
@@ -493,16 +425,21 @@ export async function getMaterialTrend(req: Request, res: Response) {
       try {
         const url = `https://graph.facebook.com/v21.0/act_${cleanActId}/insights`;
         const apiData = await collapseRequest(cacheKey, async () => {
-          const res = await axios.get(url, {
-            params: {
-              level: 'account',
-              time_range: JSON.stringify({ since: startStr, until: endStr }),
-              time_increment: 1, // break down daily
-              fields: 'date_start,spend,impressions,inline_link_clicks,clicks,actions,action_values',
-              limit: 1000,
-              access_token: useToken
-            }
-          });
+          const res = await callMetaApiWithRetry(
+            url,
+            {
+              params: {
+                level: 'ad',
+                time_range: JSON.stringify({ since: startStr, until: endStr }),
+                time_increment: 1,
+                fields: 'ad_id,date_start,spend,impressions,reach,inline_link_clicks,clicks,actions,action_values',
+                limit: 1000,
+                access_token: useToken
+              },
+              timeout: 15000,
+            },
+            3
+          );
           const fetched = res.data?.data || [];
           setCachedApi(cacheKey, fetched, 1800);
           return fetched;
@@ -516,14 +453,11 @@ export async function getMaterialTrend(req: Request, res: Response) {
     });
 
     const liveResults = await Promise.all(fetchPromises);
-    const missingAccounts: string[] = [];
 
     liveResults.forEach(r => {
-      if (!r.insights) {
-        missingAccounts.push(r.actId);
-        return;
-      }
+      if (!r.insights) return;
       for (const row of r.insights) {
+        if (!row.ad_id || !allowedTrendAdIds.has(row.ad_id)) continue;
         const d = row.date_start;
         if (!dailyMap[d]) {
            dailyMap[d] = {
@@ -531,15 +465,10 @@ export async function getMaterialTrend(req: Request, res: Response) {
            };
         }
         
-        let multiplier = 1;
-        if (materialType === 'VIDEO') multiplier = 0.7;
-        if (materialType === 'IMAGE') multiplier = 0.25;
-
-        dailyMap[d].spend += (parseFloat(row.spend || '0') * multiplier);
-        dailyMap[d].impressions += Math.floor(parseInt(row.impressions || '0', 10) * multiplier);
-        const fbClicks = parseInt(row.inline_link_clicks || row.clicks || '0', 10);
-        dailyMap[d].clicks += Math.floor(fbClicks * multiplier);
-        dailyMap[d].link_clicks += Math.floor(fbClicks * 0.8 * multiplier); 
+        dailyMap[d].spend += parseFloat(row.spend || '0');
+        dailyMap[d].impressions += parseInt(row.impressions || '0', 10);
+        dailyMap[d].clicks += parseInt(row.clicks || '0', 10);
+        dailyMap[d].link_clicks += parseInt(row.inline_link_clicks || '0', 10);
 
         let fbPurchases = 0; let fbPurchaseVal = 0; let fbAddToCart = 0; let fbIC = 0;
         if (row.actions && Array.isArray(row.actions)) {
@@ -555,35 +484,12 @@ export async function getMaterialTrend(req: Request, res: Response) {
           if (pv) fbPurchaseVal = parseFloat(pv.value || '0');
         }
 
-        dailyMap[d].purchases += Math.floor(fbPurchases * multiplier);
-        dailyMap[d].purchaseValue += (fbPurchaseVal * multiplier);
-        dailyMap[d].add_to_cart += Math.floor(fbAddToCart * multiplier);
-        dailyMap[d].initiated_checkouts += Math.floor(fbIC * multiplier);
+        dailyMap[d].purchases += fbPurchases;
+        dailyMap[d].purchaseValue += fbPurchaseVal;
+        dailyMap[d].add_to_cart += fbAddToCart;
+        dailyMap[d].initiated_checkouts += fbIC;
       }
     });
-
-    if (missingAccounts.length > 0) {
-      const dbInsights = await prisma.adInsight.findMany({
-        where: { accountId: { in: missingAccounts }, date: { gte: startStr, lte: endStr } }
-      });
-      for (const row of dbInsights) {
-        if (!dailyMap[row.date]) {
-          dailyMap[row.date] = { date: row.date, spend: 0, impressions: 0, clicks: 0, link_clicks: 0, add_to_cart: 0, initiated_checkouts: 0, purchases: 0, purchaseValue: 0 };
-        }
-        let multiplier = 1;
-        if (materialType === 'VIDEO') multiplier = 0.7;
-        if (materialType === 'IMAGE') multiplier = 0.25;
-
-        dailyMap[row.date].spend += (row.spend * multiplier);
-        dailyMap[row.date].impressions += Math.floor(row.impressions * multiplier);
-        dailyMap[row.date].clicks += Math.floor(row.clicks * multiplier);
-        dailyMap[row.date].link_clicks += Math.floor(row.clicks * 0.8 * multiplier); 
-        dailyMap[row.date].add_to_cart += Math.floor(row.addToCart * multiplier);
-        dailyMap[row.date].initiated_checkouts += Math.floor(row.initiateCheckout * multiplier);
-        dailyMap[row.date].purchases += Math.floor(row.purchases * multiplier);
-        dailyMap[row.date].purchaseValue += (row.purchaseValue * multiplier);
-      }
-    }
 
     let data = Object.values(dailyMap).sort((a: any, b: any) => a.date.localeCompare(b.date));
 
