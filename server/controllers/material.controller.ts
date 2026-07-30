@@ -274,7 +274,6 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
             // Daily persistence is handled by /api/meta/sync-creatives,
             // which requests time_increment=1. Do not write a range aggregate
             // into a single daily row here.
-            }
           }
         }
       }
