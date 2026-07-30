@@ -238,7 +238,6 @@ export function MaterialPerformanceTable() {
         roas,
         cpp,
         reach,
-        reachAvailable,
         actualFrequency,
         ctr,
         cpc,
@@ -277,9 +276,8 @@ export function MaterialPerformanceTable() {
 
     const roas = spend > 0 ? purchaseValue / spend : 0;
     const cpp = purchases > 0 ? spend / purchases : 0;
-    const reachAvailable =
-      filteredAggregated.length === 1 &&
-      filteredAggregated[0]?.reachAvailable === true;
+    // A summary across multiple ads cannot deduplicate reach.
+    const reachAvailable = enrichedTableData.length === 1 && reach > 0;
     const safeReach = reachAvailable ? reach : 0;
     const frequency = safeReach > 0 ? impressions / safeReach : 0;
     const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
@@ -294,8 +292,9 @@ export function MaterialPerformanceTable() {
       purchases, 
       purchaseValue, 
       roas, 
-      cpp, 
-      reach, 
+      cpp,
+      reach: safeReach,
+      reachAvailable,
       frequency, 
       ctr, 
       cpc, 
@@ -467,6 +466,7 @@ export function MaterialPerformanceTable() {
         roas,
         cpp,
         reach,
+        reachAvailable,
         actualFrequency,
         ctr,
         cpc,
@@ -521,7 +521,11 @@ export function MaterialPerformanceTable() {
 
     const roas = spend > 0 ? purchaseValue / spend : 0;
     const cpp = purchases > 0 ? spend / purchases : 0;
-    const frequency = reach > 0 ? impressions / reach : 0;
+    const reachAvailable =
+      filteredAggregated.length === 1 &&
+      filteredAggregated[0]?.reachAvailable === true;
+    const safeReach = reachAvailable ? reach : 0;
+    const frequency = safeReach > 0 ? impressions / safeReach : 0;
     const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
     const cpc = clicks > 0 ? spend / clicks : 0;
     const linkClicksCtr = impressions > 0 ? (linkClicks / impressions) * 100 : 0;
