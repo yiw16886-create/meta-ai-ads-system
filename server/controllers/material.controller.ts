@@ -171,8 +171,9 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
                     since: String(startDate || new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10)),
                     until: String(endDate || new Date().toISOString().slice(0, 10)),
                   }),
-                  time_increment: 1,
-                  fields: 'date_start,ad_id,spend,impressions,reach,inline_link_clicks,clicks,actions,action_values',
+                  // Return one aggregate row per ad for the selected range.
+                  // Daily reach cannot be summed without double-counting people.
+                  fields: 'ad_id,spend,impressions,reach,inline_link_clicks,clicks,actions,action_values',
                   limit: 1000,
                   access_token: useToken
                 },
@@ -228,97 +229,51 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
             metrics.clicks += parseInt(stat.clicks || '0', 10);
             metrics.linkClicks += parseInt(stat.inline_link_clicks || '0', 10);
 
-            let itemPurchases = 0;
-            let itemPurchaseValue = 0;
-            let itemAddToCart = 0;
-            let itemInitiateCheckout = 0;
-            if (stat.actions && Array.isArray(stat.actions)) {
-              const purchaseAction = stat.actions.find((act: any) => 
-                act.action_type === 'purchase' || 
-                act.action_type === 'offsite_conversion.fb_pixel_purchase'
-              );
-              if (purchaseAction) {
-                itemPurchases = parseInt(purchaseAction.value || '0', 10);
+            const getMetricValue = (
+              rows: any,
+              preferredTypes: string[]
+            ): number => {
+              if (!Array.isArray(rows)) return 0;
+              for (const actionType of preferredTypes) {
+                const match = rows.find(
+                  (row: any) => row?.action_type === actionType
+                );
+                if (match) return Number(match.value || 0);
               }
-              const addToCartAction = stat.actions.find((act: any) =>
-                act.action_type === 'add_to_cart' ||
-                act.action_type === 'offsite_conversion.fb_pixel_add_to_cart'
-              );
-              const checkoutAction = stat.actions.find((act: any) =>
-                act.action_type === 'initiate_checkout' ||
-                act.action_type === 'offsite_conversion.fb_pixel_initiate_checkout'
-              );
-              itemAddToCart = parseInt(addToCartAction?.value || '0', 10);
-              itemInitiateCheckout = parseInt(checkoutAction?.value || '0', 10);
-            }
-            if (stat.action_values && Array.isArray(stat.action_values)) {
-              const purchaseValAction = stat.action_values.find((act: any) => 
-                act.action_type === 'purchase' || 
-                act.action_type === 'offsite_conversion.fb_pixel_purchase'
-              );
-              if (purchaseValAction) {
-                itemPurchaseValue = parseFloat(purchaseValAction.value || '0');
-              }
-            }
+              return 0;
+            };
+
+            // Pick one canonical action type in priority order. These action
+            // variants can overlap, so summing them would double count.
+            const itemPurchases = getMetricValue(stat.actions, [
+              'omni_purchase',
+              'purchase',
+              'offsite_conversion.fb_pixel_purchase'
+            ]);
+            const itemPurchaseValue = getMetricValue(stat.action_values, [
+              'omni_purchase',
+              'purchase',
+              'offsite_conversion.fb_pixel_purchase'
+            ]);
+            const itemAddToCart = getMetricValue(stat.actions, [
+              'omni_add_to_cart',
+              'add_to_cart',
+              'offsite_conversion.fb_pixel_add_to_cart'
+            ]);
+            const itemInitiateCheckout = getMetricValue(stat.actions, [
+              'omni_initiated_checkout',
+              'initiate_checkout',
+              'offsite_conversion.fb_pixel_initiate_checkout'
+            ]);
 
             metrics.purchases += itemPurchases;
             metrics.purchaseValue += itemPurchaseValue;
             metrics.addToCart += itemAddToCart;
             metrics.initiateCheckout += itemInitiateCheckout;
 
-            const insightDate = String(stat.date_start || "").trim();
-
-            if (adId && insightDate) {
-              const relatedAd = ads.find(currentAd => currentAd.id === adId);
-
-              try {
-                await prisma.adPerformanceDaily.upsert({
-                  where: {
-                    adId_date: {
-                      adId,
-                      date: insightDate
-                    }
-                  },
-                  update: {
-                    accountId: cleanFbAccountId(actId),
-                    creativeId: relatedAd?.creativeId || null,
-                    spend: parseFloat(stat.spend || "0"),
-                    impressions: parseInt(stat.impressions || "0", 10),
-                    reach: parseInt(stat.reach || "0", 10),
-                    clicks: parseInt(stat.clicks || "0", 10),
-                    linkClicks: parseInt(stat.inline_link_clicks || "0", 10),
-                    purchases: itemPurchases,
-                    purchaseValue: itemPurchaseValue,
-                    addToCart: itemAddToCart,
-                    initiateCheckout: itemInitiateCheckout
-                  },
-                  create: {
-                    date: insightDate,
-                    accountId: cleanFbAccountId(actId),
-                    adId,
-                    creativeId: relatedAd?.creativeId || null,
-                    spend: parseFloat(stat.spend || "0"),
-                    impressions: parseInt(stat.impressions || "0", 10),
-                    reach: parseInt(stat.reach || "0", 10),
-                    clicks: parseInt(stat.clicks || "0", 10),
-                    linkClicks: parseInt(stat.inline_link_clicks || "0", 10),
-                    purchases: itemPurchases,
-                    purchaseValue: itemPurchaseValue,
-                    addToCart: itemAddToCart,
-                    initiateCheckout: itemInitiateCheckout
-                  }
-                });
-              } catch (databaseError: any) {
-                console.error(
-                  `[Material Controller] Failed to persist ad insight ${adId}/${insightDate}:`,
-                  {
-                    name: databaseError?.name || null,
-                    code: databaseError?.code || null,
-                    message: databaseError?.message || String(databaseError),
-                    meta: databaseError?.meta || null
-                  }
-                );
-              }
+            // Daily persistence is handled by /api/meta/sync-creatives,
+            // which requests time_increment=1. Do not write a range aggregate
+            // into a single daily row here.
             }
           }
         }
@@ -359,7 +314,8 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
         const target = storedByAd[row.adId];
         target.spend += Number(row.spend || 0);
         target.impressions += Number(row.impressions || 0);
-        target.reach += Number(row.reach || 0);
+        // Reach is non-additive across days. Keep it unavailable on DB fallback
+        // instead of presenting an inflated sum.
         target.clicks += Number(row.clicks || 0);
         target.linkClicks += Number(row.linkClicks || 0);
         target.purchases += Number(row.purchases || 0);
