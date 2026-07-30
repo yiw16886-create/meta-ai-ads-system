@@ -1209,12 +1209,12 @@ export function MaterialPerformanceTable() {
 
                     {/* 12. 覆盖人数 */}
                     <TableCell className="py-4 text-right font-mono text-[13px] font-bold text-slate-900 px-4">
-                      {tableSummary.reach.toLocaleString()}
+                      {tableSummary.reachAvailable ? tableSummary.reach.toLocaleString() : "—"}
                     </TableCell>
 
                     {/* 13. 频次 */}
                     <TableCell className="py-4 text-right font-mono text-[13px] font-bold text-slate-900 px-4">
-                      {tableSummary.frequency.toFixed(2)}
+                      {tableSummary.reachAvailable ? tableSummary.frequency.toFixed(2) : "—"}
                     </TableCell>
 
                     {/* 14. 点击量 */}
