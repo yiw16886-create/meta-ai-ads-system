@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import prisma from '../../db/index.js';
 import axios from 'axios';
 import { collapseRequest, getMetaToken, callMetaApiWithRetry } from '../utils.js';
+import { ensureAdPerformanceDailyTable } from '../services/adPerformanceSchema.service.js';
 
 // Helper function to clean leading act_ prefix for reliable ID comparisons
 function cleanFbAccountId(id: string | null | undefined): string {
@@ -29,6 +30,10 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
     if (!userId) {
       return res.json({ success: true, data: [], total: 0 });
     }
+
+    // Legacy production databases are not Prisma-migration baselined (P3005).
+    // Create the real ad-level metrics table idempotently before using it.
+    await ensureAdPerformanceDailyTable();
 
     // 1. 获取前端传来的筛选参数
     const { storeId, accountIds, startDate, endDate, materialType, page = 1, pageSize = 20 } = req.query;
@@ -306,7 +311,12 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
               } catch (databaseError: any) {
                 console.error(
                   `[Material Controller] Failed to persist ad insight ${adId}/${insightDate}:`,
-                  databaseError.message
+                  {
+                    name: databaseError?.name || null,
+                    code: databaseError?.code || null,
+                    message: databaseError?.message || String(databaseError),
+                    meta: databaseError?.meta || null
+                  }
                 );
               }
             }
