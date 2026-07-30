@@ -5,6 +5,7 @@ import axios from "axios";
 import { getMetaToken, extractMetaError, evaluateActivityStatus, syncSingleAccountAdData, callMetaApiWithRetry } from "../utils.js";
 import { logContext } from "../logger.js";
 import { extractMetaAssetHash } from "../services/metaFetchPatch.service.js";
+import { ensureAdPerformanceDailyTable } from "../services/adPerformanceSchema.service.js";
 
 const router = Router();
 
@@ -747,6 +748,9 @@ const handleSyncCreatives = async (
         error: "未绑定 Facebook 账号或 Token 已失效"
       });
     }
+
+    // Ensure legacy production databases can persist real ad-level metrics.
+    await ensureAdPerformanceDailyTable();
 
     const requestData = {
       ...req.query,
