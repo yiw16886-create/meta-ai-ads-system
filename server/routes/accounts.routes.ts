@@ -1,7 +1,7 @@
 import { Router } from "express";
 import prisma from "../../db/index.js";
 import axios from "axios";
-import { getMetaToken, extractMetaError, evaluateActivityStatus, getCachedData, setCachedData, collapseRequest, isUserFacebookConnected } from "../utils.js";
+import { getMetaToken, extractMetaError, evaluateActivityStatus, getCachedData, setCachedData, collapseRequest, isUserFacebookConnected, safeGetAdInsights } from "../utils.js";
 
 const router = Router();
 
@@ -110,7 +110,7 @@ async function fetchMetaDetailsWithRetry(
           access_token: token,
           filtering: filteringParam
         },
-        timeout: 15000,
+        timeout: 45000,
       }
     );
     return {
@@ -134,7 +134,7 @@ async function fetchMetaDetailsWithRetry(
             limit: 100,
             access_token: token,
           },
-          timeout: 15000,
+          timeout: 45000,
         }
       );
       return {
@@ -155,7 +155,7 @@ async function fetchMetaDetailsWithRetry(
             limit: 200,
             access_token: token,
           },
-          timeout: 15000,
+          timeout: 45000,
         }
       );
 
@@ -177,7 +177,7 @@ async function fetchMetaDetailsWithRetry(
               limit: 200,
               access_token: token
             },
-            timeout: 15000
+            timeout: 45000
           }
         );
 
@@ -330,11 +330,9 @@ router.get("/:accountId/details", async (req: any, res) => {
       }
 
       // Query database for historical aggregate metrics for this account to scale insights realistically
-      const dbInsights = await prisma.adInsight.findMany({
-        where: {
-          accountId: { in: targetAccountIds },
-          date: { gte: startStr, lte: endStr }
-        }
+      const dbInsights = await safeGetAdInsights({
+        accountId: { in: targetAccountIds },
+        date: { gte: startStr, lte: endStr }
       });
 
       const totSpend = dbInsights.reduce((sum, i) => sum + i.spend, 0);
@@ -704,10 +702,7 @@ router.get("/list", async (req: any, res) => {
       where: { OR: [{ userId: Number(userId) }, { userId: null }] }
     });
 
-    const allInsights = await prisma.adInsight.findMany({
-      select: { accountId: true, accountName: true },
-      distinct: ['accountId']
-    });
+    const allInsights = await safeGetAdInsights(undefined);
     
     const uniqueMap = new Map();
 

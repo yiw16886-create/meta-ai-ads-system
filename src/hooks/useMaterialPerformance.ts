@@ -47,70 +47,71 @@ export function useMaterialPerformance(filters: {
   const startDate = filters.dateRange[0];
   const endDate = filters.dateRange[1];
 
-  useEffect(() => {
-    let active = true;
-    const forceRefresh = forceRefreshRef.current;
-
+  const fetchData = useCallback(async (isForce = false) => {
+    let requestSucceeded = false;
     setLoading(true);
 
-    const fetchData = async () => {
-      let requestSucceeded = false;
-
-      try {
-        const response = await axios.get('/api/materials/leaderboard', {
-          params: {
-            storeId,
-            accountIds: accountIdsStr,
-            startDate,
-            endDate,
-            materialType,
-            page,
-            pageSize: 20,
-            // 后端已支持 force_refresh=true。
-            // 普通筛选和分页不绕过缓存，只有手动刷新才绕过。
-            force_refresh: forceRefresh ? 'true' : undefined
-          }
-        });
-
-        if (active && response.data?.success) {
-          setData(Array.isArray(response.data.data) ? response.data.data : []);
-          setTotal(Number(response.data.total || 0));
-          requestSucceeded = true;
+    try {
+      const response = await axios.get('/api/materials/leaderboard', {
+        params: {
+          storeId,
+          accountIds: accountIdsStr,
+          startDate,
+          endDate,
+          materialType,
+          page,
+          pageSize: 20,
+          force_refresh: isForce ? 'true' : undefined
         }
-      } catch (error: any) {
-        console.error('前端拉取素材真实指标失败:', error?.message || error);
-      } finally {
-        if (forceRefresh) {
-          forceRefreshRef.current = false;
-        }
+      });
 
-        if (active) {
-          setLoading(false);
-
-          // 强制刷新完成后，让素材预览重新请求。
-          // 预览请求会读取刚刚写入的最新服务端缓存，避免重复请求 Meta。
-          if (forceRefresh && requestSucceeded) {
-            setRefreshVersion(prev => prev + 1);
-          }
-        }
+      if (response.data?.success) {
+        setData(Array.isArray(response.data.data) ? response.data.data : []);
+        setTotal(Number(response.data.total || 0));
+        requestSucceeded = true;
       }
+    } catch (error: any) {
+      console.error('前端拉取素材真实指标失败:', error?.message || error);
+    } finally {
+      setLoading(false);
+      if (isForce && requestSucceeded) {
+        setRefreshVersion(prev => prev + 1);
+      }
+    }
+  }, [storeId, accountIdsStr, startDate, endDate, materialType, page]);
+
+  // 1. 首次及依赖改变或手动刷新触发时加载
+  useEffect(() => {
+    const isForce = forceRefreshRef.current;
+    if (isForce) {
+      forceRefreshRef.current = false;
+    }
+    fetchData(isForce);
+  }, [fetchData, refreshTrigger]);
+
+  // 2. 废除固定时间间隔轮询 (无 setInterval)。
+  // 仅在“页面重新聚焦 (revalidateOnFocus)”和“网络重新连接 (revalidateOnReconnect)”时静默刷新最新数据。
+  useEffect(() => {
+    const handleFocus = () => {
+      console.log('[useMaterialPerformance] Window refocused -> revalidating data...');
+      fetchData(false);
     };
 
-    fetchData();
+    const handleOnline = () => {
+      console.log('[useMaterialPerformance] Network reconnected -> revalidating data...');
+      fetchData(false);
+    };
+
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('online', handleOnline);
 
     return () => {
-      active = false;
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('online', handleOnline);
     };
-  }, [
-    storeId,
-    accountIdsStr,
-    startDate,
-    endDate,
-    materialType,
-    page,
-    refreshTrigger
-  ]);
+  }, [fetchData]);
 
+  // 3. 手动刷新按钮触发逻辑
   const refresh = useCallback(() => {
     forceRefreshRef.current = true;
     setRefreshTrigger(prev => prev + 1);

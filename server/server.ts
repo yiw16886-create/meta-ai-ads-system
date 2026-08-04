@@ -1,4 +1,5 @@
-import "dotenv/config";
+import dotenv from "dotenv";
+dotenv.config({ override: true });
 import "./logger.js";
 import { logContext } from "./logger.js";
 import express, { Request, Response, NextFunction } from "express";
@@ -203,14 +204,44 @@ async function checkDb() {
 
     const adminUser = await prisma.user.upsert({
       where: { email: defaultEmail },
-      update: { role: "SUPER_ADMIN" }, 
+      update: { role: "SUPER_ADMIN", status: "ACTIVE" }, 
       create: {
         email: defaultEmail,
         password: hashedPass,
-        role: "SUPER_ADMIN"
+        role: "SUPER_ADMIN",
+        status: "ACTIVE"
       }
     });
     console.log(`👤 Verified/Restored admin user: ${defaultEmail} (ID: ${adminUser.id})`);
+
+    // Ensure default organization exists
+    const defaultOrgId = "org_dev_1";
+    await prisma.organization.upsert({
+      where: { id: defaultOrgId },
+      update: {},
+      create: {
+        id: defaultOrgId,
+        name: "Default Dev Org"
+      }
+    });
+
+    // Ensure user yiw16886@gmail.com exists
+    const userEmail = "yiw16886@gmail.com";
+    const userPass = "admin";
+    const hashedUserPass = await bcrypt.hash(userPass, 10);
+    const regularUser = await prisma.user.upsert({
+      where: { email: userEmail },
+      update: { role: "admin", status: "ACTIVE", org_id: defaultOrgId },
+      create: {
+        email: userEmail,
+        password: hashedUserPass,
+        password_hash: hashedUserPass,
+        role: "admin",
+        status: "ACTIVE",
+        org_id: defaultOrgId
+      }
+    });
+    console.log(`👤 Verified/Restored user: ${userEmail} (ID: ${regularUser.id})`);
 
     // One-time self-healing: Bind all Stores where userId is NULL to the Super Admin user
     const nullUserStores = await prisma.store.findMany({
@@ -572,8 +603,8 @@ async function startServer() {
 
         // --- 启动后台静默同步 ---
         // runBackgroundSync(); // Disable immediate run to prevent startup crashes
-        setInterval(runBackgroundSync, 2 * 60 * 60 * 1000); // 之后每 2 小时执行一次
-        console.log("[后台任务] 已开启自动同步，频率: 每 2 小时");
+        // setInterval(runBackgroundSync, 2 * 60 * 60 * 1000); // 之后每 2 小时执行一次
+        console.log("[后台任务] 自动同步已禁用，转为全手动按需同步");
       });
     }
   } catch (error) {

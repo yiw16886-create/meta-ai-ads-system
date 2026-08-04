@@ -1,4 +1,5 @@
 import prisma from "../../db/index.js";
+import { adInsightInMemoryCache } from "../utils.js";
 
 export interface DailyInsightPayload {
   accountId: string;
@@ -58,21 +59,34 @@ export async function upsertDailyInsightRecord(payload: DailyInsightPayload) {
     updatedAt: new Date(),
   };
 
-  // 唯一复合索引: accountId_date
-  return await prisma.adInsight.upsert({
-    where: {
-      accountId_date: {
+  // Always cache in persistent in-memory cache first
+  const cacheKey = `${cleanAccountId}_${date}`;
+  adInsightInMemoryCache.set(cacheKey, {
+    accountId: cleanAccountId,
+    date: date,
+    ...recordData
+  });
+
+  try {
+    // 唯一复合索引: accountId_date
+    return await prisma.adInsight.upsert({
+      where: {
+        accountId_date: {
+          accountId: cleanAccountId,
+          date: date,
+        },
+      },
+      update: recordData,
+      create: {
         accountId: cleanAccountId,
         date: date,
+        ...recordData,
       },
-    },
-    update: recordData,
-    create: {
-      accountId: cleanAccountId,
-      date: date,
-      ...recordData,
-    },
-  });
+    });
+  } catch (err: any) {
+    console.warn(`[upsertDailyInsightRecord] Database upsert failed for account ${cleanAccountId} on ${date}, using in-memory cache:`, err.message);
+    return adInsightInMemoryCache.get(cacheKey);
+  }
 }
 
 /**

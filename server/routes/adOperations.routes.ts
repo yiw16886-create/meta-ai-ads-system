@@ -21,10 +21,14 @@ function isAdmin(role?: string) {
 
 async function getActor(req: AuthenticatedRequest) {
   if (!req.user?.id) return null;
-  return prisma.user.findUnique({
+  const actor = await prisma.user.findUnique({
     where: { id: req.user.id },
     select: { id: true, role: true, org_id: true, status: true },
   });
+  if (actor && !actor.status) {
+    actor.status = "ACTIVE";
+  }
+  return actor;
 }
 
 async function canAccessAccount(req: AuthenticatedRequest, accountId: string, role?: string) {

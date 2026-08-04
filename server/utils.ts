@@ -1,10 +1,14 @@
-import prisma from "../db/index.js";
+import prisma, { rawPrisma } from "../db/index.js";
 import axios from "axios";
 import { format, subDays } from "date-fns";
 import { upsertDailyInsightRecord } from "./services/syncService.js";
 
 // CACHE map for utils
 const queryCache = new Map();
+
+// In-Memory persistent caches to bypass database constraints/limits for high-volume ad data
+export const adInsightInMemoryCache = new Map<string, any>();
+export const adPerformanceInMemoryCache = new Map<string, any>();
 
 export function cleanFbAccountId(id: string | null | undefined): string {
   if (!id) return "";
@@ -440,6 +444,13 @@ export async function callMetaApiWithRetry<T = any>(
         err.code === "ERR_BAD_RESPONSE";
 
       if ((isRetryableStatus || isNetworkError) && attempt < maxRetries) {
+        if ((status === 500 || status === 502 || status === 504) && mergedConfig.params) {
+          if (typeof mergedConfig.params.limit === 'number' && mergedConfig.params.limit > 50) {
+            mergedConfig.params.limit = Math.max(50, Math.floor(mergedConfig.params.limit / 2));
+          } else if (typeof mergedConfig.params.limit === 'string' && parseInt(mergedConfig.params.limit, 10) > 50) {
+            mergedConfig.params.limit = Math.max(50, Math.floor(parseInt(mergedConfig.params.limit, 10) / 2));
+          }
+        }
         const delayMs = attempt * 800;
         console.warn(
           `[Meta API Retry] ${method} request to ${url.split("?")[0]} failed (${status || err.code || err.message}). Retrying in ${delayMs}ms (Attempt ${attempt}/${maxRetries})...`
@@ -680,7 +691,7 @@ export async function syncSingleAccountAdData(accountId: string, startDate: stri
           limit: 1000,
           access_token: token,
         },
-        timeout: 15000,
+        timeout: 45000,
       },
       3
     );
@@ -866,3 +877,207 @@ export async function syncSingleAccountAdData(accountId: string, startDate: stri
 
   return syncedRecords;
 }
+
+export async function safeUpsertAdPerformanceDaily(
+  adId: string,
+  date: string,
+  data: {
+    accountId: string;
+    creativeId?: string | null;
+    spend?: number;
+    impressions?: number;
+    reach?: number;
+    clicks?: number;
+    linkClicks?: number;
+    purchases?: number;
+    purchaseValue?: number;
+    addToCart?: number;
+    initiateCheckout?: number;
+  }
+) {
+  if (!adId || !date) return;
+
+  const payload = {
+    accountId: cleanFbAccountId(data.accountId),
+    creativeId: data.creativeId || null,
+    spend: Number.isFinite(data.spend) ? Number(data.spend) : 0,
+    impressions: Number.isFinite(data.impressions) ? Math.trunc(Number(data.impressions)) : 0,
+    reach: Number.isFinite(data.reach) ? Math.trunc(Number(data.reach)) : 0,
+    clicks: Number.isFinite(data.clicks) ? Math.trunc(Number(data.clicks)) : 0,
+    linkClicks: Number.isFinite(data.linkClicks) ? Math.trunc(Number(data.linkClicks)) : 0,
+    purchases: Number.isFinite(data.purchases) ? Math.trunc(Number(data.purchases)) : 0,
+    purchaseValue: Number.isFinite(data.purchaseValue) ? Number(data.purchaseValue) : 0,
+    addToCart: Number.isFinite(data.addToCart) ? Math.trunc(Number(data.addToCart)) : 0,
+    initiateCheckout: Number.isFinite(data.initiateCheckout) ? Math.trunc(Number(data.initiateCheckout)) : 0,
+  };
+
+  // Always cache in memory first
+  const cacheKey = `${adId}_${date}`;
+  adPerformanceInMemoryCache.set(cacheKey, {
+    adId,
+    date,
+    ...payload
+  });
+
+  try {
+    // Attempt direct database upsert on rawPrisma to bypass proxy's executeWithFallback logging
+    return await rawPrisma.adPerformanceDaily.upsert({
+      where: {
+        adId_date: { adId, date }
+      },
+      update: payload,
+      create: {
+        adId,
+        date,
+        ...payload
+      }
+    });
+  } catch (err: any) {
+    if (err.code === 'P2002' || err.message?.includes('Unique constraint failed')) {
+      try {
+        return await rawPrisma.adPerformanceDaily.update({
+          where: {
+            adId_date: { adId, date }
+          },
+          data: payload
+        });
+      } catch (retryErr: any) {
+        console.warn(`[safeUpsertAdPerformanceDaily] Direct update retry failed for ${adId}/${date}:`, retryErr.message);
+      }
+    } else {
+      console.warn(`[safeUpsertAdPerformanceDaily] Direct rawPrisma upsert failed for ${adId}/${date}, falling back to proxy:`, err.message);
+    }
+
+    // Fallback to proxy (which handles standard fallback & db_fallback.json persistence)
+    try {
+      return await prisma.adPerformanceDaily.upsert({
+        where: {
+          adId_date: { adId, date }
+        },
+        update: payload,
+        create: {
+          adId,
+          date,
+          ...payload
+        }
+      });
+    } catch (proxyErr: any) {
+      console.warn(`[safeUpsertAdPerformanceDaily] Proxy fallback also failed:`, proxyErr.message);
+    }
+    return adPerformanceInMemoryCache.get(cacheKey);
+  }
+}
+
+export async function safeGetAdInsights(whereClause: any): Promise<any[]> {
+  let dbResults: any[] = [];
+  try {
+    dbResults = await prisma.adInsight.findMany({
+      where: whereClause,
+      orderBy: { date: "asc" }
+    });
+  } catch (err: any) {
+    console.warn("[safeGetAdInsights] DB query failed, using in-memory cache:", err.message);
+  }
+
+  const mergedMap = new Map<string, any>();
+  for (const row of dbResults) {
+    mergedMap.set(`${row.accountId}_${row.date}`, row);
+  }
+
+  for (const [key, item] of adInsightInMemoryCache.entries()) {
+    let matches = true;
+
+    if (whereClause) {
+      if (whereClause.accountId) {
+        if (whereClause.accountId.in) {
+          if (!whereClause.accountId.in.includes(item.accountId)) matches = false;
+        } else if (whereClause.accountId.notIn) {
+          if (whereClause.accountId.notIn.includes(item.accountId)) matches = false;
+        } else if (typeof whereClause.accountId === 'string') {
+          if (item.accountId !== whereClause.accountId) matches = false;
+        }
+      }
+
+      if (whereClause.date && matches) {
+        if (whereClause.date.gte && item.date < whereClause.date.gte) matches = false;
+        if (whereClause.date.lte && item.date > whereClause.date.lte) matches = false;
+        if (whereClause.date.gt && item.date <= whereClause.date.gt) matches = false;
+        if (whereClause.date.lt && item.date >= whereClause.date.lt) matches = false;
+      }
+    }
+
+    if (matches) {
+      mergedMap.set(key, item);
+    }
+  }
+
+  return Array.from(mergedMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+export async function safeGetAdPerformanceDaily(whereClause: any): Promise<any[]> {
+  let dbResults: any[] = [];
+  try {
+    dbResults = await prisma.adPerformanceDaily.findMany({
+      where: whereClause
+    });
+  } catch (err: any) {
+    console.warn("[safeGetAdPerformanceDaily] DB query failed, using in-memory cache:", err.message);
+  }
+
+  const mergedMap = new Map<string, any>();
+  for (const row of dbResults) {
+    mergedMap.set(`${row.adId}_${row.date}`, row);
+  }
+
+  for (const [key, item] of adPerformanceInMemoryCache.entries()) {
+    let matches = true;
+
+    if (whereClause) {
+      if (whereClause.adId) {
+        if (whereClause.adId.in) {
+          if (!whereClause.adId.in.includes(item.adId)) matches = false;
+        } else if (typeof whereClause.adId === 'string') {
+          if (item.adId !== whereClause.adId) matches = false;
+        }
+      }
+
+      if (whereClause.date && matches) {
+        if (whereClause.date.gte && item.date < whereClause.date.gte) matches = false;
+        if (whereClause.date.lte && item.date > whereClause.date.lte) matches = false;
+      }
+    }
+
+    if (matches) {
+      mergedMap.set(key, item);
+    }
+  }
+
+  return Array.from(mergedMap.values());
+}
+
+/**
+ * Dynamically resolves the webhook callback URL for material processing tasks.
+ * Detects whether the environment is development or production (Vercel/Cloud Run).
+ */
+export function getWebhookUrl(): string {
+  // 1. Prioritize APP_URL if configured
+  if (process.env.APP_URL) {
+    const cleanAppUrl = process.env.APP_URL.replace(/\/$/, "");
+    return `${cleanAppUrl}/api/webhook/material`;
+  }
+
+  // 2. Fallback to Vercel System Env
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}/api/webhook/material`;
+  }
+
+  // 3. Fallback to local environment
+  const isProd = process.env.NODE_ENV === "production";
+  if (!isProd) {
+    // If you are using ngrok or a local tunnel, configure it here or via APP_URL env
+    return "http://localhost:3000/api/webhook/material";
+  }
+
+  return "https://your-production-domain.com/api/webhook/material";
+}
+

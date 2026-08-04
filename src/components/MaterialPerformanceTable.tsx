@@ -276,10 +276,7 @@ export function MaterialPerformanceTable() {
 
     const roas = spend > 0 ? purchaseValue / spend : 0;
     const cpp = purchases > 0 ? spend / purchases : 0;
-    // A summary across multiple ads cannot deduplicate reach.
-    const reachAvailable = enrichedTableData.length === 1 && reach > 0;
-    const safeReach = reachAvailable ? reach : 0;
-    const frequency = safeReach > 0 ? impressions / safeReach : 0;
+    const frequency = reach > 0 ? impressions / reach : 0;
     const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
     const cpc = clicks > 0 ? spend / clicks : 0;
     const linkClicksCtr = impressions > 0 ? (linkClicks / impressions) * 100 : 0;
@@ -292,9 +289,8 @@ export function MaterialPerformanceTable() {
       purchases, 
       purchaseValue, 
       roas, 
-      cpp,
-      reach: safeReach,
-      reachAvailable,
+      cpp, 
+      reach, 
       frequency, 
       ctr, 
       cpc, 
@@ -365,8 +361,7 @@ export function MaterialPerformanceTable() {
     setPreviewPage(1);
   }, [storeId, accountIdsParam.join(','), dateParams[0], dateParams[1], materialType, previewMaterialType, searchQuery]);
 
-  // Aggregate preview rows by the real Meta creative ID. Different creatives
-  // may share one landing page and must not be merged into a single material.
+  // Aggregated materials grouping by landing page URL for Preview table
   const aggregatedMaterials = useMemo(() => {
     const groups: Record<string, {
       landingKey: string;
@@ -389,9 +384,7 @@ export function MaterialPerformanceTable() {
     }> = {};
 
     filteredPreviewAllData.forEach(item => {
-      const landingKey = String(
-        item.real_creative_id || item.creative_id || `unknown-${item.account_id}`
-      );
+      const landingKey = item.landing_url || "无落地页链接";
       const mType = String(item.material_type || "IMAGE").toUpperCase();
 
       if (!groups[landingKey]) {
@@ -446,12 +439,8 @@ export function MaterialPerformanceTable() {
       const purchaseValue = g.purchaseValue;
       const roas = spendNum > 0 ? purchaseValue / spendNum : 0;
       const cpp = purchasesNum > 0 ? spendNum / purchasesNum : 0;
-      // Reach is unique only for a single ad. Meta does not provide a
-      // creative-level deduplicated reach when one creative is used by
-      // multiple ads, so do not display a fabricated sum.
-      const reachAvailable = g.adCount === 1 && g.reach > 0;
-      const reach = reachAvailable ? g.reach : 0;
-      const actualFrequency = reachAvailable ? impressionsNum / reach : 0;
+      const reach = g.reach;
+      const actualFrequency = reach > 0 ? impressionsNum / reach : 0;
       const ctr = impressionsNum > 0 ? (clicksNum / impressionsNum) * 100 : 0;
       const cpc = clicksNum > 0 ? spendNum / clicksNum : 0;
       const linkClicks = g.linkClicks;
@@ -466,7 +455,6 @@ export function MaterialPerformanceTable() {
         roas,
         cpp,
         reach,
-        reachAvailable,
         actualFrequency,
         ctr,
         cpc,
@@ -521,11 +509,7 @@ export function MaterialPerformanceTable() {
 
     const roas = spend > 0 ? purchaseValue / spend : 0;
     const cpp = purchases > 0 ? spend / purchases : 0;
-    const reachAvailable =
-      filteredAggregated.length === 1 &&
-      filteredAggregated[0]?.reachAvailable === true;
-    const safeReach = reachAvailable ? reach : 0;
-    const frequency = safeReach > 0 ? impressions / safeReach : 0;
+    const frequency = reach > 0 ? impressions / reach : 0;
     const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
     const cpc = clicks > 0 ? spend / clicks : 0;
     const linkClicksCtr = impressions > 0 ? (linkClicks / impressions) * 100 : 0;
@@ -540,8 +524,7 @@ export function MaterialPerformanceTable() {
       purchaseValue,
       roas,
       cpp,
-      reach: safeReach,
-      reachAvailable,
+      reach,
       frequency,
       ctr,
       cpc,
@@ -1209,12 +1192,12 @@ export function MaterialPerformanceTable() {
 
                     {/* 12. 覆盖人数 */}
                     <TableCell className="py-4 text-right font-mono text-[13px] font-bold text-slate-900 px-4">
-                      {tableSummary.reachAvailable ? tableSummary.reach.toLocaleString() : "—"}
+                      {tableSummary.reach.toLocaleString()}
                     </TableCell>
 
                     {/* 13. 频次 */}
                     <TableCell className="py-4 text-right font-mono text-[13px] font-bold text-slate-900 px-4">
-                      {tableSummary.reachAvailable ? tableSummary.frequency.toFixed(2) : "—"}
+                      {tableSummary.frequency.toFixed(2)}
                     </TableCell>
 
                     {/* 14. 点击量 */}
@@ -1493,7 +1476,7 @@ export function MaterialPerformanceTable() {
 
                         {/* 11. 覆盖人数 */}
                         <TableCell className="py-2.5 text-right font-mono text-[13px] text-slate-700 px-4">
-                          {(row as any).reachAvailable ? (row as any).reach.toLocaleString() : "—"}
+                          {(row as any).reach?.toLocaleString() || "0"}
                         </TableCell>
 
                         {/* 12. 频次 */}
@@ -1580,10 +1563,10 @@ export function MaterialPerformanceTable() {
                       {previewSummary.impressions.toLocaleString()}
                     </TableCell>
                     <TableCell className="py-3.5 text-right font-mono text-[13px] font-bold text-slate-950 px-4">
-                      {previewSummary.reachAvailable ? previewSummary.reach.toLocaleString() : "—"}
+                      {previewSummary.reach.toLocaleString()}
                     </TableCell>
                     <TableCell className="py-3.5 text-right font-mono text-[13px] font-bold text-slate-950 px-4">
-                      {previewSummary.reachAvailable ? previewSummary.frequency.toFixed(2) : "—"}
+                      {previewSummary.frequency.toFixed(2)}
                     </TableCell>
                     <TableCell className="py-3.5 text-right font-mono text-[13px] font-bold text-slate-950 px-4">
                       {previewSummary.clicks.toLocaleString()}

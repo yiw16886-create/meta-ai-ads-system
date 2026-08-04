@@ -300,7 +300,8 @@ router.post("/cleanup-dirty-data", async (req: any, res) => {
       })
     : null;
   const normalizedRole = String(actor?.role || "").toUpperCase();
-  if (!actor || actor.status !== "ACTIVE" || !["ADMIN", "SUPER_ADMIN"].includes(normalizedRole)) {
+  const actorStatus = actor?.status || "ACTIVE";
+  if (!actor || actorStatus !== "ACTIVE" || !["ADMIN", "SUPER_ADMIN"].includes(normalizedRole)) {
     return res.status(403).json({ success: false, error: "仅管理员可检查或处理历史虚假数据" });
   }
 

@@ -33,12 +33,11 @@ router.get("/accounts", async (req: any, res) => {
 
     // 1. Fetch persistent cache or refresh if requested (Filtered by current user's mapped accounts)
     let cachedAccounts = await prisma.metaAccountMonitoring.findMany({
-      where: {
-        OR: [
-          { adAccount: { userId: Number(userId) } },
-          { adAccount: { userId: null } }
-        ]
-      }
+      include: { adAccount: true }
+    });
+    cachedAccounts = cachedAccounts.filter(acc => {
+      if (!acc.adAccount) return true;
+      return acc.adAccount.userId === null || acc.adAccount.userId === Number(userId);
     });
     
     if (refresh === "true" || cachedAccounts.length === 0) {
@@ -82,12 +81,11 @@ router.get("/accounts", async (req: any, res) => {
       );
       
       cachedAccounts = await prisma.metaAccountMonitoring.findMany({
-        where: {
-          OR: [
-            { adAccount: { userId: Number(userId) } },
-            { adAccount: { userId: null } }
-          ]
-        }
+        include: { adAccount: true }
+      });
+      cachedAccounts = cachedAccounts.filter(acc => {
+        if (!acc.adAccount) return true;
+        return acc.adAccount.userId === null || acc.adAccount.userId === Number(userId);
       });
     }
 

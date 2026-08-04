@@ -267,13 +267,15 @@ export function Dashboard({ onLogout }: DashboardProps) {
     fetchData();
     fetchMappings();
 
-    // 设置 10 分钟定时器：静默无感拉取并自动刷新
+    // 10分钟自动刷新任务已被用户手动解除，避免触发高频 API 与数据库限制
+    /*
     const interval = setInterval(() => {
       console.log("⏰ [10分钟定时器触发] 正在后台静默同步 Meta 最新数据...");
       fetchAdsData(true); 
     }, 10 * 60 * 1000); 
 
     return () => clearInterval(interval);
+    */
   }, [startDate, endDate]);
 
   const fetchAdsData = async (isSilent = false) => {

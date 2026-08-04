@@ -395,7 +395,7 @@ export async function syncSingleAccountHierarchy(
     const campaignsUrl = `https://graph.facebook.com/v19.0/${actId}/campaigns`;
     const campaignsRes = await axios.get(campaignsUrl, {
       params: { fields: "id,name,status", limit: 250, access_token: token },
-      timeout: 15000,
+      timeout: 45000,
     });
     const campaigns = campaignsRes.data?.data || [];
 
@@ -417,7 +417,7 @@ export async function syncSingleAccountHierarchy(
     const adsetsUrl = `https://graph.facebook.com/v19.0/${actId}/adsets`;
     const adsetsRes = await axios.get(adsetsUrl, {
       params: { fields: "id,name,campaign_id,status", limit: 250, access_token: token },
-      timeout: 15000,
+      timeout: 45000,
     });
     const adsets = adsetsRes.data?.data || [];
 
@@ -446,7 +446,7 @@ export async function syncSingleAccountHierarchy(
     const adsUrl = `https://graph.facebook.com/v19.0/${actId}/ads`;
     const adsRes = await axios.get(adsUrl, {
       params: { fields: "id,name,adset_id,campaign_id,status,creative{id}", limit: 250, access_token: token },
-      timeout: 15000,
+      timeout: 45000,
     });
     const ads = adsRes.data?.data || [];
 
@@ -496,7 +496,7 @@ export async function triggerInitialFullSync(userId: string | number, accessToke
     const url = `https://graph.facebook.com/v19.0/me/adaccounts`;
     const res = await axios.get(url, {
       params: { fields: "account_id,id,name,account_status", limit: 1000, access_token: accessToken },
-      timeout: 15000,
+      timeout: 45000,
     });
     const metaData = res.data?.data || [];
     accountItems = metaData.map((a: any) => ({

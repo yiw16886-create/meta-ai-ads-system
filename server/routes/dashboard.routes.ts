@@ -1,5 +1,6 @@
 import { Router } from "express";
 import prisma from "../../db/index.js";
+import { safeGetAdInsights } from "../utils.js";
 
 const router = Router();
 
@@ -89,10 +90,7 @@ router.get("/stats", async (req: any, res) => {
     }
 
     // 可以在 Prisma findMany 后按 accountId 进行 SUM 统计，或者用 prisma.adInsight.groupBy
-    const rawInsights = await prisma.adInsight.findMany({
-      where: whereClause,
-      orderBy: { date: "asc" }
-    });
+    const rawInsights = await safeGetAdInsights(whereClause);
 
     const accountAggregates: Record<string, {
       accountId: string;

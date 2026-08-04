@@ -2,10 +2,9 @@ import { Router } from "express";
 import prisma from "../../db/index.js";
 import { authenticateJWT, AuthenticatedRequest } from "../middlewares/auth.middleware.js";
 import axios from "axios";
-import { getMetaToken, extractMetaError, evaluateActivityStatus, syncSingleAccountAdData, callMetaApiWithRetry } from "../utils.js";
+import { getMetaToken, extractMetaError, evaluateActivityStatus, syncSingleAccountAdData, callMetaApiWithRetry, safeUpsertAdPerformanceDaily } from "../utils.js";
 import { logContext } from "../logger.js";
 import { extractMetaAssetHash } from "../services/metaFetchPatch.service.js";
-import { ensureAdPerformanceDailyTable } from "../services/adPerformanceSchema.service.js";
 
 const router = Router();
 
@@ -749,9 +748,6 @@ const handleSyncCreatives = async (
       });
     }
 
-    // Ensure legacy production databases can persist real ad-level metrics.
-    await ensureAdPerformanceDailyTable();
-
     const requestData = {
       ...req.query,
       ...(req.body || {})
@@ -972,7 +968,7 @@ const handleSyncCreatives = async (
                     time_increment: 1,
                     fields:
                       "date_start,ad_id,spend,impressions,reach,clicks,inline_link_clicks,actions,action_values",
-                    limit: 500,
+                    limit: 200,
                     access_token: token
                   }
                 : undefined,
@@ -1017,7 +1013,7 @@ const handleSyncCreatives = async (
               "offsite_conversion.fb_pixel_initiate_checkout"
             ]);
 
-            const insightData = {
+            await safeUpsertAdPerformanceDaily(adId, date, {
               accountId: cleanAccountId,
               creativeId: databaseAd?.creativeId || null,
               spend: parseNumber(insight.spend),
@@ -1031,18 +1027,6 @@ const handleSyncCreatives = async (
               purchaseValue,
               addToCart: Math.trunc(addToCart),
               initiateCheckout: Math.trunc(initiateCheckout)
-            };
-
-            await prisma.adPerformanceDaily.upsert({
-              where: {
-                adId_date: { adId, date }
-              },
-              update: insightData,
-              create: {
-                date,
-                adId,
-                ...insightData
-              }
             });
 
             accountInsightCount++;

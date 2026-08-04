@@ -1,7 +1,5 @@
-import { PrismaClient } from "@prisma/client";
+import prisma from "../../db/index.js";
 import axios from "axios";
-
-const prisma = new PrismaClient();
 
 const cleanUrl = (url: string | null | undefined): string | null => {
   if (!url) return null;

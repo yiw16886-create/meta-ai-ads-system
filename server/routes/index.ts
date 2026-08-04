@@ -18,6 +18,7 @@ import adminSettingsRoutes from "./adminSettings.routes.js";
 import metaRoutes from "./meta.routes.js";
 import dashboardRoutes from "./dashboard.routes.js";
 import adOperationsRoutes from "./adOperations.routes.js";
+import webhookRoutes from "./webhook.routes.js";
 
 const routes = Router();
 
@@ -48,7 +49,9 @@ routes.use((req, res, next) => {
     '/facebook/callback',
     '/auth/facebook/callback',
     '/api/facebook/callback',
-    '/api/auth/facebook/callback'
+    '/api/auth/facebook/callback',
+    '/webhook/material',
+    '/api/webhook/material'
   ];
 
   const reqPath = req.path || '';
@@ -91,5 +94,6 @@ routes.use("/admin/settings", adminSettingsRoutes);
 routes.use("/meta", metaRoutes);
 routes.use("/dashboard", dashboardRoutes);
 routes.use("/ad-operations", adOperationsRoutes);
+routes.use("/webhook", webhookRoutes);
 
 export default routes;
