@@ -1,7 +1,7 @@
 import { Router } from "express";
 import prisma from "../../db/index.js";
 import axios from "axios";
-import { getMetaToken, extractMetaError, evaluateActivityStatus, getCachedData, setCachedData, collapseRequest, isUserFacebookConnected, safeGetAdInsights } from "../utils.js";
+import { getMetaToken, extractMetaError, evaluateActivityStatus, getCachedData, setCachedData, collapseRequest, isUserFacebookConnected, safeGetAdInsights, isValidAdAccountName } from "../utils.js";
 
 const router = Router();
 
@@ -43,8 +43,8 @@ router.get("", async (req: any, res) => {
             },
           },
         );
-        // 只拉取活跃账户
-        return (response.data.data || []).filter((a: any) => a.account_status === 1);
+        // 只拉取活跃且名称符合规范前缀的账户
+        return (response.data.data || []).filter((a: any) => a.account_status === 1 && isValidAdAccountName(a.name));
       });
 
       setCachedData(cacheKey, filteredResult, 300000); // 5 min cache
@@ -62,8 +62,11 @@ router.get("", async (req: any, res) => {
   // Fallback if no token is configured or live API failed
   try {
     const dbAccs = await prisma.adAccount.findMany({
-      where: { userId: Number(userId) },
-      include: { store: true }
+      where: {
+        userId: Number(userId),
+        fb_account_name: { notIn: [null, ""] }
+      },
+      select: { fb_account_id: true, fb_account_name: true }
     });
     if (dbAccs.length > 0) {
       const formatted = dbAccs.map(acc => ({
@@ -788,7 +791,31 @@ router.get("/list", async (req: any, res) => {
       );
     });
 
-    res.json(Array.from(uniqueMap.values()));
+    const rawList = Array.from(uniqueMap.values());
+    const validAccounts = rawList.filter((account: any) => {
+      const accName = account.accountName || account.name;
+      if (!accName || typeof accName !== 'string') return false;
+
+      const spendVal = parseFloat(account.spend || account.amount_spent || '0');
+      const hasSpend = !isNaN(spendVal) && spendVal > 0;
+
+      const storeId = account.storeId || account.store_id;
+      const isLinked = !!storeId && String(storeId) !== 'unassigned' && String(storeId) !== '0';
+
+      const rawStatus = String(account.status || account.account_status || '').toUpperCase();
+      const isActive = rawStatus === 'ACTIVE' || rawStatus === '1';
+
+      // Condition A: Spend > 0
+      if (hasSpend) return true;
+
+      // Condition B: Active AND Linked to a store
+      if (isActive && isLinked) return true;
+
+      // Exclusion rule: Unlinked AND Spend === 0
+      return false;
+    });
+
+    res.json(validAccounts);
   } catch (err: any) {
     console.error("Fetch unique accounts error:", err);
     res.json([]);

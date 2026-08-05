@@ -106,11 +106,33 @@ export function MaterialPerformanceTable() {
                   ? rawMappings.mappings
                   : []));
 
-        const formattedAccounts = mappingsArray.map((m: any) => ({
-          fbAccountId: m.accountId,
-          name: m.accountName || m.accountId,
-          storeId: String(m.storeId || "unassigned")
-        }));
+        const formattedAccounts = mappingsArray
+          .map((m: any) => ({
+            fbAccountId: m.accountId || m.fbAccountId || m.id,
+            name: m.accountName || m.name || m.accountId,
+            storeId: String(m.storeId || "unassigned"),
+            spend: m.spend,
+            status: m.status
+          }))
+          .filter((account: any) => {
+            if (!account.name || typeof account.name !== 'string' || account.name.trim() === '') return false;
+
+            // 1. Spend check (Condition A)
+            const spendValue = parseFloat(account.spend || '0');
+            const hasSpend = !isNaN(spendValue) && spendValue > 0;
+
+            // 2. Store assignment & Status check (Condition B)
+            const isLinked = account.storeId && account.storeId !== 'unassigned' && account.storeId !== '0' && account.storeId !== 'null';
+            const rawStatus = String(account.status || '').toUpperCase();
+            const isActive = rawStatus === 'ACTIVE' || rawStatus === '1' || rawStatus === '';
+
+            // Return true if Condition A OR Condition B
+            if (hasSpend) return true;
+            if (isActive && isLinked) return true;
+
+            // Exclude if unlinked AND spend === 0
+            return false;
+          });
         setAccountsList(formattedAccounts);
       } catch (err) {
         console.error("加载店铺/帐号映射关系失败:", err?.message || err);
@@ -175,10 +197,11 @@ export function MaterialPerformanceTable() {
 
   // Setup account query params
   const accountIdsParam = useMemo(() => {
+    const validIds = new Set(filteredAccountsForSelection.map(a => a.fbAccountId));
     if (selectedAccounts.includes("all")) {
-      return filteredAccountsForSelection.map(a => a.fbAccountId);
+      return Array.from(validIds);
     }
-    return selectedAccounts;
+    return selectedAccounts.filter(id => validIds.has(id));
   }, [selectedAccounts, filteredAccountsForSelection]);
 
   // Fetch performance data with custom hook

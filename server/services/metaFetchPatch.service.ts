@@ -1,5 +1,6 @@
 import prisma from "../../db/index.js";
 import axios from "axios";
+import { isValidAdAccountName } from "../utils.js";
 
 const cleanUrl = (url: string | null | undefined): string | null => {
   if (!url) return null;
@@ -224,8 +225,13 @@ export const runMetaCreativeAutoPatch = async (accessToken: string) => {
   const pageTokensMap = await getPageTokensMap(accessToken);
   console.log(`Fetched page tokens for ${Object.keys(pageTokensMap).length} page(s).`);
 
-  // Get all active accounts mapped directly from database
-  const accounts = await prisma.adAccount.findMany({ include: { store: true } });
+  // Get all active accounts filtered directly at database level
+  const accounts = await prisma.adAccount.findMany({
+    where: {
+      fb_account_name: { notIn: [null, ""] }
+    },
+    include: { store: true }
+  });
   
   console.log(`Found ${accounts.length} accounts to process.`);
 

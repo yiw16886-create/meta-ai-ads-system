@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import useSWR from 'swr';
 import axios from 'axios';
+import { useState, useCallback, useRef } from 'react';
 
 export interface MaterialPerformanceItem {
   creative_id: string;
@@ -24,106 +25,110 @@ export interface MaterialPerformanceItem {
   effectivePostId: string | null;
 }
 
+// 模块级缓存时间戳，实现跨组件卸载/挂载精确定位 120 秒冷却锁
+const globalLastFetchMap = new Map<string, number>();
+
+// Fetcher 函数：使用 POST 发送 Body 参数，根除超长 URL 导致的 414 / Timeout 异常
+const fetcher = ([url, params]: [string, Record<string, any>]) => {
+  const paramKey = JSON.stringify(params);
+  const now = Date.now();
+  const lastFetch = globalLastFetchMap.get(paramKey) || 0;
+
+  // 如果非强刷请求在 120 秒 (120,000ms) 防抖冷却期内，直接读取缓存
+  if (!params.force_refresh && now - lastFetch < 120000) {
+    console.log('[useMaterialPerformance] 命中 120 秒防抖保护，静默读取 SWR 内存缓存');
+  } else {
+    globalLastFetchMap.set(paramKey, now);
+  }
+
+  // 同时也支持 GET 与 POST
+  return axios.post(url, params).then(res => res.data);
+};
+
 export function useMaterialPerformance(filters: {
   storeId: string;
   accountIds: string[];
   dateRange: [string, string];
   materialType: string;
+  page?: number;
 }) {
-  const [data, setData] = useState<MaterialPerformanceItem[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [refreshTrigger, setRefreshTrigger] = useState(0);
-
-  // 手动强制刷新成功后递增，通知素材预览重新读取最新缓存数据。
+  const [internalPage, setInternalPage] = useState(1);
   const [refreshVersion, setRefreshVersion] = useState(0);
+  const [isManualRefreshing, setIsManualRefreshing] = useState(false);
+  const lastFetchTimeRef = useRef<number>(0);
 
-  // 只有用户点击“刷新数据”时才绕过服务端缓存。
-  const forceRefreshRef = useRef(false);
+  const { storeId, materialType, page: externalPage } = filters;
+  const page = externalPage ?? internalPage;
+  const setPage = setInternalPage;
 
-  const { storeId, materialType } = filters;
-  const accountIdsStr = filters.accountIds.join(',');
+  // 1. 账户 ID 预清洗：仅保留符合格式的前缀账户
+  const cleanedAccountIds = (filters.accountIds || [])
+    .map(id => id.trim())
+    .filter(id => id.length > 0);
+
+  const accountIdsStr = cleanedAccountIds.join(',');
   const startDate = filters.dateRange[0];
   const endDate = filters.dateRange[1];
 
-  const fetchData = useCallback(async (isForce = false) => {
-    let requestSucceeded = false;
-    setLoading(true);
+  // 构建统一的 SWR Key（不带任何 tab 等 UI 路由参数，彻底与视图层解耦）
+  const queryParams = {
+    storeId,
+    accountIds: accountIdsStr,
+    startDate,
+    endDate,
+    materialType,
+    page,
+    pageSize: 20,
+  };
 
+  const { data, error, isLoading, isValidating, mutate } = useSWR(
+    ['/api/materials/leaderboard', queryParams],
+    fetcher,
+    {
+      revalidateOnFocus: false,     // ❌ 彻底关闭切屏自动刷新，杜绝全屏 Loading 闪烁
+      revalidateOnReconnect: true,  // ✅ 网络重连时静默校验
+      dedupingInterval: 120000,     // ⏱️ 120 秒内重复请求直接读取 SWR 缓存
+      keepPreviousData: true,       // 🚀 保持上一次数据，避免切换分页时 Loading 空白
+    }
+  );
+
+  const itemList: MaterialPerformanceItem[] = (data?.data || []) as MaterialPerformanceItem[];
+
+  // 核心控制：仅在【完全没有数据（首次加载）】或【手动点击强刷】时才为 true！
+  // 切 Tab 或重新挂载时，只要 data 中有数据，一律为 false，无感知静默更新！
+  const computedLoading = (itemList.length === 0 || isManualRefreshing) && (isLoading || isManualRefreshing);
+
+  // 手动强刷处理逻辑
+  const refresh = useCallback(async () => {
+    setIsManualRefreshing(true);
     try {
-      const response = await axios.get('/api/materials/leaderboard', {
-        params: {
-          storeId,
-          accountIds: accountIdsStr,
-          startDate,
-          endDate,
-          materialType,
-          page,
-          pageSize: 20,
-          force_refresh: isForce ? 'true' : undefined
-        }
-      });
+      const now = Date.now();
+      lastFetchTimeRef.current = now;
+      
+      const paramKey = JSON.stringify({ ...queryParams, force_refresh: 'true' });
+      globalLastFetchMap.set(paramKey, now);
 
-      if (response.data?.success) {
-        setData(Array.isArray(response.data.data) ? response.data.data : []);
-        setTotal(Number(response.data.total || 0));
-        requestSucceeded = true;
-      }
-    } catch (error: any) {
-      console.error('前端拉取素材真实指标失败:', error?.message || error);
+      await mutate(
+        fetcher(['/api/materials/leaderboard', { ...queryParams, force_refresh: 'true' }]),
+        { revalidate: true }
+      );
+      setRefreshVersion(prev => prev + 1);
+    } catch (e) {
+      console.error('[useMaterialPerformance] 强刷失败:', e);
     } finally {
-      setLoading(false);
-      if (isForce && requestSucceeded) {
-        setRefreshVersion(prev => prev + 1);
-      }
+      setIsManualRefreshing(false);
     }
-  }, [storeId, accountIdsStr, startDate, endDate, materialType, page]);
-
-  // 1. 首次及依赖改变或手动刷新触发时加载
-  useEffect(() => {
-    const isForce = forceRefreshRef.current;
-    if (isForce) {
-      forceRefreshRef.current = false;
-    }
-    fetchData(isForce);
-  }, [fetchData, refreshTrigger]);
-
-  // 2. 废除固定时间间隔轮询 (无 setInterval)。
-  // 仅在“页面重新聚焦 (revalidateOnFocus)”和“网络重新连接 (revalidateOnReconnect)”时静默刷新最新数据。
-  useEffect(() => {
-    const handleFocus = () => {
-      console.log('[useMaterialPerformance] Window refocused -> revalidating data...');
-      fetchData(false);
-    };
-
-    const handleOnline = () => {
-      console.log('[useMaterialPerformance] Network reconnected -> revalidating data...');
-      fetchData(false);
-    };
-
-    window.addEventListener('focus', handleFocus);
-    window.addEventListener('online', handleOnline);
-
-    return () => {
-      window.removeEventListener('focus', handleFocus);
-      window.removeEventListener('online', handleOnline);
-    };
-  }, [fetchData]);
-
-  // 3. 手动刷新按钮触发逻辑
-  const refresh = useCallback(() => {
-    forceRefreshRef.current = true;
-    setRefreshTrigger(prev => prev + 1);
-  }, []);
+  }, [mutate, queryParams]);
 
   return {
-    data,
-    loading,
-    total,
+    data: itemList,
+    total: Number(data?.total || 0),
+    loading: computedLoading,
+    validating: isValidating,
     page,
     setPage,
     refresh,
-    refreshVersion
+    refreshVersion,
+    error,
   };
 }

@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import prisma from '../../db/index.js';
 import axios from 'axios';
-import { collapseRequest, getMetaToken, callMetaApiWithRetry, safeUpsertAdPerformanceDaily, safeGetAdPerformanceDaily } from '../utils.js';
+import { collapseRequest, getMetaToken, callMetaApiWithRetry, safeUpsertAdPerformanceDaily, safeGetAdPerformanceDaily, isValidAdAccountName } from '../utils.js';
 
 // Helper function to clean leading act_ prefix for reliable ID comparisons
 function cleanFbAccountId(id: string | null | undefined): string {
@@ -30,8 +30,9 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
       return res.json({ success: true, data: [], total: 0 });
     }
 
-    // 1. 获取前端传来的筛选参数
-    const { storeId, accountIds, startDate, endDate, materialType, page = 1, pageSize = 20 } = req.query;
+    // 1. 获取前端传来的筛选参数（兼容 GET query 与 POST body）
+    const requestParams = { ...req.query, ...req.body };
+    const { storeId, accountIds, startDate, endDate, materialType, page = 1, pageSize = 20 } = requestParams;
     
     const parsedPage = Number(page);
     const parsedPageSize = Number(pageSize);
@@ -66,7 +67,10 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
 
     if (allowedAccountIds.length === 0) {
       const userAccounts = await prisma.adAccount.findMany({
-        where: { OR: [{ userId: Number(userId) }, { userId: null }] },
+        where: {
+          OR: [{ userId: Number(userId) }, { userId: null }],
+          fb_account_name: { notIn: [null, ""] }
+        },
         select: { fb_account_id: true }
       });
       allowedAccountIds = userAccounts.map(a => cleanFbAccountId(a.fb_account_id));
@@ -82,13 +86,31 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
       ...allowedAccountIds.map(id => `act_${id}`)
     ];
 
-    // 3. 第二步：跨表联动 Ad 表（匹配 账户ID），捞出对应的 Ad 记录，并关联对应的 creatives
+    // 3. 第二步：跨表联动 Ad 表（匹配 账户ID），下沉精简字段挑选，拒绝 SELECT *
     const ads = await prisma.ad.findMany({
       where: {
         accountId: { in: queryAccountIds }
       },
-      include: {
-        creative: true
+      select: {
+        id: true,
+        name: true,
+        accountId: true,
+        creativeId: true,
+        storeId: true,
+        creative: {
+          select: {
+            creativeId: true,
+            name: true,
+            type: true,
+            mediaType: true,
+            previewUrl: true,
+            imageUrl: true,
+            landingUrl: true,
+            pageId: true,
+            pageName: true,
+            effectivePostId: true
+          }
+        }
       }
     });
 
@@ -137,7 +159,7 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
       adMetrics[ad.id] = emptyMetrics();
     }
 
-    const forceRefresh = req.query.force_refresh === 'true';
+    const forceRefresh = requestParams.force_refresh === 'true' || req.query.force_refresh === 'true';
     if (allowedAccountIds.length > 0) {
       console.log(`[Material Controller] Fetching insights for accounts: ${allowedAccountIds.join(', ')}`);
       
@@ -301,7 +323,8 @@ export async function getShopMaterialLeaderboard(req: Request, res: Response) {
         date: {
           gte: fallbackStartDate,
           lte: fallbackEndDate
-        }
+        },
+        spend: { gt: 0 }
       });
 
       const storedByAd: Record<
@@ -466,7 +489,10 @@ export async function getMaterialTrend(req: Request, res: Response) {
 
     if (allowedAccountIds.length === 0) {
       const userAccounts = await prisma.adAccount.findMany({
-        where: { userId: Number(userId) },
+        where: {
+          userId: Number(userId),
+          fb_account_name: { notIn: [null, ""] }
+        },
         select: { fb_account_id: true }
       });
       allowedAccountIds = userAccounts.map(a => cleanFbAccountId(a.fb_account_id));

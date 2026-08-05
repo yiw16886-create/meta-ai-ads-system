@@ -2,7 +2,7 @@ import { Router } from "express";
 import prisma from "../../db/index.js";
 import axios from "axios";
 import { format, subDays } from "date-fns";
-import { getMetaToken, extractMetaError, evaluateActivityStatus, syncSingleAccountAdData } from "../utils.js";
+import { getMetaToken, extractMetaError, evaluateActivityStatus, syncSingleAccountAdData, isValidAdAccountName } from "../utils.js";
 import { ensureAdAccounts, syncMetaHierarchy } from "../services/meta-hierarchy-sync.service.js";
 import { syncStoreData } from "../services/store-sync.service.js";
 import { attributePurchases } from "../services/attribution.service.js";
@@ -58,7 +58,11 @@ router.post("/sync", async (req: any, res) => {
       where: currentUserId ? { OR: [{ userId: currentUserId }, { userId: null }] } : {}
     });
     const dbAdAccounts = await prisma.adAccount.findMany({
-      where: currentUserId ? { OR: [{ userId: currentUserId }, { userId: null }] } : {}
+      where: {
+        ...(currentUserId ? { OR: [{ userId: currentUserId }, { userId: null }] } : {}),
+        fb_account_name: { notIn: [null, ""] }
+      },
+      select: { fb_account_id: true }
     });
     const allowedAccountIds = new Set<string>();
     dbMappings.forEach(m => { if (m.fbAccountId) allowedAccountIds.add(m.fbAccountId.replace("act_", "")); });

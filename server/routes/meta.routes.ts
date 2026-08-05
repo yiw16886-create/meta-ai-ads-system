@@ -2,7 +2,7 @@ import { Router } from "express";
 import prisma from "../../db/index.js";
 import { authenticateJWT, AuthenticatedRequest } from "../middlewares/auth.middleware.js";
 import axios from "axios";
-import { getMetaToken, extractMetaError, evaluateActivityStatus, syncSingleAccountAdData, callMetaApiWithRetry, safeUpsertAdPerformanceDaily } from "../utils.js";
+import { getMetaToken, extractMetaError, evaluateActivityStatus, syncSingleAccountAdData, callMetaApiWithRetry, safeUpsertAdPerformanceDaily, isValidAdAccountName } from "../utils.js";
 import { logContext } from "../logger.js";
 import { extractMetaAssetHash } from "../services/metaFetchPatch.service.js";
 
@@ -249,14 +249,16 @@ router.get("/accounts", authenticateJWT as any, async (req: AuthenticatedRequest
         });
         const metaData = response.data?.data || [];
         if (Array.isArray(metaData) && metaData.length > 0) {
-          accountsList = metaData.map((acc: any) => {
-            const clean = String(acc.account_id || acc.id).replace("act_", "").trim();
-            const localName = dbNameMap.get(clean);
-            return {
-              accountId: clean,
-              name: localName || acc.name || `Account ${clean}`
-            };
-          });
+          accountsList = metaData
+            .filter((acc: any) => isValidAdAccountName(acc.name))
+            .map((acc: any) => {
+              const clean = String(acc.account_id || acc.id).replace("act_", "").trim();
+              const localName = dbNameMap.get(clean);
+              return {
+                accountId: clean,
+                name: localName || acc.name || `Account ${clean}`
+              };
+            });
         }
       } catch (graphErr: any) {
         console.warn("[/api/meta/accounts] Graph API me/adaccounts lookup warning:", graphErr.message);
@@ -764,7 +766,10 @@ const handleSyncCreatives = async (
     const endDate = requestData.endDate || today;
 
     const accounts = await prisma.adAccount.findMany({
-      where: { userId },
+      where: {
+        userId,
+        fb_account_name: { notIn: [null, ""] }
+      },
       include: { store: true }
     });
 

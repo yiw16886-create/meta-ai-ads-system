@@ -1,6 +1,6 @@
 import axios from "axios";
 import prisma from "../../db/index.js";
-import { evaluateActivityStatus, syncSingleAccountAdData } from "../utils.js";
+import { evaluateActivityStatus, syncSingleAccountAdData, isValidAdAccountName } from "../utils.js";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -24,7 +24,7 @@ export async function ensureAdAccounts(token: string) {
     });
     
     const metaData = res.data?.data || [];
-    const activeAccounts = metaData.filter((a: any) => a.account_status === 1);
+    const activeAccounts = metaData.filter((a: any) => a.account_status === 1 && isValidAdAccountName(a.name));
     console.log(`[Ensure AdAccounts] Received ${metaData.length} accounts, ${activeAccounts.length} active.`);
     
     // Get a default store to map these accounts to
@@ -133,6 +133,19 @@ export async function syncMetaHierarchy(token: string, options: { syncCreative?:
 
   // Find all active Meta ad accounts currently mapped to a store
   const dbAccounts = await prisma.adAccount.findMany({
+    where: {
+      AND: [
+        { fb_account_name: { not: null } },
+        { fb_account_name: { not: "" } },
+        {
+          OR: [
+            { fb_account_name: { startsWith: 'panda', mode: 'insensitive' } },
+            { fb_account_name: { startsWith: 'yf', mode: 'insensitive' } },
+            { fb_account_name: { startsWith: 'qh', mode: 'insensitive' } },
+          ]
+        }
+      ]
+    },
     include: { store: true }
   });
 
@@ -510,12 +523,20 @@ export async function triggerInitialFullSync(userId: string | number, accessToke
   // 备用情况: 从数据库中查询 mapped 账号
   if (accountItems.length === 0) {
     const dbAccounts = await prisma.adAccount.findMany({
-      where: numUserId ? {
-        OR: [
-          { userId: numUserId },
-          { userId: null }
+      where: {
+        ...(numUserId ? { OR: [{ userId: numUserId }, { userId: null }] } : {}),
+        AND: [
+          { fb_account_name: { not: null } },
+          { fb_account_name: { not: "" } },
+          {
+            OR: [
+              { fb_account_name: { startsWith: 'panda', mode: 'insensitive' } },
+              { fb_account_name: { startsWith: 'yf', mode: 'insensitive' } },
+              { fb_account_name: { startsWith: 'qh', mode: 'insensitive' } },
+            ]
+          }
         ]
-      } : {},
+      },
       select: { fb_account_id: true }
     });
     accountItems = dbAccounts.map(a => ({ id: a.fb_account_id.replace("act_", "").trim(), status: 1 }));

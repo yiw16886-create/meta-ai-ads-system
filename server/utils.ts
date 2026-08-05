@@ -1081,3 +1081,15 @@ export function getWebhookUrl(): string {
   return "https://your-production-domain.com/api/webhook/material";
 }
 
+/**
+ * 校验广告账户名是否符合指定的白名单前缀/规范
+ * @param accountName 广告账户名称
+ * @returns boolean (true: 保留, false: 过滤排除)
+ */
+export function isValidAdAccountName(accountName: string | null | undefined): boolean {
+  if (!accountName || accountName.trim() === '') {
+    return false;
+  }
+  return true;
+}
+

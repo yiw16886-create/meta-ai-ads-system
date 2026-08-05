@@ -1,5 +1,6 @@
 import prisma from '../../db/index.js';
 import axios from 'axios';
+import { isValidAdAccountName } from '../utils.js';
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -14,6 +15,9 @@ export async function getCreativeIntelligence(startDate: string, endDate: string
   const token = setting.value;
 
   const accounts = await prisma.adAccount.findMany({
+    where: {
+      fb_account_name: { notIn: [null, ""] }
+    },
     include: { store: true }
   });
   

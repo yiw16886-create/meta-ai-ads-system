@@ -206,32 +206,103 @@ export async function syncStoreData(startDate: string, endDate: string, storeIde
 
 async function syncShoplineStoreData(store: any, startDate: string, endDate: string) {
   const domain = getCleanDomain(store.domain);
-  const headers = getBrowserHeaders({ 
-    'Authorization': `Bearer ${store.shopline_token}`,
-    'Content-Type': 'application/json'
-  });
-  
-  // 1. Fetch Products
-  // We skip fetching products directly for Shopline as the /products.json endpoint is often not exposed or returns 404.
-  // Instead, products are lazily created during the Order sync phase from order line items.
-
-  // 2. Fetch Orders (Store Timezone aware)
   const tzOffset = getTimezoneOffsetStr(store.timezone);
-  let ordersUrl = `https://${domain}/admin/openapi/v20240301/orders.json?status=any&created_at_min=${startDate}T00:00:00${tzOffset}&created_at_max=${endDate}T23:59:59${tzOffset}&limit=100`;
+  const queryParams = `status=any&created_at_min=${startDate}T00:00:00${tzOffset}&created_at_max=${endDate}T23:59:59${tzOffset}&limit=100`;
+
+  const token = store.shopline_token;
+
+  // Header options to try in sequence if Cloudflare WAF or 403 occurs
+  const headerCandidates = [
+    {
+      'Authorization': `Bearer ${token}`,
+      'Access-Token': token,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'User-Agent': 'ShoplineOpenAPIClient/1.0',
+    },
+    {
+      'Authorization': `Bearer ${token}`,
+      'Access-Token': token,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json, text/plain, */*',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    },
+    {
+      'Access-Token': token,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'User-Agent': 'axios/1.6.0',
+    }
+  ];
+
+  const pathCandidates = [
+    `/admin/openapi/v20240401/orders/list.json`,
+    `/admin/openapi/v20240301/orders/list.json`,
+    `/admin/openapi/v20230901/orders/list.json`,
+    `/admin/openapi/v20240301/orders.json`,
+    `/admin/openapi/v20230901/orders.json`,
+    `/admin/openapi/v20230301/orders.json`,
+    `/admin/openapi/v20220301/orders.json`,
+    `/admin/openapi/v20201201/orders.json`,
+    `/admin/openapi/orders.json`,
+    `/admin/api/v20200901/orders.json`,
+    `/admin/api/orders.json`,
+  ];
+
+  let activeHeaders: Record<string, string> | null = null;
+  let activePath: string | null = null;
+  let initialRes: any = null;
+
+  // Find a working candidate endpoint and header combination
+  headerLoop: for (const headers of headerCandidates) {
+    for (const path of pathCandidates) {
+      const candidateUrl = `https://${domain}${path}?${queryParams}`;
+      try {
+        console.log(`[Shopline Sync] Trying candidate endpoint: ${candidateUrl}`);
+        const res = await axios.get(candidateUrl, { headers, timeout: 8000 });
+        if (res.status === 200 && res.data) {
+          initialRes = res;
+          activeHeaders = headers;
+          activePath = path;
+          console.log(`[Shopline Sync] Successfully connected via: ${candidateUrl}`);
+          break headerLoop;
+        }
+      } catch (e: any) {
+        const errMsg = formatApiErrorMessage(e);
+        console.warn(`[Shopline Sync Candidate Failed] ${path}: ${errMsg}`);
+        if (e.response?.status === 403 || errMsg.includes("Cloudflare")) {
+          await delay(500);
+        }
+      }
+    }
+  }
+
+  if (!initialRes || !activeHeaders || !activePath) {
+    console.error(`[Shopline Sync] Failed to fetch orders for ${store.id}: All candidate endpoints and headers failed or were blocked by Cloudflare WAF.`);
+    return;
+  }
+
+  let ordersUrl: string | null = `https://${domain}${activePath}?${queryParams}`;
   let hasNextOrders = true;
   let ordersCount = 0;
+  let isFirstIteration = true;
 
   while (hasNextOrders && ordersUrl) {
-    console.log(`[Shopline Sync] Fetching orders from URL: ${ordersUrl}`);
     let res;
-    try {
-      res = await axios.get(ordersUrl, { headers });
-    } catch(e: any) {
-      console.error(`[Shopline Sync] Failed to fetch orders for ${store.id}:`, formatApiErrorMessage(e));
-      break;
+    if (isFirstIteration) {
+      res = initialRes;
+      isFirstIteration = false;
+    } else {
+      console.log(`[Shopline Sync] Fetching next page from URL: ${ordersUrl}`);
+      try {
+        res = await axios.get(ordersUrl, { headers: activeHeaders, timeout: 10000 });
+      } catch (e: any) {
+        console.error(`[Shopline Sync] Failed to fetch next page for store ${store.id}:`, formatApiErrorMessage(e));
+        break;
+      }
     }
-    
-    const orders = res.data.data || res.data.orders || [];
+
+    const orders = res.data.data?.orders || res.data.data || res.data.orders || [];
     console.log(`[Shopline Sync] Received ${orders.length} orders`);
 
     let successCount = 0;
@@ -328,11 +399,10 @@ async function syncShoplineStoreData(store: any, startDate: string, endDate: str
     console.log(`[Shopline Sync] Successfully wrote ${successCount} order line items`);
     ordersCount += successCount;
 
-    const linkHeader = res.headers.link;
+    const linkHeader = res.headers?.link;
     if (linkHeader && linkHeader.includes('rel="next"')) {
       const matches = linkHeader.match(/<([^>]+)>; rel="next"/);
-      ordersUrl = matches ? matches[1] : "";
-      // Brief sleep between paginated requests
+      ordersUrl = matches ? matches[1] : null;
       await delay(500);
     } else {
       hasNextOrders = false;

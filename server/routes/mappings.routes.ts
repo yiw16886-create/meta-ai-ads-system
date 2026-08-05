@@ -56,7 +56,31 @@ router.get("/available-accounts", async (req: any, res) => {
       }
     });
 
-    return res.json({ success: true, data: Array.from(uniqueMap.values()) });
+    const rawAvailable = Array.from(uniqueMap.values());
+    const validAvailable = rawAvailable.filter((account: any) => {
+      const accName = account.accountName || account.name;
+      if (!accName || typeof accName !== 'string') return false;
+
+      const spendVal = parseFloat(account.spend || account.amount_spent || '0');
+      const hasSpend = !isNaN(spendVal) && spendVal > 0;
+
+      const storeId = account.storeId || account.store_id;
+      const isLinked = !!storeId && String(storeId) !== 'unassigned' && String(storeId) !== '0';
+
+      const rawStatus = String(account.status || account.account_status || '').toUpperCase();
+      const isActive = rawStatus === 'ACTIVE' || rawStatus === '1' || account.status !== 'DISABLED';
+
+      // Condition A: Spend > 0
+      if (hasSpend) return true;
+
+      // Condition B: Active AND Linked to a store
+      if (isActive && isLinked) return true;
+
+      // Exclusion rule: Unlinked AND Spend === 0
+      return false;
+    });
+
+    return res.json({ success: true, data: validAvailable });
   } catch (error: any) {
     console.error("Fetch available accounts error:", error);
     return res.json([]);
@@ -293,7 +317,30 @@ router.get("/", async (req: any, res) => {
       mapped = mapped.filter((item) => item.status !== "DISABLED" && (item.activityStatus || 0) < 4);
     }
 
-    res.json(mapped);
+    const validMapped = mapped.filter((account: any) => {
+      const accName = account.accountName || account.name;
+      if (!accName || typeof accName !== 'string') return false;
+
+      const spendVal = parseFloat(account.spend || account.amount_spent || '0');
+      const hasSpend = !isNaN(spendVal) && spendVal > 0;
+
+      const storeId = account.storeId || account.store_id;
+      const isLinked = !!storeId && String(storeId) !== 'unassigned' && String(storeId) !== '0';
+
+      const rawStatus = String(account.status || account.account_status || '').toUpperCase();
+      const isActive = rawStatus === 'ACTIVE' || rawStatus === '1' || account.status !== 'DISABLED';
+
+      // Condition A: Spend > 0
+      if (hasSpend) return true;
+
+      // Condition B: Active AND Linked to a store
+      if (isActive && isLinked) return true;
+
+      // Exclusion rule: Unlinked AND Spend === 0
+      return false;
+    });
+
+    res.json(validMapped);
   } catch (err: any) {
     console.error("Fetch mappings error:", err);
     res.json({
