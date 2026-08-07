@@ -1,4 +1,4 @@
-```typescript
+
 import axios from "axios";
 import prisma from "../../db/index.js";
 import { evaluateActivityStatus, syncSingleAccountAdData, isValidAdAccountName } from "../utils.js";
