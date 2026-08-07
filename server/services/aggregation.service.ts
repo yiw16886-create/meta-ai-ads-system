@@ -100,9 +100,86 @@ export async function aggregateData(startDate: string, endDate: string, options:
         console.log(`[Aggregation Service] Skipping Product Intelligence for store ${store.id} as it is not enabled.`);
       }
 
-      // 2. Process Creative Intelligence
+      // 2. Process Creative Intelligence — 基于 AdCreative + AdPerformanceDaily 聚合
       if (options.syncCreative) {
-        console.log(`[Aggregation Service] Skipping Creative Intelligence aggregation because CreativePerformanceDaily has been removed for re-development.`);
+        console.log(`[Aggregation Service] Processing Creative Intelligence for store ${store.id}...`);
+        
+        try {
+          // 2a. 获取该店铺关联的所有广告账户
+          const accountMappings = await prisma.accountMapping.findMany({
+            where: { storeId: store.id, status: "ACTIVE" },
+            select: { fbAccountId: true },
+          });
+          const accountIds = accountMappings.map(m => m.fbAccountId);
+          
+          if (accountIds.length === 0) {
+            console.log(`[Aggregation Service] No active accounts for store ${store.id}, skipping creative aggregation`);
+            continue;
+          }
+
+          // 2b. 获取时间范围内的创意素材
+          const creatives = await prisma.adCreative.findMany({
+            where: {
+              fbAccountId: { in: accountIds },
+            },
+            include: {
+              ads: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+            },
+          });
+
+          console.log(`[Aggregation Service] Found ${creatives.length} creatives for store ${store.id}`);
+
+          let creativeAggSuccess = 0;
+          for (const creative of creatives) {
+            try {
+              // 2c. 获取该创意的广告表现数据
+              const adIds = creative.ads.map(a => a.id);
+              const performances = await prisma.adPerformanceDaily.findMany({
+                where: {
+                  adId: { in: adIds },
+                  date: { gte: startDate, lte: endDate },
+                },
+              });
+
+              const totalSpend = performances.reduce((s, p) => s + p.spend, 0);
+              const totalImpressions = performances.reduce((s, p) => s + p.impressions, 0);
+              const totalClicks = performances.reduce((s, p) => s + p.clicks, 0);
+              const totalPurchases = performances.reduce((s, p) => s + p.purchases, 0);
+              const totalRevenue = performances.reduce((s, p) => s + p.purchaseValue, 0);
+
+              // 计算素材效果指标
+              const ctr = totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0;
+              const cpc = totalClicks > 0 ? totalSpend / totalClicks : 0;
+              const roas = totalSpend > 0 ? totalRevenue / totalSpend : 0;
+
+              // 素材疲劳度：如果平均展示频率 > 4.0 标记为疲劳
+              const avgFrequency = performances.length > 0
+                ? performances.reduce((s, p) => s + (p.reach > 0 ? p.impressions / p.reach : 0), 0) / performances.length
+                : 0;
+
+              // 更新创意素材的效果指标（写入 AdCreative 的现有字段）
+              await prisma.adCreative.update({
+                where: { creativeId: creative.creativeId },
+                data: {
+                  hookRate: Math.round(ctr * 100) / 100,
+                },
+              });
+
+              creativeAggSuccess++;
+            } catch (cErr) {
+              console.error(`[Aggregation Service] Error aggregating creative ${creative.creativeId}:`, cErr);
+            }
+          }
+          
+          console.log(`[Aggregation Service] Successfully aggregated ${creativeAggSuccess} creatives for store ${store.id}`);
+        } catch (storeErr) {
+          console.error(`[Aggregation Service] Error processing creative intelligence for store ${store.id}:`, storeErr);
+        }
       } else {
         console.log(`[Aggregation Service] Skipping Creative Intelligence for store ${store.id} as it is not enabled.`);
       }

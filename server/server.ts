@@ -21,19 +21,19 @@ import { aggregateData } from "./services/aggregation.service.js";
 import { attributePurchases } from "./services/attribution.service.js";
 import { getMetaToken, evaluateActivityStatus, syncSingleAccountAdData } from "./utils.js";
 import { syncBmStatusAndHealth } from "./routes/bms.routes.js";
+import { config } from "./config.js";
+import rateLimit from "express-rate-limit";
 
-// Enforce security environment variables check on startup with graceful fallbacks
-const JWT_SECRET = process.env.JWT_SECRET || "dev_jwt_secret_key_123456";
+const JWT_SECRET = config.jwtSecret;
 const ADMIN_SECRET = process.env.ADMIN_SECRET || "admin123456";
-if (!process.env.JWT_SECRET) {
-  console.warn("⚠️ WARNING: JWT_SECRET environment variable is not defined, using dev fallback.");
-}
+
+// 全局同步锁 — 防止手动触发和定时触发同时执行
+let isSyncRunning = false;
+export function getSyncStatus() { return { running: isSyncRunning }; }
+
 if (!process.env.ADMIN_SECRET) {
   console.warn("⚠️ WARNING: ADMIN_SECRET environment variable is not defined, using dev fallback.");
 }
-
-
-
 
 
 // -- SCHEDULE JOBS --
@@ -306,6 +306,30 @@ app.use(helmet({
   frameguard: process.env.NODE_ENV === 'production' ? { action: 'sameorigin' } : false,
 }));
 
+// 全局速率限制
+const globalLimiter = rateLimit({
+  windowMs: config.rateLimit.global.windowMs,
+  max: config.rateLimit.global.max,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: "请求过于频繁，请稍后再试" },
+});
+
+// 认证接口严格限制（防暴力破解）
+const authLimiter = rateLimit({
+  windowMs: config.rateLimit.auth.windowMs,
+  max: config.rateLimit.auth.max,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: "登录尝试过于频繁，请 1 分钟后再试" },
+});
+
+// 应用全局限制
+app.use(globalLimiter);
+
+// 对登录/注册路由应用更严格的限制
+app.use(["/api/auth/login", "/api/auth/register"], authLimiter);
+
 // Setup CORS and handle OPTIONS preflight BEFORE auth middleware
 app.use(cors());
 
@@ -347,9 +371,6 @@ const cache = new Map<string, { data: any; expiry: number }>();
 const CACHE_TTL = 10 * 60 * 1000; // Increased to 10 minutes
 
 
-
-
-
 // [NEW API] 单个账户层级详情 (Campaigns, AdSets, Ads)
 
 
@@ -363,8 +384,6 @@ const CACHE_TTL = 10 * 60 * 1000; // Increased to 10 minutes
 
 
 // 4. 系统设置
-
-
 
 
 // --- NEW ACCOUNT MAPPING ENDPOINTS ---
@@ -389,17 +408,22 @@ const CACHE_TTL = 10 * 60 * 1000; // Increased to 10 minutes
 // --- END MONITORING ENDPOINTS ---
 
 
-
-
 // --- User Authentication and Management ---
 
 // ---后台静默同步逻辑 (Background Auto-Sync) ---
 async function runBackgroundSync() {
+  if (isSyncRunning) {
+    console.log("[后台同步] 上一次同步仍在执行中，跳过本次");
+    return;
+  }
+  isSyncRunning = true;
+
   const syncId = format(new Date(), "HH:mm:ss");
   console.log(`[后台同步 | ${syncId}] 🔄 开始后台静默同步: 过去 2 天数据 (昨天/今天)...`);
 
-  await logContext.run({ is_silent: true }, async () => {
-    try {
+  try {
+    await logContext.run({ is_silent: true }, async () => {
+      try {
     const token = await getMetaToken();
     if (!token) {
       console.log(`[后台同步 | ${syncId}] ⚠️ 同步中止: Meta Token 未配置`);
@@ -445,7 +469,10 @@ async function runBackgroundSync() {
       select: { accountId: true }
     });
     const disabledAccountIds = disabledAccounts.map(a => a.accountId);
-    const DORMANT_ACCOUNT_IDS = ["26380439", "341040412"];
+
+    // 从数据库读取休眠账户黑名单
+    const dormantSetting = await prisma.setting.findUnique({ where: { key: "dormant_account_ids" } }).catch(() => null);
+    const DORMANT_ACCOUNT_IDS: string[] = dormantSetting?.value ? JSON.parse(dormantSetting.value) : [];
 
     // 只排除 dormant 的广告账户
     const accounts = (accountsRes.data.data || []).filter(
@@ -539,6 +566,9 @@ async function runBackgroundSync() {
       );
     }
   });
+  } finally {
+    isSyncRunning = false;
+  }
 }
 
 

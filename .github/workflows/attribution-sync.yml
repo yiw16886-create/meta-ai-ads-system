@@ -1,0 +1,47 @@
+# GitHub Actions: 每日归因计算
+# UTC 19:00 = 北京时间凌晨 3:00（在每日聚合完成后执行）
+
+name: Daily Attribution
+
+on:
+  schedule:
+    - cron: "0 19 * * *"  # UTC 19:00 = 北京时间 03:00
+  workflow_dispatch:       # 支持手动触发
+
+jobs:
+  attribution:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Trigger Attribution API
+        run: |
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${{ secrets.APP_URL }}/api/dashboard/attribution/run?secret=${{ secrets.ADMIN_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -d '{"daysBack": 7}')
+          
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response: $BODY"
+          
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::Attribution failed with status $HTTP_CODE"
+            exit 1
+          fi
+          
+          echo "✅ Daily attribution completed successfully"
+
+      - name: Notify on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `⚠️ 归因计算失败 — ${new Date().toISOString().split('T')[0]}`,
+              body: `每日归因计算任务执行失败，请检查 API 日志。\n\nWorkflow: ${context.workflow}\nRun: ${context.runId}`,
+              labels: ['bug', 'automated']
+            });

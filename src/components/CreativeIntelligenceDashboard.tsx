@@ -29,6 +29,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, Legend, BarChart, Bar
+} from "recharts";
 
 export function CreativeIntelligenceDashboard({ 
   data = [], 
@@ -124,7 +128,6 @@ export function CreativeIntelligenceDashboard({
   }, [storeFilter, filteredAccounts, selectedAccounts]);
 
 
-
   const toggleAccount = (val: string) => {
     if (val === "all") {
       if (selectedAccounts.includes("all")) {
@@ -182,6 +185,40 @@ export function CreativeIntelligenceDashboard({
   React.useEffect(() => {
     fetchCreativeData();
   }, [startDate, endDate, storeFilter]);
+
+  // 趋势数据状态
+  const [trendData, setTrendData] = useState<any[]>([]);
+  const [trendMetric, setTrendMetric] = useState<"spend" | "roas" | "ctr" | "purchases">("spend");
+  const [isTrendLoading, setIsTrendLoading] = useState(false);
+
+  const fetchTrendData = async () => {
+    if (!startDate || !endDate) return;
+    setIsTrendLoading(true);
+    try {
+      const res = await axios.get("/api/intelligence/creatives/trends", {
+        params: {
+          startDate: format(startDate, "yyyy-MM-dd"),
+          endDate: format(endDate, "yyyy-MM-dd"),
+          storeFilter: storeFilter || undefined,
+          metric: trendMetric,
+        },
+      });
+      const data = Array.isArray(res.data) ? res.data : (res.data?.data || []);
+      setTrendData(data);
+    } catch (e: any) {
+      console.error("Failed to load trend data:", e?.message || e);
+      toast.error("加载趋势数据失败");
+    } finally {
+      setIsTrendLoading(false);
+    }
+  };
+
+  // 当日期、店铺或指标变化时重新获取趋势数据
+  React.useEffect(() => {
+    if (activeTab === "trends") {
+      fetchTrendData();
+    }
+  }, [activeTab, startDate, endDate, storeFilter, trendMetric]);
 
   const filteredTableData = useMemo(() => {
     return creativeData.filter(item => {
@@ -802,20 +839,120 @@ export function CreativeIntelligenceDashboard({
         )}
 
         {activeTab === "trends" && (
-          <div className="bg-white border border-slate-100 rounded-xl p-16 text-center shadow-sm">
-            <div className="max-w-md mx-auto space-y-3">
-              <div className="w-12 h-12 rounded-full bg-slate-50 flex items-center justify-center mx-auto text-slate-400 border border-slate-100">
-                <Activity className="w-5 h-5" />
+          <div className="space-y-4">
+            {/* 指标选择器 */}
+            <Card className="border border-slate-100 rounded-xl p-4 shadow-sm">
+              <div className="flex items-center gap-4 flex-wrap">
+                <span className="text-sm font-medium text-slate-600">趋势指标:</span>
+                {(["spend", "roas", "ctr", "purchases"] as const).map((metric) => (
+                  <button
+                    key={metric}
+                    onClick={() => setTrendMetric(metric)}
+                    className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                      trendMetric === metric
+                        ? "bg-blue-600 text-white shadow-sm"
+                        : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                    }`}
+                  >
+                    {{ spend: "花费 ($)", roas: "ROAS", ctr: "CTR (%)", purchases: "购买量" }[metric]}
+                  </button>
+                ))}
               </div>
-              <h4 className="text-sm font-bold text-slate-800 mt-4">素材走势图表</h4>
-              <p className="text-xs text-slate-400 leading-relaxed">
-                此处将按您的需求展示单选或多选对比的素材数据折线分析图表。
-              </p>
-            </div>
+            </Card>
+
+            {/* 走势图 */}
+            <Card className="border border-slate-100 rounded-xl p-6 shadow-sm">
+              {isTrendLoading ? (
+                <div className="h-80 flex items-center justify-center">
+                  <RefreshCw className="w-6 h-6 animate-spin text-slate-400" />
+                  <span className="ml-3 text-sm text-slate-500">加载趋势数据...</span>
+                </div>
+              ) : trendData.length === 0 ? (
+                <div className="h-80 flex items-center justify-center text-center">
+                  <div className="space-y-2">
+                    <Activity className="w-8 h-8 text-slate-300 mx-auto" />
+                    <p className="text-sm text-slate-500">暂无趋势数据，请调整日期范围或店铺筛选</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="h-80">
+                  <ResponsiveContainer width="100%" height="100%">
+                    {trendMetric === "roas" || trendMetric === "ctr" ? (
+                      <LineChart data={trendData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <XAxis dataKey="date" tick={{ fontSize: 12 }} stroke="#94a3b8" />
+                        <YAxis tick={{ fontSize: 12 }} stroke="#94a3b8" />
+                        <Tooltip
+                          contentStyle={{ borderRadius: "8px", border: "1px solid #e2e8f0" }}
+                        />
+                        <Legend />
+                        <Line
+                          type="monotone"
+                          dataKey="value"
+                          name={{ spend: "花费", roas: "ROAS", ctr: "CTR", purchases: "购买量" }[trendMetric]}
+                          stroke="#2563eb"
+                          strokeWidth={2}
+                          dot={{ r: 3 }}
+                          activeDot={{ r: 5 }}
+                        />
+                      </LineChart>
+                    ) : (
+                      <BarChart data={trendData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <XAxis dataKey="date" tick={{ fontSize: 12 }} stroke="#94a3b8" />
+                        <YAxis tick={{ fontSize: 12 }} stroke="#94a3b8" />
+                        <Tooltip
+                          contentStyle={{ borderRadius: "8px", border: "1px solid #e2e8f0" }}
+                        />
+                        <Bar
+                          dataKey="value"
+                          name={{ spend: "花费", roas: "ROAS", ctr: "CTR", purchases: "购买量" }[trendMetric]}
+                          fill="#2563eb"
+                          radius={[4, 4, 0, 0]}
+                        />
+                      </BarChart>
+                    )}
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </Card>
+
+            {/* 素材效果排行 */}
+            {trendData.length > 0 && (
+              <Card className="border border-slate-100 rounded-xl p-6 shadow-sm">
+                <h4 className="text-sm font-bold text-slate-800 mb-4">Top 素材效果排行</h4>
+                <div className="space-y-2">
+                  {trendData
+                    .filter((d: any) => d.topCreatives)
+                    .flatMap((d: any) => d.topCreatives || [])
+                    .slice(0, 5)
+                    .map((creative: any, idx: number) => (
+                      <div
+                        key={idx}
+                        className="flex items-center justify-between p-3 bg-slate-50 rounded-lg"
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className="text-sm font-bold text-slate-400 w-5">{idx + 1}</span>
+                          <span className="text-sm font-medium text-slate-700">
+                            {creative.name || creative.creativeId || "未命名素材"}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-6 text-sm">
+                          <span className="text-slate-500">
+                            ROAS: <span className="font-bold text-green-600">{creative.roas?.toFixed(2)}x</span>
+                          </span>
+                          <span className="text-slate-500">
+                            花费: <span className="font-bold">${creative.spend?.toFixed(2)}</span>
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              </Card>
+            )}
           </div>
         )}
       </div>
     </div>
   );
 }
-

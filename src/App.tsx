@@ -11,37 +11,35 @@ import { DataDeletionPage } from "./components/DataDeletionPage";
 import { DeletionStatusPage } from "./components/DeletionStatusPage";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Toaster } from "sonner";
+import { AuthProvider, useAuth, type AuthUser } from "./contexts/AuthContext";
 
-function AppContent({ isAuthenticated, setIsAuthenticated, checking, setChecking, handleLogin, handleLogout }: any) {
+function AppContent() {
+  const { isAuthenticated, isLoading, login, logout } = useAuth();
   const location = useLocation();
 
+  // 处理 URL 中的邀请 token
   useEffect(() => {
-    console.log("🚀 Route change detected:", location.pathname, location.search);
     try {
       const urlParams = new URLSearchParams(location.search);
       const token = urlParams.get("token");
       if (token) {
-        console.log("🔑 Found active invitation token in URL. Forcing unauthenticated state for password setup.");
-        localStorage.removeItem("isAuthenticated");
-        localStorage.removeItem("user");
-        setIsAuthenticated(false);
-      } else {
-        const auth = localStorage.getItem("isAuthenticated");
-        const jwtToken = localStorage.getItem("token");
-        if (auth === "true" && jwtToken && jwtToken.trim() !== "") {
-          setIsAuthenticated(true);
-        } else {
-          setIsAuthenticated(false);
-        }
+        // 有邀请 token 时清除当前登录状态，允许未登录访问
+        logout();
       }
     } catch (e) {
-      console.warn("Storage or location access failed in AppContent:", e);
-    } finally {
-      setChecking(false);
+      console.warn("Storage access failed in AppContent:", e);
     }
-  }, [location.pathname, location.search, setIsAuthenticated, setChecking]);
+  }, [location.pathname, location.search, logout]);
 
-  if (checking) {
+  const handleLogin = (token: string, user: AuthUser) => {
+    login(token, user);
+  };
+
+  const handleLogout = () => {
+    logout();
+  };
+
+  if (isLoading) {
     return (
       <div className="h-screen w-screen flex items-center justify-center bg-gray-50">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
@@ -79,35 +77,14 @@ function AppContent({ isAuthenticated, setIsAuthenticated, checking, setChecking
 }
 
 export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [checking, setChecking] = useState(true);
-
-  const handleLogin = () => {
-    setIsAuthenticated(true);
-  };
-
-  const handleLogout = () => {
-    try {
-      localStorage.clear();
-      setIsAuthenticated(false);
-    } catch (e) {
-      console.error("Failed to clear localStorage on logout", e?.message || e);
-    }
-  };
-
   return (
     <BrowserRouter>
-      <Toaster position="top-center" richColors />
-      <ErrorBoundary>
-        <AppContent
-          isAuthenticated={isAuthenticated}
-          setIsAuthenticated={setIsAuthenticated}
-          checking={checking}
-          setChecking={setChecking}
-          handleLogin={handleLogin}
-          handleLogout={handleLogout}
-        />
-      </ErrorBoundary>
+      <AuthProvider>
+        <Toaster position="top-center" richColors />
+        <ErrorBoundary>
+          <AppContent />
+        </ErrorBoundary>
+      </AuthProvider>
     </BrowserRouter>
   );
 }

@@ -166,6 +166,7 @@ model Store {
   visitors                  Int              @default(0)
   timezone                  String?          @default("GMT+8")
   timezone_fallback_warning Boolean?         @default(false)
+  profit_margin             Float?           // 店铺利润率（如 0.4 表示 40%），null 时利润字段为空
   userId                    Int?
   user                      User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
   accounts                  AdAccount[]
