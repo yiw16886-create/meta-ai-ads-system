@@ -166,18 +166,6 @@ async function findStoreIdForOrder(storeIdValue: string, defaultStoreId: number)
   return defaultStoreId;
 }
 
-/**
- * 计算订单利润
- * 优先级: 店铺配置利润率 > 订单实际成本数据 > null（不生成虚假数据）
- */
-function calcProfit(revenue: number, storeProfitMargin?: number | null): number | null {
-  if (storeProfitMargin != null && storeProfitMargin >= 0 && storeProfitMargin <= 1) {
-    return revenue * storeProfitMargin;
-  }
-  // 无法确定利润率时返回 null，不生成虚假数据
-  return null;
-}
-
 export async function syncStoreData(startDate: string, endDate: string, storeIdentifier?: string) {
   let stores;
   if (storeIdentifier) {
@@ -248,9 +236,6 @@ async function syncShoplineStoreData(store: any, startDate: string, endDate: str
   ];
 
   const pathCandidates = [
-    `/admin/openapi/v20240401/orders/list.json`,
-    `/admin/openapi/v20240301/orders/list.json`,
-    `/admin/openapi/v20230901/orders/list.json`,
     `/admin/openapi/v20240301/orders.json`,
     `/admin/openapi/v20230901/orders.json`,
     `/admin/openapi/v20230301/orders.json`,
@@ -393,7 +378,7 @@ async function syncShoplineStoreData(store: any, startDate: string, endDate: str
                 storeId: targetStoreId,
                 productId: productId,
                 revenue,
-                profit: calcProfit(revenue, store?.profit_margin),
+                profit: revenue * 0.4,
                 refunded,
                 refundedAt,
                 orderId,
@@ -585,7 +570,7 @@ async function syncShopifyStoreData(store: any, startDate: string, endDate: stri
                       storeId: targetStoreId,
                       productId: productId,
                       revenue,
-                      profit: calcProfit(revenue, store?.profit_margin),
+                      profit: revenue * 0.4,
                       refunded,
                       refundedAt,
                       orderId,
@@ -750,7 +735,7 @@ async function syncShoplazzaStoreData(store: any, startDate: string, endDate: st
                 storeId: targetStoreId,
                 productId: productId,
                 revenue,
-                profit: calcProfit(revenue, store?.profit_margin),
+                profit: revenue * 0.4,
                 refunded,
                 refundedAt,
                 orderId,
@@ -762,7 +747,7 @@ async function syncShoplazzaStoreData(store: any, startDate: string, endDate: st
                 storeId: targetStoreId,
                 productId: productId,
                 revenue,
-                profit: calcProfit(revenue, store?.profit_margin),
+                profit: revenue * 0.4,
                 refunded,
                 refundedAt,
                 orderId,

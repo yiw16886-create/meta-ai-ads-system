@@ -794,25 +794,7 @@ router.get("/list", async (req: any, res) => {
     const rawList = Array.from(uniqueMap.values());
     const validAccounts = rawList.filter((account: any) => {
       const accName = account.accountName || account.name;
-      if (!accName || typeof accName !== 'string') return false;
-
-      const spendVal = parseFloat(account.spend || account.amount_spent || '0');
-      const hasSpend = !isNaN(spendVal) && spendVal > 0;
-
-      const storeId = account.storeId || account.store_id;
-      const isLinked = !!storeId && String(storeId) !== 'unassigned' && String(storeId) !== '0';
-
-      const rawStatus = String(account.status || account.account_status || '').toUpperCase();
-      const isActive = rawStatus === 'ACTIVE' || rawStatus === '1';
-
-      // Condition A: Spend > 0
-      if (hasSpend) return true;
-
-      // Condition B: Active AND Linked to a store
-      if (isActive && isLinked) return true;
-
-      // Exclusion rule: Unlinked AND Spend === 0
-      return false;
+      return !!(accName && typeof accName === 'string' && accName.trim() !== '');
     });
 
     res.json(validAccounts);

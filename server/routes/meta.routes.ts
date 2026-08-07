@@ -223,7 +223,7 @@ router.get("/accounts", authenticateJWT as any, async (req: AuthenticatedRequest
     });
     const dbMappings = await prisma.accountMapping.findMany({
       where: { OR: [{ userId: numUserId }, { userId: null }] },
-      select: { fbAccountId: true, project: true }
+      select: { fbAccountId: true, project: true, name: true }
     });
 
     const dbNameMap = new Map<string, string>();
@@ -234,30 +234,55 @@ router.get("/accounts", authenticateJWT as any, async (req: AuthenticatedRequest
       }
     });
 
-    let accountsList: Array<{ accountId: string; name: string }> = [];
+    const accountMap = new Map<string, { accountId: string; name: string }>();
 
-    // 2. 如果存在有效 Token，优先从 Meta Graph API 动态拉取当前 Token 有权限的账户列表
+    // Add local DB accounts first
+    dbAccounts.forEach(a => {
+      const clean = a.fb_account_id.replace("act_", "").trim();
+      if (clean) {
+        accountMap.set(clean, {
+          accountId: clean,
+          name: a.fb_account_name || `Account ${clean}`
+        });
+      }
+    });
+
+    // Add local mappings
+    dbMappings.forEach(m => {
+      const clean = m.fbAccountId.replace("act_", "").trim();
+      if (clean) {
+        const existing = accountMap.get(clean);
+        accountMap.set(clean, {
+          accountId: clean,
+          name: m.name || existing?.name || `Account ${clean}`
+        });
+      }
+    });
+
+    // 2. 如果存在有效 Token，同时从 Meta Graph API 动态拉取，补全或覆盖最新的 Meta 账户
     if (token) {
       try {
         const response = await axios.get("https://graph.facebook.com/v19.0/me/adaccounts", {
           params: {
             fields: "name,account_id,account_status",
-            limit: 500,
+            limit: 1000,
             access_token: token,
           },
-          timeout: 4000
+          timeout: 8000
         });
         const metaData = response.data?.data || [];
         if (Array.isArray(metaData) && metaData.length > 0) {
-          accountsList = metaData
+          metaData
             .filter((acc: any) => isValidAdAccountName(acc.name))
-            .map((acc: any) => {
+            .forEach((acc: any) => {
               const clean = String(acc.account_id || acc.id).replace("act_", "").trim();
-              const localName = dbNameMap.get(clean);
-              return {
-                accountId: clean,
-                name: localName || acc.name || `Account ${clean}`
-              };
+              if (clean) {
+                const existing = accountMap.get(clean);
+                accountMap.set(clean, {
+                  accountId: clean,
+                  name: acc.name || existing?.name || `Account ${clean}`
+                });
+              }
             });
         }
       } catch (graphErr: any) {
@@ -265,33 +290,7 @@ router.get("/accounts", authenticateJWT as any, async (req: AuthenticatedRequest
       }
     }
 
-    // 3. 如果从 Meta 未拉取到账户，降级使用本地 DB 里的账户
-    if (accountsList.length === 0) {
-      const accountMap = new Map<string, { accountId: string; name: string }>();
-
-      dbAccounts.forEach(a => {
-        const clean = a.fb_account_id.replace("act_", "").trim();
-        if (clean) {
-          accountMap.set(clean, {
-            accountId: clean,
-            name: a.fb_account_name || `Account ${clean}`
-          });
-        }
-      });
-
-      dbMappings.forEach(m => {
-        const clean = m.fbAccountId.replace("act_", "").trim();
-        if (clean && !accountMap.has(clean)) {
-          accountMap.set(clean, {
-            accountId: clean,
-            name: `Account ${clean}`
-          });
-        }
-      });
-
-      accountsList = Array.from(accountMap.values());
-    }
-
+    const accountsList = Array.from(accountMap.values());
     return res.json({ success: true, accounts: accountsList });
   } catch (error: any) {
     console.error("Error in GET /api/meta/accounts:", error);

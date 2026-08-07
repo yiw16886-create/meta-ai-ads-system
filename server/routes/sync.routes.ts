@@ -8,19 +8,10 @@ import { syncStoreData } from "../services/store-sync.service.js";
 import { attributePurchases } from "../services/attribution.service.js";
 import { aggregateData } from "../services/aggregation.service.js";
 import { runMetaCreativeAutoPatch } from "../services/metaFetchPatch.service.js";
-import { getSyncStatus } from "../server.js";
 
 const router = Router();
 
 router.post("/sync", async (req: any, res) => {
-  const syncStatus = getSyncStatus();
-  if (syncStatus.running) {
-    return res.status(429).json({
-      success: false,
-      error: "同步任务正在执行中，请稍后再试"
-    });
-  }
-
   const { startDate, endDate, syncProduct, syncCreative, accounts: requestedAccounts } = req.body;
   if (!startDate || !endDate) {
     return res
@@ -59,10 +50,7 @@ router.post("/sync", async (req: any, res) => {
       select: { accountId: true }
     });
     const disabledAccountIds = disabledAccounts.map(a => a.accountId);
-
-    // 从数据库读取休眠账户黑名单（可由管理员在后台动态配置）
-    const dormantSetting = await prisma.setting.findUnique({ where: { key: "dormant_account_ids" } }).catch(() => null);
-    const DORMANT_ACCOUNT_IDS: string[] = dormantSetting?.value ? JSON.parse(dormantSetting.value) : [];
+    const DORMANT_ACCOUNT_IDS = ["26380439", "341040412"];
 
     // 仅同步已映射或已绑定的账户 (AccountMapping 或 AdAccount 中的账户)，避免全局请求几千个账户导致封禁
     const currentUserId = req.user?.id ? Number(req.user.id) : null;
@@ -336,10 +324,7 @@ router.get("/cron/sync-monthly", async (req: any, res) => {
       select: { accountId: true }
     });
     const disabledAccountIds = disabledAccounts.map(a => a.accountId);
-
-    // 从数据库读取休眠账户黑名单
-    const dormantSetting = await prisma.setting.findUnique({ where: { key: "dormant_account_ids" } }).catch(() => null);
-    const DORMANT_ACCOUNT_IDS: string[] = dormantSetting?.value ? JSON.parse(dormantSetting.value) : [];
+    const DORMANT_ACCOUNT_IDS = ["26380439", "341040412"];
 
     const cronUserId = req.user?.id ? Number(req.user.id) : null;
     const dbMappings = await prisma.accountMapping.findMany({

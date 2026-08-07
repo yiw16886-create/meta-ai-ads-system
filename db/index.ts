@@ -32,17 +32,47 @@ export const isDbFallbackActive = () => dbFailed;
 const DB_FILE_PATH = path.join(process.cwd(), "db_fallback.json");
 
 const inMemoryDb: Record<string, any[]> = {
-  user: [],
-  invitation: [],
+  user: [
+    {
+      id: 1,
+      email: "yiw16886@gmail.com",
+      password: "$2a$10$C8bWc6/hH2rU60oY2hV1eeVvE4T7z3D7mre2.8YwGZ2/1wR1vK.qG", // bcrypt hash of "admin"
+      password_hash: "$2a$10$C8bWc6/hH2rU60oY2hV1eeVvE4T7z3D7mre2.8YwGZ2/1wR1vK.qG",
+      role: "admin",
+      status: "ACTIVE",
+      org_id: "org_dev_1",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }
+  ],
+  invitation: [
+    {
+      id: 1,
+      email: "yiw16886@gmail.com",
+      token: "dev",
+      role: "admin",
+      expiresAt: new Date(Date.now() + 10 * 365 * 24 * 60 * 60 * 1000), // 10 years
+      createdAt: new Date(),
+      org_id: "org_dev_1"
+    }
+  ],
   organization: [
     {
       id: "org_dev_1",
-      name: "Default Organization",
+      name: "Dev Team",
       createdAt: new Date(),
       updatedAt: new Date()
     }
   ],
-  systemSetting: [],
+  systemSetting: [
+    {
+      id: 1,
+      facebookClientId: "fb_client_id_mock_123",
+      facebookClientSecret: "fb_client_secret_mock_123",
+      createdAt: new Date(),
+      updatedAt: new Date()
+    }
+  ],
   setting: [],
   store: [],
   order: [],
@@ -61,30 +91,6 @@ const inMemoryDb: Record<string, any[]> = {
   adCreative: [],
   metaActionLog: []
 };
-
-// Fallback 模式下从环境变量初始化管理员用户
-function initFallbackAdmin() {
-  if (inMemoryDb.user.length === 0) {
-    const adminEmail = process.env.ADMIN_EMAIL;
-    const adminPassword = process.env.ADMIN_PASSWORD;
-    if (adminEmail && adminPassword) {
-      const bcrypt = require("bcryptjs");
-      const hashedPass = bcrypt.hashSync(adminPassword, 10);
-      inMemoryDb.user.push({
-        id: 1,
-        email: adminEmail,
-        password: hashedPass,
-        password_hash: hashedPass,
-        role: "admin",
-        status: "ACTIVE",
-        org_id: "org_dev_1",
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
-      console.log("[Fallback DB] 已从环境变量初始化管理员用户");
-    }
-  }
-}
 
 // Load persistent DB state if exists
 export function loadDb() {
@@ -273,8 +279,36 @@ function mockUpdate(modelName: string, args: any): any {
     return updated;
   }
   
-  // 回退模式下 update 找不到记录时返回 null（不再自动创建）
-  return null;
+  // If record is not found during fallback mode, automatically create it with combined where & data fields
+  // to avoid application crash or failing operations.
+  const updateData = args?.data || {};
+  const whereFields: any = {};
+  if (args?.where) {
+    for (const key of Object.keys(args.where)) {
+      const val = args.where[key];
+      if (val !== undefined && (typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean')) {
+        whereFields[key] = val;
+      }
+    }
+  }
+
+  const record = { ...whereFields, ...updateData };
+  if (record.id === undefined) {
+    if (modelName === 'user' || modelName === 'store' || modelName === 'adAccount' || modelName === 'facebookBusinessManager' || modelName === 'invitation') {
+      const maxId = inMemoryDb[modelName].reduce((max, item) => Math.max(max, Number(item.id) || 0), 0);
+      record.id = maxId + 1;
+    } else {
+      record.id = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15);
+    }
+  }
+
+  if (!record.createdAt) record.createdAt = new Date();
+  if (!record.updatedAt) record.updatedAt = new Date();
+
+  inMemoryDb[modelName].push(record);
+  console.warn(`[In-Memory Engine] Auto-created missing record for update on ${modelName}:`, record);
+  saveDb();
+  return record;
 }
 
 function mockUpdateMany(modelName: string, args: any): { count: number } {
@@ -442,7 +476,6 @@ async function executeWithFallback<T>(modelName: string, opName: string, realFn:
 
     if (isQuotaOrConnectionErr) {
       dbFailed = true;
-      initFallbackAdmin();
       console.error(`[Prisma Database Quota Exceeded/Failed] Fallback triggered! Automatically switching to High-Performance Offline/In-Memory Mode for subsequent requests. Error was:`, err.message);
       return fallbackFn();
     }

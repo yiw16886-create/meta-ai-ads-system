@@ -52,12 +52,14 @@ router.get("/", async (req: any, res) => {
     if (!userId) {
       return res.json([]);
     }
+    const isSuperAdmin = req.user?.role === "SUPER_ADMIN" || req.user?.role === "admin";
     const stores = await prisma.store.findMany({
       where: {
-        userId,
+        ...(isSuperAdmin ? {} : { OR: [{ userId }, { userId: null }] }),
         NOT: { name: "未分配" }
       },
       include: { accounts: true },
+      orderBy: { id: "asc" },
     });
 
     // Data desensitization
@@ -301,10 +303,11 @@ router.post("/", async (req: any, res) => {
     };
 
     // Find if there is an existing store (either by id or matching by unique name)
+    const isSuperAdmin = req.user?.role === "SUPER_ADMIN" || req.user?.role === "admin";
     let existingStore = null;
     if (id) {
       existingStore = await prisma.store.findFirst({
-        where: { id: parseInt(id, 10), userId: Number(req.user.id) },
+        where: isSuperAdmin ? { id: parseInt(id, 10) } : { id: parseInt(id, 10), OR: [{ userId: Number(req.user.id) }, { userId: null }] },
       });
       if (!existingStore) {
         return res.status(403).json({ error: "Store not found or access denied" });
@@ -420,8 +423,9 @@ router.get("/all-dashboard-summary", async (req: any, res) => {
     if (!userId) {
       return res.json({});
     }
+    const isSuperAdmin = req.user?.role === "SUPER_ADMIN" || req.user?.role === "admin";
     const stores = await prisma.store.findMany({
-      where: { userId },
+      where: isSuperAdmin ? {} : { OR: [{ userId }, { userId: null }] },
     });
     const result: Record<string, any> = {};
 
@@ -977,10 +981,6 @@ router.post("/test-shopline-connection", async (req: any, res) => {
   });
 
   const productCandidates = [
-    `https://${cleanDomain}/admin/openapi/v20240401/products/list.json?limit=10`,
-    `https://${cleanDomain}/admin/openapi/v20240301/products/list.json?limit=10`,
-    `https://${cleanDomain}/admin/openapi/v20230901/products/list.json?limit=10`,
-    `https://${cleanDomain}/admin/openapi/v20230301/products/list.json?limit=10`,
     `https://${cleanDomain}/admin/openapi/v20240301/products.json?limit=10`,
     `https://${cleanDomain}/admin/openapi/v20240301/products?limit=10`,
     `https://${cleanDomain}/admin/openapi/v20230901/products.json?limit=10`,
@@ -998,9 +998,6 @@ router.post("/test-shopline-connection", async (req: any, res) => {
   ];
 
   const orderCandidates = [
-    `https://${cleanDomain}/admin/openapi/v20240401/orders/list.json?limit=10`,
-    `https://${cleanDomain}/admin/openapi/v20240301/orders/list.json?limit=10`,
-    `https://${cleanDomain}/admin/openapi/v20230901/orders/list.json?limit=10`,
     `https://${cleanDomain}/admin/openapi/v20240301/orders.json?limit=10`,
     `https://${cleanDomain}/admin/openapi/v20240301/orders?limit=10`,
     `https://${cleanDomain}/admin/openapi/v20230901/orders.json?limit=10`,
@@ -1194,8 +1191,9 @@ router.get("/:id", async (req: any, res) => {
 router.delete("/:id", async (req: any, res) => {
   const { id } = req.params;
   try {
+    const isSuperAdmin = req.user?.role === "SUPER_ADMIN" || req.user?.role === "admin";
     await prisma.store.deleteMany({
-      where: { id: parseInt(id, 10), userId: req.user.id },
+      where: isSuperAdmin ? { id: parseInt(id, 10) } : { id: parseInt(id, 10), userId: req.user.id },
     });
     res.json({ success: true });
   } catch (error: any) {

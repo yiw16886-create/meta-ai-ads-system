@@ -1,4 +1,3 @@
-
 import axios from "axios";
 import prisma from "../../db/index.js";
 import { evaluateActivityStatus, syncSingleAccountAdData, isValidAdAccountName } from "../utils.js";
@@ -132,12 +131,19 @@ export async function syncMetaHierarchy(token: string, options: { syncCreative?:
     }
   }
 
-  // 同步所有已授权的广告账户（不再按账户名前缀过滤）
+  // Find all active Meta ad accounts currently mapped to a store
   const dbAccounts = await prisma.adAccount.findMany({
     where: {
       AND: [
         { fb_account_name: { not: null } },
         { fb_account_name: { not: "" } },
+        {
+          OR: [
+            { fb_account_name: { startsWith: 'panda', mode: 'insensitive' } },
+            { fb_account_name: { startsWith: 'yf', mode: 'insensitive' } },
+            { fb_account_name: { startsWith: 'qh', mode: 'insensitive' } },
+          ]
+        }
       ]
     },
     include: { store: true }
@@ -514,7 +520,7 @@ export async function triggerInitialFullSync(userId: string | number, accessToke
     console.warn(`[OAuth Init Sync] 无法直接从 Meta API 获取账号列表, 尝试从本地数据库中检索:`, err.message);
   }
 
-  // OAuth 绑定后同步所有已授权账户（不再按前缀过滤）
+  // 备用情况: 从数据库中查询 mapped 账号
   if (accountItems.length === 0) {
     const dbAccounts = await prisma.adAccount.findMany({
       where: {
@@ -522,6 +528,13 @@ export async function triggerInitialFullSync(userId: string | number, accessToke
         AND: [
           { fb_account_name: { not: null } },
           { fb_account_name: { not: "" } },
+          {
+            OR: [
+              { fb_account_name: { startsWith: 'panda', mode: 'insensitive' } },
+              { fb_account_name: { startsWith: 'yf', mode: 'insensitive' } },
+              { fb_account_name: { startsWith: 'qh', mode: 'insensitive' } },
+            ]
+          }
         ]
       },
       select: { fb_account_id: true }

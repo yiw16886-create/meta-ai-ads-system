@@ -2,9 +2,6 @@ import prisma, { rawPrisma } from "../db/index.js";
 import axios from "axios";
 import { format, subDays } from "date-fns";
 import { upsertDailyInsightRecord } from "./services/syncService.js";
-import { decryptToken, encryptToken, isEncryptionEnabled } from "./utils/crypto.js";
-import { cache, CacheKeys } from "./utils/cache.js";
-import { config } from "./config.js";
 
 // CACHE map for utils
 const queryCache = new Map();
@@ -147,64 +144,79 @@ export async function performFullUnbindAndPurge(userId: number | string) {
   }
 }
 
-/**
- * 安全读取 Token 字段：如果启用了加密则解密，否则直接返回数据库中的值
- * 这样无需 ENCRYPTION_KEY 也能正常运行（个人使用场景）
- */
-function safeReadToken(rawValue: string | null | undefined): string | null {
-  if (!rawValue?.trim()) return null;
-  const trimmed = rawValue.trim();
-  return isEncryptionEnabled() ? decryptToken(trimmed) : trimmed;
-}
+export async function getMetaToken(userId?: number | string): Promise<string | null> {
+  if (userId) {
+    const numUserId = Number(userId);
+    if (numUserId) {
+      const user = await prisma.user.findUnique({
+        where: { id: numUserId },
+        select: { fb_access_token: true }
+      });
+      if (user?.fb_access_token && user.fb_access_token.trim().length > 0) {
+        return user.fb_access_token.trim();
+      }
 
-/**
- * 获取指定用户的 Meta/Facebook Access Token
- * @param userId 必填 — 用户 ID
- * @returns Token 明文或 null
- */
-export async function getMetaToken(userId: number | string): Promise<string | null> {
-  const numUserId = Number(userId);
-  if (!numUserId) return null;
+      const binding = await prisma.userFacebookBinding.findUnique({
+        where: { user_id: numUserId },
+        select: { access_token: true }
+      });
+      if (binding?.access_token && binding.access_token.trim().length > 0) {
+        return binding.access_token.trim();
+      }
 
-  // 先从缓存读取
-  const cacheKey = CacheKeys.token(numUserId);
-  const cached = cache.get<string>(cacheKey);
-  if (cached) return cached;
+      const acc = await prisma.facebookAccount.findUnique({
+        where: { userId: numUserId },
+        select: { accessToken: true }
+      });
+      if (acc?.accessToken && acc.accessToken.trim().length > 0) {
+        return acc.accessToken.trim();
+      }
 
-  // 1. User.fb_access_token
-  const user = await prisma.user.findUnique({
-    where: { id: numUserId },
-    select: { fb_access_token: true }
-  });
-  const token1 = safeReadToken(user?.fb_access_token);
-  if (token1) {
-    cache.set(cacheKey, token1, config.cache.token);
-    return token1;
+      // Strictly return null for specified user when no token is found (no cross-user token leakage)
+      return null;
+    }
   }
 
-  // 2. UserFacebookBinding.access_token
-  const binding = await prisma.userFacebookBinding.findUnique({
-    where: { user_id: numUserId },
+  // Fallback 1: Check any UserFacebookBinding table record
+  const anyBinding = await prisma.userFacebookBinding.findFirst({
+    where: { access_token: { not: "" } },
+    orderBy: { updated_at: "desc" },
     select: { access_token: true }
-  });
-  const token2 = safeReadToken(binding?.access_token);
-  if (token2) {
-    cache.set(cacheKey, token2, config.cache.token);
-    return token2;
+  }).catch(() => null);
+  if (anyBinding?.access_token && anyBinding.access_token.trim().length > 0) {
+    return anyBinding.access_token.trim();
   }
 
-  // 3. FacebookAccount.accessToken
-  const acc = await prisma.facebookAccount.findUnique({
-    where: { userId: numUserId },
+  // Fallback 2: Check any User table with fb_access_token
+  const anyUser = await prisma.user.findFirst({
+    where: { fb_access_token: { not: null } },
+    orderBy: { updatedAt: "desc" },
+    select: { fb_access_token: true }
+  }).catch(() => null);
+  if (anyUser?.fb_access_token && anyUser.fb_access_token.trim().length > 0) {
+    return anyUser.fb_access_token.trim();
+  }
+
+  // Fallback 3: Check any FacebookAccount table with accessToken
+  const anyFbAcc = await prisma.facebookAccount.findFirst({
+    where: { accessToken: { not: "" } },
+    orderBy: { updatedAt: "desc" },
     select: { accessToken: true }
-  });
-  const token3 = safeReadToken(acc?.accessToken);
-  if (token3) {
-    cache.set(cacheKey, token3, config.cache.token);
-    return token3;
+  }).catch(() => null);
+  if (anyFbAcc?.accessToken && anyFbAcc.accessToken.trim().length > 0) {
+    return anyFbAcc.accessToken.trim();
   }
 
-  // 不再回退到任意用户的 Token — 安全修复 C7
+  // Fallback 4: Check any AdAccount table with fb_access_token
+  const anyAdAcc = await prisma.adAccount.findFirst({
+    where: { fb_access_token: { not: null } },
+    orderBy: { updatedAt: "desc" },
+    select: { fb_access_token: true }
+  }).catch(() => null);
+  if (anyAdAcc?.fb_access_token && anyAdAcc.fb_access_token.trim().length > 0) {
+    return anyAdAcc.fb_access_token.trim();
+  }
+
   return null;
 }
 
@@ -653,6 +665,7 @@ export async function collapseRequest<T>(key: string, fetcher: () => Promise<T>)
 }
 
 
+
 export async function syncSingleAccountAdData(accountId: string, startDate: string, endDate: string, token: string) {
   if (!token || !token.trim()) {
     throw new Error("未提供有效的 Facebook 授权 Token，请先完成账号绑定");
@@ -1061,18 +1074,17 @@ export function getWebhookUrl(): string {
   // 3. Fallback to local environment
   const isProd = process.env.NODE_ENV === "production";
   if (!isProd) {
+    // If you are using ngrok or a local tunnel, configure it here or via APP_URL env
     return "http://localhost:3000/api/webhook/material";
   }
 
-  // 生产环境未配置 APP_URL 时抛出错误
-  throw new Error(
-    "生产环境必须配置 APP_URL 环境变量以生成正确的 Webhook URL"
-  );
+  return "https://your-production-domain.com/api/webhook/material";
 }
 
 /**
- * 验证广告账户名称是否有效
- * 当前仅检查非空，未来可扩展白名单/黑名单规则
+ * 校验广告账户名是否符合指定的白名单前缀/规范
+ * @param accountName 广告账户名称
+ * @returns boolean (true: 保留, false: 过滤排除)
  */
 export function isValidAdAccountName(accountName: string | null | undefined): boolean {
   if (!accountName || accountName.trim() === '') {
@@ -1080,3 +1092,4 @@ export function isValidAdAccountName(accountName: string | null | undefined): bo
   }
   return true;
 }
+

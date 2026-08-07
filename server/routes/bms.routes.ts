@@ -172,11 +172,11 @@ export async function syncBmStatusAndHealth(bm: any) {
     try {
       const [clientAccsRes, ownedAccsRes] = await Promise.all([
         axios.get(`https://graph.facebook.com/v20.0/${bm.bmId}/client_ad_accounts`, {
-          params: { fields: "id,name,account_id,account_status,disable_reason", limit: 200, access_token: bm.systemToken },
+          params: { fields: "id,name,account_id,account_status,disable_reason", limit: 500, access_token: bm.systemToken },
           timeout: 10000
         }).catch(() => ({ data: { data: [] } })),
         axios.get(`https://graph.facebook.com/v20.0/${bm.bmId}/owned_ad_accounts`, {
-          params: { fields: "id,name,account_id,account_status,disable_reason", limit: 200, access_token: bm.systemToken },
+          params: { fields: "id,name,account_id,account_status,disable_reason", limit: 500, access_token: bm.systemToken },
           timeout: 10000
         }).catch(() => ({ data: { data: [] } }))
       ]);
@@ -868,15 +868,15 @@ router.get("/:id/assets", async (req: any, res) => {
         axios.get(
           `https://graph.facebook.com/v20.0/${bm.bmId}/owned_ad_accounts`,
           {
-            params: { fields: "name,id,account_id,account_status", limit: 100, access_token: bm.systemToken },
-            timeout: 8000,
+            params: { fields: "name,id,account_id,account_status", limit: 500, access_token: bm.systemToken },
+            timeout: 10000,
           }
         ).catch(() => ({ data: { data: [] } })),
         axios.get(
           `https://graph.facebook.com/v20.0/${bm.bmId}/client_ad_accounts`,
           {
-            params: { fields: "name,id,account_id,account_status", limit: 100, access_token: bm.systemToken },
-            timeout: 8000,
+            params: { fields: "name,id,account_id,account_status", limit: 500, access_token: bm.systemToken },
+            timeout: 10000,
           }
         ).catch(() => ({ data: { data: [] } }))
       ]);

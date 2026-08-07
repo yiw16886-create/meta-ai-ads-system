@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 
 interface AcceptInvitePageProps {
-  onLogin: (token: string, user: { id: number; email: string; role?: string }) => void;
+  onLogin: () => void;
 }
 
 export function AcceptInvitePage({ onLogin }: AcceptInvitePageProps) {
@@ -109,7 +109,7 @@ export function AcceptInvitePage({ onLogin }: AcceptInvitePageProps) {
         }
 
         setTimeout(() => {
-          onLogin(res.data.token, res.data.user);
+          onLogin();
           navigate("/", { replace: true });
         }, 1000);
       } else {

@@ -200,8 +200,10 @@ export function Dashboard({ onLogout }: DashboardProps) {
           
         } catch (e) {}
       }
-    } catch (error) {
-      console.error("Failed to fetch mappings:", error?.message || error);
+    } catch (error: any) {
+      if (error?.response?.status !== 401) {
+        console.error("Failed to fetch mappings:", error?.message || error);
+      }
       setMappings({});
     }
   };
@@ -233,7 +235,9 @@ export function Dashboard({ onLogout }: DashboardProps) {
       const [response, summariesRes] = await Promise.all([
         axios.get("/api/insights", { params: dateParams }),
         axios.get("/api/stores/all-dashboard-summary", { params: dateParams }).catch(err => {
-          console.error("Failed to fetch store summaries", err?.message || err);
+          if (err.response?.status !== 401) {
+            console.error("Failed to fetch store summaries", err?.message || err);
+          }
           return { data: {} };
         })
       ]);
@@ -254,6 +258,10 @@ export function Dashboard({ onLogout }: DashboardProps) {
       
       setStoreSummaries(summariesRes.data || {});
     } catch (error: any) {
+      if (error.response?.status === 401) {
+        // Unauthenticated session - response interceptor handles clearing token and reloading
+        return;
+      }
       console.error("fetchData error:", error.response?.data || error.message);
       const errMsg = error.response?.data?.error;
       toast.error(typeof errMsg === 'string' ? errMsg : "数据加载失败，请检查数据库连接");

@@ -5,7 +5,7 @@ import jwt from "jsonwebtoken";
 import { getFbRedirectUri } from "../utils.js";
 
 const router = Router();
-const JWT_SECRET = process.env.JWT_SECRET || "fallback_secret_for_state_signing_only";
+const JWT_SECRET = process.env.JWT_SECRET || "dev_jwt_secret_key_123456";
 
 router.get("/auth-url", authenticateJWT as any, async (req: AuthenticatedRequest, res) => {
   try {

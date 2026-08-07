@@ -585,108 +585,12 @@ export function BusinessManagerDashboard() {
                 通过官方 API 导入企业 BM
               </span>
               <span className="text-xs font-normal text-gray-400">
-                支持单体手动添加或个人 Token 批量获取
+                支持 Meta Token 批量获取与一键导入
               </span>
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-4">
-            {/* 导入模式选择 */}
-            <div className="flex gap-2 p-1 bg-gray-100 rounded-lg mb-4 w-fit">
-              <button
-                type="button"
-                onClick={() => setImportMode("single")}
-                className={cn(
-                  "px-4 py-1.5 text-xs font-bold rounded-md transition-all",
-                  importMode === "single"
-                    ? "bg-white text-gray-950 shadow-sm"
-                    : "text-gray-500 hover:text-gray-800"
-                )}
-              >
-                单体手动导入
-              </button>
-              <button
-                type="button"
-                onClick={() => setImportMode("personal_token")}
-                className={cn(
-                  "px-4 py-1.5 text-xs font-bold rounded-md transition-all",
-                  importMode === "personal_token"
-                    ? "bg-white text-gray-950 shadow-sm"
-                    : "text-gray-500 hover:text-gray-800"
-                )}
-              >
-                Meta 个人 Token 批量获取
-              </button>
-            </div>
-
-            {importMode === "single" ? (
-              <form onSubmit={handleAddBmSubmit} className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
-                    <label className="block text-xs font-bold text-gray-500 mb-1.5">
-                      BM 备注名称 (如: 主营一号BM)
-                    </label>
-                    <Input
-                      placeholder="输入便于标识的自定义名称"
-                      value={newBmName}
-                      onChange={(e) => setNewBmName(e.target.value)}
-                      className="h-10 border-gray-200"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-gray-500 mb-1.5">
-                      Facebook Business ID (BM ID)
-                    </label>
-                    <Input
-                      placeholder="输入 15-16 位 Meta 商务管理平台 ID"
-                      value={newBmId}
-                      onChange={(e) => setNewBmId(e.target.value)}
-                      className="h-10 border-gray-200"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-gray-500 mb-1.5">
-                      系统用户 Token (System User Access Token)
-                    </label>
-                    <Input
-                      placeholder="EAAW..."
-                      type="password"
-                      value={newBmToken}
-                      onChange={(e) => setNewBmToken(e.target.value)}
-                      className="h-10 border-gray-200"
-                      required
-                    />
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 bg-blue-50 text-blue-800 p-3 rounded-lg text-xs leading-relaxed">
-                  <Info className="w-4 h-4 flex-shrink-0 text-blue-600" />
-                  <span>
-                    <strong>安全提示：</strong>此系统采用完全隔离的后端，系统用户 Token 
-                    仅用于调用官方 API 验证状态与实现批量分配（如 `shared_businesses` 和 `business_invites`）。请确保您的系统用户已授予<strong>管理员(Admin)</strong>身份并配置相应的资产管理权限。
-                  </span>
-                </div>
-                <div className="flex justify-end gap-2 pt-2 border-t">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setIsAddingBm(false)}
-                    className="h-9 px-4 text-gray-500 font-semibold"
-                  >
-                    取消
-                  </Button>
-                  <Button
-                    type="submit"
-                    disabled={isSubmittingBm}
-                    className="bg-meta-blue hover:bg-blue-600 text-white font-bold h-9 px-5"
-                  >
-                    {isSubmittingBm ? "正在与 Meta API 验证..." : "确认添加"}
-                  </Button>
-                </div>
-              </form>
-            ) : (
-              <div className="space-y-4">
+            <div className="space-y-4">
                 {/* 批量拉取凭证来源选择 */}
                 <div className="flex gap-2 p-1 bg-gray-50 border rounded-lg w-fit">
                   <button
@@ -904,7 +808,6 @@ export function BusinessManagerDashboard() {
                   </form>
                 )}
               </div>
-            )}
           </CardContent>
         </Card>
       )}

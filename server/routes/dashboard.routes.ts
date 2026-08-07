@@ -1,7 +1,6 @@
 import { Router } from "express";
 import prisma from "../../db/index.js";
 import { safeGetAdInsights } from "../utils.js";
-import { attributePurchases, getAttributionSummary } from "../services/attribution.service.js";
 
 const router = Router();
 
@@ -169,55 +168,24 @@ router.get("/stats", async (req: any, res) => {
     });
   } catch (error: any) {
     console.error("Dashboard stats error:", error);
-    res.status(500).json({
-      success: false,
-      error: "获取仪表板数据失败",
-      summary: {
-        totalSpend: 0,
-        totalRevenue: 0,
-        totalImpressions: 0,
-        totalClicks: 0,
-        totalPurchases: 0,
-        totalROAS: 0,
-        cpc: 0,
-        ctr: 0,
-        dateRange: { startDate: null, endDate: null },
-      },
+    res.json({
+      summary: { spend: 0, revenue: 0, roas: 0, conversions: 0 },
       accounts: [],
-      dailyInsights: [],
+      stores: []
     });
   }
 });
 
-// /clean-dirty-data 路由已移除（废弃接口）
-
-// 手动触发归因计算（需管理员权限，由 GitHub Actions 或管理员手动调用）
-router.post("/attribution/run", async (req: any, res) => {
-  try {
-    const secret = req.query.secret || req.body?.secret;
-    if (secret !== process.env.ADMIN_SECRET && !req.user) {
-      return res.status(401).json({ success: false, error: "未授权" });
-    }
-    const { daysBack = 7 } = req.body || {};
-    const result = await attributePurchases(daysBack);
-    res.json({ success: result.success, data: result });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// 获取归因摘要（供 Dashboard 使用）
-router.get("/attribution/summary", async (req: any, res) => {
-  try {
-    const { accountId, daysBack } = req.query;
-    const summary = await getAttributionSummary(
-      accountId as string | undefined,
-      daysBack ? parseInt(daysBack as string, 10) : 7
-    );
-    res.json({ success: true, data: summary });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
-  }
+/**
+ * POST /api/dashboard/clean-dirty-data
+ * 重置脏数据清理 & 重新触发同步
+ */
+router.post("/clean-dirty-data", async (req: any, res) => {
+  return res.status(410).json({
+    success: false,
+    error: "该全表清理接口已停用",
+    details: "请使用 /api/settings/cleanup-dirty-data 的预览与确认批次流程。",
+  });
 });
 
 export default router;

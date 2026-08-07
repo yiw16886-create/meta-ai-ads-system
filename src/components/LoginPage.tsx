@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
-import { Lock, Eye, EyeOff, RefreshCcw, UserPlus, KeyRound, ArrowLeft, CheckCircle2 } from "lucide-react";
+import { Lock, Eye, EyeOff, RefreshCcw, UserPlus, KeyRound, ArrowLeft } from "lucide-react";
 import { motion } from "motion/react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 
 interface LoginPageProps {
-  onLogin: (token: string, user: { id: number; email: string; role?: string }) => void;
+  onLogin: () => void;
 }
 
 export function LoginPage({ onLogin }: LoginPageProps) {
@@ -20,14 +20,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
   
   const [token, setToken] = useState(new URLSearchParams(window.location.search).get("token"));
   const [invitedEmail, setInvitedEmail] = useState("");
-  const [mode, setMode] = useState<"login" | "register" | "reset" | "reset-confirm">("login");
-
-  // 密码重置相关状态
-  const [resetEmail, setResetEmail] = useState("");
-  const [resetSent, setResetSent] = useState(false);
-  const [resetLoading, setResetLoading] = useState(false);
-  const [resetToken, setResetToken] = useState("");
-  const [newPassword, setNewPassword] = useState("");
+  const [mode, setMode] = useState<"login" | "register" | "reset">("login");
 
   useEffect(() => {
     if (token) {
@@ -53,21 +46,12 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     }
   }, [token]);
 
-  // 检测 URL 中的密码重置参数
-  useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const resetParam = urlParams.get("reset");
-    if (resetParam) {
-      setMode("reset-confirm");
-      setResetToken(resetParam);
-    }
-  }, []);
-
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     try {
-      const res = await axios.post('/api/auth/login', { email, password });
+      const cleanEmail = email.trim();
+      const res = await axios.post('/api/auth/login', { email: cleanEmail, password });
       if (res.data.success) {
         localStorage.setItem("isAuthenticated", "true");
         localStorage.setItem("user", JSON.stringify(res.data.user));
@@ -75,7 +59,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
           localStorage.setItem("token", res.data.token);
         }
         toast.success("登录成功，欢迎回来");
-        onLogin(res.data.token, res.data.user);
+        onLogin();
       }
     } catch (error: any) {
       toast.error(error.response?.data?.error || "账号或密码错误");
@@ -116,7 +100,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
         
         // Brief delay before redirecting to dashboard
         setTimeout(() => {
-          onLogin(res.data.token, res.data.user);
+          onLogin();
         }, 1000);
       }
     } catch (error: any) {
@@ -126,33 +110,30 @@ export function LoginPage({ onLogin }: LoginPageProps) {
     }
   };
 
-  const handleForgotPassword = async (e: React.FormEvent) => {
+  const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    setResetLoading(true);
-    try {
-      await axios.post("/api/auth/forgot-password", { email: resetEmail });
-      setResetSent(true);
-    } catch (error: any) {
-      toast.error(error.response?.data?.error || "发送失败，请稍后重试");
-    } finally {
-      setResetLoading(false);
-    }
-  };
-
-  const handleConfirmReset = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (newPassword.length < 6) {
-      toast.error("密码至少需要 6 个字符");
+    
+    if (password !== confirmPassword) {
+      toast.error("两次输入的密码不一致");
       return;
     }
+    
+    if (password.length < 6) {
+      toast.error("密码长度至少需要 6 个字符");
+      return;
+    }
+
     setLoading(true);
     try {
-      await axios.post("/api/auth/reset-password", { token: resetToken, newPassword });
-      toast.success("密码重置成功，请使用新密码登录");
-      setMode("login");
-      window.history.replaceState({}, document.title, window.location.pathname);
+      const res = await axios.post('/api/auth/reset-password', { email, new_password: password });
+      if (res.data.success) {
+        toast.success("密码重置成功，请使用新密码登录");
+        setMode("login");
+        setPassword("");
+        setConfirmPassword("");
+      }
     } catch (error: any) {
-      toast.error(error.response?.data?.error || "重置失败");
+      toast.error(error.response?.data?.error || "密码重置失败");
     } finally {
       setLoading(false);
     }
@@ -163,18 +144,16 @@ export function LoginPage({ onLogin }: LoginPageProps) {
       handleLogin(e);
     } else if (mode === "register") {
       handleRegister(e);
-    } else if (mode === "reset-confirm") {
-      handleConfirmReset(e);
     } else {
-      handleForgotPassword(e);
+      handleResetPassword(e);
     }
   };
 
   // Helper colors & styles based on state
   const isInvitedRegister = !!token && mode === "register";
-  const ringColor = mode === "register" ? "ring-green-500" : mode === "reset" || mode === "reset-confirm" ? "ring-amber-500" : "ring-meta-blue";
-  const accentColor = mode === "register" ? "bg-green-500" : mode === "reset" || mode === "reset-confirm" ? "bg-amber-500" : "bg-meta-blue";
-  const btnColor = mode === "register" ? "bg-green-600 hover:bg-green-700" : mode === "reset" || mode === "reset-confirm" ? "bg-amber-600 hover:bg-amber-700" : "bg-meta-blue hover:bg-blue-600";
+  const ringColor = mode === "register" ? "ring-green-500" : mode === "reset" ? "ring-amber-500" : "ring-meta-blue";
+  const accentColor = mode === "register" ? "bg-green-500" : mode === "reset" ? "bg-amber-500" : "bg-meta-blue";
+  const btnColor = mode === "register" ? "bg-green-600 hover:bg-green-700" : mode === "reset" ? "bg-amber-600 hover:bg-amber-700" : "bg-meta-blue hover:bg-blue-600";
 
   return (
     <div className="min-h-screen w-full flex items-center justify-center bg-[#f0f2f5] p-4 font-sans">
@@ -204,7 +183,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
             >
               {mode === "register" ? (
                 <UserPlus className="text-white w-8 h-8" />
-              ) : mode === "reset" || mode === "reset-confirm" ? (
+              ) : mode === "reset" ? (
                 <KeyRound className="text-white w-8 h-8" />
               ) : (
                 <Lock className="text-white w-8 h-8" />
@@ -213,7 +192,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
           </div>
           
           <CardTitle className="text-2xl font-black tracking-tight text-gray-900">
-            {isInvitedRegister ? "激活您的管理账户" : mode === "register" ? "创建新账户" : mode === "reset" ? "忘记密码" : mode === "reset-confirm" ? "设置新密码" : "Meta Insights Pro"}
+            {isInvitedRegister ? "激活您的管理账户" : mode === "register" ? "创建新账户" : mode === "reset" ? "重置访问密码" : "Meta Insights Pro"}
           </CardTitle>
           
           <div className="flex flex-col items-center gap-1">
@@ -223,7 +202,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
               </span>
             ) : (
               <p className="text-sm text-gray-500">
-                {mode === "register" ? "快速注册多用户隔离账户" : mode === "reset" ? "输入注册邮箱，我们将发送密码重置链接" : mode === "reset-confirm" ? "请输入您的新密码" : "Meta 广告数据整合与分析平台"}
+                {mode === "register" ? "快速注册多用户隔离账户" : mode === "reset" ? "请输入您的绑定邮箱来设置新密码" : "Meta 广告数据整合与分析平台"}
               </p>
             )}
             {isInvitedRegister && (
@@ -259,73 +238,29 @@ export function LoginPage({ onLogin }: LoginPageProps) {
               </Button>
             </div>
           ) : mode === "reset" ? (
-            <div className="space-y-6 py-2">
-              <div className="text-center space-y-2">
-                <h3 className="text-base font-bold text-gray-900">忘记密码</h3>
-                <p className="text-xs text-gray-500">输入注册邮箱，我们将发送密码重置链接</p>
+            <div className="space-y-6 text-center py-4">
+              <div className="mx-auto w-12 h-12 bg-amber-50 rounded-full flex items-center justify-center">
+                <KeyRound className="text-amber-500 w-6 h-6" />
               </div>
-
-              {resetSent ? (
-                <div className="space-y-4 text-center py-4">
-                  <div className="mx-auto w-12 h-12 bg-green-50 rounded-full flex items-center justify-center">
-                    <CheckCircle2 className="text-green-500 w-6 h-6" />
-                  </div>
-                  <div className="space-y-2">
-                    <h4 className="text-sm font-bold text-gray-900">重置链接已发送</h4>
-                    <p className="text-xs text-gray-500">
-                      如果 <strong>{resetEmail}</strong> 已注册，您将收到一封包含重置链接的邮件。
-                    </p>
-                    <p className="text-[11px] text-gray-400">链接有效期为 1 小时，请检查收件箱和垃圾邮件文件夹。</p>
-                  </div>
-                  <Button onClick={() => { setMode("login"); setResetSent(false); }}>
-                    返回登录页面
-                  </Button>
+              <div className="space-y-2">
+                <h3 className="text-base font-bold text-gray-900">自助密码重置已禁用</h3>
+                <p className="text-xs text-gray-500 leading-relaxed px-2">
+                  为防止暴力破解、凭据冒用和任意密码接管等严重安全隐患，系统已全面禁用非登录状态下的公开密码重置接口。
+                </p>
+                <div className="p-3 bg-amber-50/50 border border-amber-100 rounded-lg text-[11px] text-amber-800 font-medium text-left mt-3 space-y-1">
+                  <div>🔐 <strong>已登录的用户：</strong></div>
+                  <div className="text-amber-700 pl-3">可在进入系统后，点击「个人设置」提供旧密码进行高强度密码修改。</div>
+                  <div className="mt-2">🚨 <strong>忘记当前密码的用户：</strong></div>
+                  <div className="text-amber-700 pl-3">请联系您团队的超级管理员或系统开发人员，由系统后台管理员进行密码重置与安全验证。</div>
                 </div>
-              ) : (
-                <form onSubmit={handleForgotPassword} className="space-y-4">
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium text-gray-600">注册邮箱</label>
-                    <Input
-                      type="email"
-                      placeholder="请输入您的注册邮箱"
-                      value={resetEmail}
-                      onChange={(e) => setResetEmail(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <Button type="submit" disabled={resetLoading} className="w-full">
-                    {resetLoading ? "发送中..." : "发送重置链接"}
-                  </Button>
-                  <Button type="button" variant="outline" onClick={() => setMode("login")} className="w-full">
-                    返回登录页面
-                  </Button>
-                </form>
-              )}
-            </div>
-          ) : mode === "reset-confirm" ? (
-            <div className="space-y-6 py-2">
-              <div className="text-center space-y-2">
-                <h3 className="text-base font-bold text-gray-900">设置新密码</h3>
-                <p className="text-xs text-gray-500">请输入您的新密码</p>
               </div>
-              <form onSubmit={handleConfirmReset} className="space-y-4">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-gray-600">新密码（至少6个字符）</label>
-                  <Input
-                    type="password"
-                    placeholder="请输入新密码"
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    required
-                  />
-                </div>
-                <Button type="submit" disabled={loading} className="w-full">
-                  {loading ? "重置中..." : "确认重置密码"}
-                </Button>
-                <Button type="button" variant="outline" onClick={() => { setMode("login"); window.history.replaceState({}, document.title, window.location.pathname); }} className="w-full">
-                  返回登录页面
-                </Button>
-              </form>
+              <Button 
+                type="button" 
+                onClick={() => setMode("login")}
+                className="w-full h-12 bg-meta-blue hover:bg-blue-600 text-white font-black text-sm"
+              >
+                返回登录页面
+              </Button>
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-5">

@@ -115,23 +115,7 @@ export function MaterialPerformanceTable() {
             status: m.status
           }))
           .filter((account: any) => {
-            if (!account.name || typeof account.name !== 'string' || account.name.trim() === '') return false;
-
-            // 1. Spend check (Condition A)
-            const spendValue = parseFloat(account.spend || '0');
-            const hasSpend = !isNaN(spendValue) && spendValue > 0;
-
-            // 2. Store assignment & Status check (Condition B)
-            const isLinked = account.storeId && account.storeId !== 'unassigned' && account.storeId !== '0' && account.storeId !== 'null';
-            const rawStatus = String(account.status || '').toUpperCase();
-            const isActive = rawStatus === 'ACTIVE' || rawStatus === '1' || rawStatus === '';
-
-            // Return true if Condition A OR Condition B
-            if (hasSpend) return true;
-            if (isActive && isLinked) return true;
-
-            // Exclude if unlinked AND spend === 0
-            return false;
+            return !!(account.name && typeof account.name === 'string' && account.name.trim() !== '');
           });
         setAccountsList(formattedAccounts);
       } catch (err) {
