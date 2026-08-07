@@ -25,13 +25,13 @@ import { config } from "./config.js";
 import rateLimit from "express-rate-limit";
 
 const JWT_SECRET = config.jwtSecret;
-const ADMIN_SECRET = process.env.ADMIN_SECRET || "admin123456";
+const ADMIN_SECRET = config.adminSecret;
 
 // 全局同步锁 — 防止手动触发和定时触发同时执行
 let isSyncRunning = false;
 export function getSyncStatus() { return { running: isSyncRunning }; }
 
-if (!process.env.ADMIN_SECRET) {
+if (!config.adminSecret) {
   console.warn("⚠️ WARNING: ADMIN_SECRET environment variable is not defined, using dev fallback.");
 }
 
@@ -199,7 +199,7 @@ async function checkDb() {
     }
 
     const defaultEmail = "administrator@GG.com";
-    const defaultPass = process.env.ADMIN_SECRET || "admin123456";
+    const defaultPass = config.adminSecret;
     const hashedPass = await bcrypt.hash(defaultPass, 10);
 
     const adminUser = await prisma.user.upsert({
