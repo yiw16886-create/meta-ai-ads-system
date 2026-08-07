@@ -2,9 +2,9 @@ import prisma, { rawPrisma } from "../db/index.js";
 import axios from "axios";
 import { format, subDays } from "date-fns";
 import { upsertDailyInsightRecord } from "./services/syncService.js";
-import { decryptToken, encryptToken, isEncryptionEnabled } from "./crypto.js";
-import { cache, CacheKeys } from "./cache.js";
-import { config } from "../config.js";
+import { decryptToken, encryptToken, isEncryptionEnabled } from "./utils/crypto.js";
+import { cache, CacheKeys } from "./utils/cache.js";
+import { config } from "./config.js";
 
 // CACHE map for utils
 const queryCache = new Map();
