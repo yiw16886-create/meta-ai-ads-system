@@ -16,82 +16,119 @@ router.get("/accounts", async (req: any, res) => {
       });
     }
 
-    // Check if the user has an active Facebook token
-    const hasFbToken = await isUserFacebookConnected(userId);
+    const isSuperAdmin = req.user?.role === "SUPER_ADMIN" || req.user?.role === "admin";
 
-    if (!hasFbToken) {
-      return res.json({
-        accounts: [],
-        stats: { total: 0, active: 0, hasSpend: 0 }
-      });
-    }
-
-    const token = await getMetaToken(userId);
-    if (!token) {
-      return res.status(400).json({ error: "Meta Token 未配置" });
-    }
-
-    // 1. Fetch persistent cache or refresh if requested (Filtered by current user's mapped accounts)
+    // 1. Fetch persistent cache
     let cachedAccounts = await prisma.metaAccountMonitoring.findMany({
       include: { adAccount: true }
     });
-    cachedAccounts = cachedAccounts.filter(acc => {
-      if (!acc.adAccount) return true;
-      return acc.adAccount.userId === null || acc.adAccount.userId === Number(userId);
-    });
-    
-    if (refresh === "true" || cachedAccounts.length === 0) {
-      console.log("🔄 Refreshing Meta Account Monitoring data from API...");
-      const accountsRes = await axios.get(`https://graph.facebook.com/v19.0/me/adaccounts`, {
-        params: {
-          fields: "name,account_id,account_status,spend_cap,amount_spent,balance,currency,timezone_name",
-          limit: 500,
-          access_token: token,
-        },
-      });
 
-      const rawAccounts = accountsRes.data.data || [];
-      
-      // Update DB Cache in transaction
-      await prisma.$transaction(
-        rawAccounts.map((acc: any) => 
-          prisma.metaAccountMonitoring.upsert({
-            where: { accountId: acc.account_id },
-            update: {
-              accountName: acc.name,
-              status: acc.account_status,
-              spendCap: acc.spend_cap ? parseInt(acc.spend_cap, 10) / 100 : 0,
-              amountSpent: acc.amount_spent ? parseInt(acc.amount_spent, 10) / 100 : 0,
-              balance: acc.balance ? parseInt(acc.balance, 10) / 100 : 0,
-              currency: acc.currency,
-              timezone: acc.timezone_name,
-            },
-            create: {
-              accountId: acc.account_id,
-              accountName: acc.name,
-              status: acc.account_status,
-              spendCap: acc.spend_cap ? parseInt(acc.spend_cap, 10) / 100 : 0,
-              amountSpent: acc.amount_spent ? parseInt(acc.amount_spent, 10) / 100 : 0,
-              balance: acc.balance ? parseInt(acc.balance, 10) / 100 : 0,
-              currency: acc.currency,
-              timezone: acc.timezone_name,
-            }
-          })
-        )
-      );
-      
-      cachedAccounts = await prisma.metaAccountMonitoring.findMany({
-        include: { adAccount: true }
-      });
+    // If cache is empty, populate from existing AdAccounts in DB
+    if (cachedAccounts.length === 0) {
+      const dbAdAccounts = await prisma.adAccount.findMany();
+      if (dbAdAccounts.length > 0) {
+        for (const da of dbAdAccounts) {
+          const cleanId = (da.fb_account_id || "").replace(/^act_/, "").trim();
+          if (!cleanId) continue;
+          try {
+            await prisma.metaAccountMonitoring.upsert({
+              where: { accountId: cleanId },
+              update: {
+                accountName: da.fb_account_name || cleanId,
+                status: 1,
+                activityStatus: da.activityStatus || 1,
+              },
+              create: {
+                accountId: cleanId,
+                accountName: da.fb_account_name || cleanId,
+                status: 1,
+                activityStatus: da.activityStatus || 1,
+                spendCap: 0,
+                amountSpent: 0,
+                balance: 0,
+                currency: "USD",
+                timezone: "America/Los_Angeles"
+              }
+            });
+          } catch (e) {}
+        }
+        cachedAccounts = await prisma.metaAccountMonitoring.findMany({
+          include: { adAccount: true }
+        });
+      }
+    }
+
+    if (!isSuperAdmin) {
       cachedAccounts = cachedAccounts.filter(acc => {
         if (!acc.adAccount) return true;
         return acc.adAccount.userId === null || acc.adAccount.userId === Number(userId);
       });
     }
 
-    const userAccountIds = cachedAccounts.map(acc => acc.accountId);
+    // 2. If user specifically requested a force refresh, attempt Meta API sync with timeout protection
+    if (refresh === "true") {
+      const token = await getMetaToken(userId);
+      if (token) {
+        try {
+          console.log("🔄 Force refreshing Meta Account Monitoring data from Meta API...");
+          const accountsRes = await axios.get(`https://graph.facebook.com/v19.0/me/adaccounts`, {
+            params: {
+              fields: "name,account_id,account_status,spend_cap,amount_spent,balance,currency,timezone_name",
+              limit: 500,
+              access_token: token,
+            },
+            timeout: 8000,
+          });
 
-    // 2. Filter logic based on AdInsight (Last 30 days and 7 days)
+          const rawAccounts = accountsRes.data?.data || [];
+          if (rawAccounts.length > 0) {
+            for (const acc of rawAccounts) {
+              await prisma.metaAccountMonitoring.upsert({
+                where: { accountId: acc.account_id },
+                update: {
+                  accountName: acc.name,
+                  status: acc.account_status,
+                  spendCap: acc.spend_cap ? parseInt(acc.spend_cap, 10) / 100 : 0,
+                  amountSpent: acc.amount_spent ? parseInt(acc.amount_spent, 10) / 100 : 0,
+                  balance: acc.balance ? parseInt(acc.balance, 10) / 100 : 0,
+                  currency: acc.currency,
+                  timezone: acc.timezone_name,
+                },
+                create: {
+                  accountId: acc.account_id,
+                  accountName: acc.name,
+                  status: acc.account_status,
+                  spendCap: acc.spend_cap ? parseInt(acc.spend_cap, 10) / 100 : 0,
+                  amountSpent: acc.amount_spent ? parseInt(acc.amount_spent, 10) / 100 : 0,
+                  balance: acc.balance ? parseInt(acc.balance, 10) / 100 : 0,
+                  currency: acc.currency,
+                  timezone: acc.timezone_name,
+                }
+              });
+            }
+
+            cachedAccounts = await prisma.metaAccountMonitoring.findMany({
+              include: { adAccount: true }
+            });
+            if (!isSuperAdmin) {
+              cachedAccounts = cachedAccounts.filter(acc => {
+                if (!acc.adAccount) return true;
+                return acc.adAccount.userId === null || acc.adAccount.userId === Number(userId);
+              });
+            }
+          }
+        } catch (apiErr: any) {
+          console.warn("⚠️ Meta API refresh failed or timed out, returning cached database state:", apiErr.message);
+        }
+      }
+    }
+
+    const userAccountIds = cachedAccounts.map(acc => acc.accountId);
+    const userAccountIdsVariants = Array.from(
+      new Set(userAccountIds.flatMap(id => [id, `act_${id}`, id.replace(/^act_/, "")]))
+    );
+
+    // 3. Filter logic based on AdInsight (Last 30 days and 7 days)
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().split('T')[0];
@@ -99,12 +136,14 @@ router.get("/accounts", async (req: any, res) => {
     const activeAccounts = await prisma.adInsight.groupBy({
       by: ["accountId"],
       where: {
-        accountId: { in: userAccountIds },
+        accountId: { in: userAccountIdsVariants },
         date: { gte: thirtyDaysAgoStr },
         spend: { gt: 0 }
       },
     });
-    const activeAccountIds = activeAccounts.map(acc => acc.accountId);
+    const activeAccountIds = new Set(
+      activeAccounts.map(acc => acc.accountId.replace(/^act_/, ""))
+    );
 
     const todayStr = new Date().toISOString().split('T')[0];
     const sevenDaysAgo = new Date();
@@ -114,7 +153,7 @@ router.get("/accounts", async (req: any, res) => {
     const weeklySpend = await prisma.adInsight.groupBy({
       by: ["accountId"],
       where: {
-        accountId: { in: userAccountIds },
+        accountId: { in: userAccountIdsVariants },
         date: { 
           gte: sevenDaysAgoStr,
           lt: todayStr // 排除今天，取过去 7 个完整自然日的数据
@@ -125,15 +164,17 @@ router.get("/accounts", async (req: any, res) => {
       }
     });
 
-    const weeklySpendMap = new Map();
+    const weeklySpendMap = new Map<string, number>();
     weeklySpend.forEach(ws => {
-      weeklySpendMap.set(ws.accountId, (ws._sum.spend || 0) / 7);
+      const cleanId = ws.accountId.replace(/^act_/, "");
+      weeklySpendMap.set(cleanId, (ws._sum?.spend || 0) / 7);
     });
 
-    // 3. Combine Cache + DB Insights
+    // 4. Combine Cache + DB Insights
     const monitoringData = cachedAccounts.map((acc) => {
-      const avgDailySpend = weeklySpendMap.get(acc.accountId) || 0;
-      const hasSpendLast30Days = activeAccountIds.includes(acc.accountId);
+      const cleanAccountId = acc.accountId.replace(/^act_/, "");
+      const avgDailySpend = weeklySpendMap.get(cleanAccountId) || 0;
+      const hasSpendLast30Days = activeAccountIds.has(cleanAccountId);
       
       let realTimeBalance = 0;
       if (!acc.spendCap || acc.spendCap === 0) {
@@ -188,7 +229,7 @@ router.get("/accounts", async (req: any, res) => {
     const latestSpendDates = await prisma.adInsight.groupBy({
       by: ["accountId"],
       where: {
-        accountId: { in: userAccountIds },
+        accountId: { in: userAccountIdsVariants },
         spend: { gt: 0 }
       },
       _max: {
@@ -199,7 +240,8 @@ router.get("/accounts", async (req: any, res) => {
     const latestSpendMap = new Map<string, string>();
     latestSpendDates.forEach(r => {
       if (r._max?.date) {
-        latestSpendMap.set(r.accountId, r._max.date);
+        const cleanId = r.accountId.replace(/^act_/, "");
+        latestSpendMap.set(cleanId, r._max.date);
       }
     });
 
@@ -229,41 +271,38 @@ router.get("/accounts", async (req: any, res) => {
       }
     });
 
-    // 将计算结果同步更新到 AdAccount 广告账户表以及 MetaAccountMonitoring 关系监控缓存表
-    const activeAdAccounts = await prisma.adAccount.findMany({
-      where: { userId: Number(userId) },
-      select: { fb_account_id: true }
-    });
-    const activeAccountIdsInDb = new Set(activeAdAccounts.map(a => a.fb_account_id));
-    
-    await Promise.all(
-      monitoringData.map(async (item) => {
-        // 1. 始终同步更新 MetaAccountMonitoring 缓存表中的活跃度状态
-        try {
-          await prisma.metaAccountMonitoring.update({
-            where: { accountId: item.accountId },
-            data: { 
-              activityStatus: item.activityStatus,
-              status: item.accountStatus // Put fbAccountStatus here
-            }
-          });
-        } catch (e) {}
-
-        // 2. 如果已被关联/绑定，同步更新 AdAccount 表的活跃度
-        if (activeAccountIdsInDb.has(item.accountId)) {
+    // 异步在后台同步更新活跃度到数据库（非阻塞返回响应）
+    setImmediate(async () => {
+      try {
+        const activeAdAccounts = await prisma.adAccount.findMany({
+          where: isSuperAdmin ? {} : { userId: Number(userId) },
+          select: { fb_account_id: true }
+        });
+        const activeAccountIdsInDb = new Set(activeAdAccounts.map(a => a.fb_account_id));
+        
+        for (const item of monitoringData) {
           try {
-            await prisma.adAccount.update({
-              where: { fb_account_id: item.accountId },
-              data: { activityStatus: item.activityStatus }
+            await prisma.metaAccountMonitoring.update({
+              where: { accountId: item.accountId },
+              data: { 
+                activityStatus: item.activityStatus,
+                status: item.accountStatus
+              }
             });
+            if (activeAccountIdsInDb.has(item.accountId)) {
+              await prisma.adAccount.update({
+                where: { fb_account_id: item.accountId },
+                data: { activityStatus: item.activityStatus }
+              });
+            }
           } catch (e) {}
         }
-      })
-    );
+      } catch (e) {}
+    });
 
     const filteredMonitoringData = monitoringData;
 
-    // Provide some metadata about full sync status
+    // Provide structured JSON with accounts and stats
     res.json({
       accounts: filteredMonitoringData,
       stats: {
@@ -274,7 +313,7 @@ router.get("/accounts", async (req: any, res) => {
     });
   } catch (error: any) {
     console.error("[Monitoring API] Error:", error.message);
-    res.json({ error: error.message });
+    res.status(500).json({ error: error.message, accounts: [], stats: { total: 0, active: 0, hasSpend: 0 } });
   }
 });
 

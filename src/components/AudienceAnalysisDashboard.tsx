@@ -71,7 +71,8 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
           }
         });
         
-        let processedData = res.data.map((item: any) => {
+        const rawList = Array.isArray(res.data) ? res.data : [];
+        let processedData = rawList.map((item: any) => {
           let name = '未知';
           if (activeTab === "placement") {
             const platformMap: Record<string, string> = {
@@ -478,9 +479,10 @@ export function AudienceAnalysisDashboard({ startDate, endDate }: { startDate: D
     );
   };
 
-  const filteredAccounts = accounts.filter(acc => 
-    (acc.accountName || acc.accountId || "").toLowerCase().includes((searchQuery || "").toLowerCase()) ||
-    (acc.accountId || "").includes(searchQuery || "")
+  const safeAccounts = Array.isArray(accounts) ? accounts : [];
+  const filteredAccounts = safeAccounts.filter(acc => 
+    (acc?.accountName || acc?.accountId || "").toLowerCase().includes((searchQuery || "").toLowerCase()) ||
+    (acc?.accountId || "").includes(searchQuery || "")
   );
 
   const totalPurchases = data.reduce((sum, item) => sum + (item.purchases || 0), 0);

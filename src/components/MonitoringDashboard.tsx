@@ -31,7 +31,7 @@ export function MonitoringDashboard() {
   const [stats, setStats] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all"); // Default to All to show everything first
-  const [hideInactive, setHideInactive] = useState(true); // Default to TRUE to show active accounts only initially
+  const [hideInactive, setHideInactive] = useState(false); // Default to FALSE so all accounts are shown on initial load
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' }>({ 
     key: 'amountSpent', 
     direction: 'desc' 
@@ -39,28 +39,43 @@ export function MonitoringDashboard() {
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 20;
 
+  const [error, setError] = useState<string | null>(null);
+
   useEffect(() => {
     setCurrentPage(1);
   }, [searchTerm, statusFilter, hideInactive, sortConfig]);
 
   const fetchData = async (forceRefresh = false) => {
     setLoading(true);
+    setError(null);
     try {
-      const res = await axios.get(`/api/monitoring/accounts${forceRefresh ? "?refresh=true" : ""}`);
+      const res = await axios.get(`/api/monitoring/accounts${forceRefresh ? "?refresh=true" : ""}`, {
+        timeout: 15000
+      });
       if (typeof res.data === 'string' && res.data.trim().toLowerCase().startsWith('<!doctype html>')) {
         toast.error("系统正在启动或重启，请稍候...");
         setData([]);
         return;
       }
-      const rawAccounts = res.data.accounts || [];
+      if (res.data?.error) {
+        setError(res.data.error);
+      }
+      const rawAccounts = res.data?.accounts || [];
       const uniqueData = Array.from(new Map(rawAccounts.map((item: any) => [item.id, item])).values());
       setData(uniqueData);
-      setStats(res.data.stats);
+      setStats(res.data?.stats || {
+        total: uniqueData.length,
+        active: uniqueData.filter((a: any) => a.accountStatus === 1).length,
+        hasSpend: uniqueData.filter((a: any) => a.hasSpendLast30Days).length
+      });
       if (forceRefresh) {
         toast.success("同步完成: 已获取 Meta 实时数据并更新数据库");
       }
     } catch (e: any) {
-      toast.error(e.response?.data?.error || "数据拉取失败");
+      console.error("[Monitoring UI Error]:", e);
+      const errMsg = e.response?.data?.error || e.message || "数据拉取失败";
+      setError(errMsg);
+      toast.error(errMsg);
     } finally {
       setLoading(false);
     }
@@ -125,11 +140,34 @@ export function MonitoringDashboard() {
 
   if (loading && data.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4 bg-white rounded-xl border border-gray-100">
+      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4 bg-white rounded-xl border border-gray-100 p-8 shadow-sm">
         <RefreshCcw className="w-10 h-10 animate-spin text-meta-blue" />
         <div className="text-center">
-          <p className="text-gray-900 font-bold">正在加载监控数据</p>
-          <p className="text-gray-400 text-xs mt-1">优先从本地数据库加载缓存，点同步按钮获取 Meta 实时限额</p>
+          <p className="text-gray-900 font-bold text-base">正在加载账户健康监控数据...</p>
+          <p className="text-gray-400 text-xs mt-1">系统正从本地数据库与缓存中提取广告账户状态与消耗指标</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error && data.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4 bg-white rounded-xl border border-gray-100 p-8 shadow-sm text-center">
+        <div className="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center text-red-500">
+          <AlertTriangle className="w-6 h-6" />
+        </div>
+        <div>
+          <h3 className="text-base font-bold text-gray-900">数据加载未完成</h3>
+          <p className="text-gray-500 text-xs mt-1 max-w-md">{error}</p>
+        </div>
+        <div className="flex gap-3 mt-2">
+          <Button onClick={() => fetchData(false)} variant="default" className="gap-2 bg-meta-blue">
+            <RefreshCcw className="w-4 h-4" />
+            重试加载
+          </Button>
+          <Button onClick={() => fetchData(true)} variant="outline" className="gap-2 border-gray-200">
+            强制从 Meta 同步
+          </Button>
         </div>
       </div>
     );

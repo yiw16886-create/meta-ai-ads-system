@@ -25,14 +25,15 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
     return !!(store.shopline_token?.trim() || store.shopify_token?.trim() || store.shoplazza_token?.trim());
   };
 
-  const allCount = stores.length;
+  const safeStores = Array.isArray(stores) ? stores : [];
+  const allCount = safeStores.length;
   
-  const connectedStores = stores.filter(store => {
+  const connectedStores = safeStores.filter(store => {
     const apiBound = isApiBound(store);
     return apiBound;
   });
 
-  const unconnectedStores = stores.filter(store => {
+  const unconnectedStores = safeStores.filter(store => {
     const apiBound = isApiBound(store);
     return !apiBound;
   });
@@ -41,7 +42,7 @@ export function StoresDashboard({ startDate, endDate }: { startDate?: Date; endD
     ? connectedStores
     : filterType === "unconnected"
     ? unconnectedStores
-    : stores;
+    : safeStores;
 
   // States for store deletion
   const [deletingStoreId, setDeletingStoreId] = useState<number | null>(null);

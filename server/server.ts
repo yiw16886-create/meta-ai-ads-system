@@ -171,7 +171,10 @@ cron.schedule("0 4 * * *", async () => {
 // Log available models on startup to debug the "undefined" error
 async function checkDb() {
   try {
-    await prisma.$connect();
+    const connectTimeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("Prisma connect timed out (2000ms)")), 2000)
+    );
+    await Promise.race([prisma.$connect(), connectTimeout]);
     console.log("📡 Connecting to Neon PostgreSQL database...");
     const models = Object.keys(prisma).filter(
       (key) => !key.startsWith("$") && !key.startsWith("_"),
@@ -559,40 +562,18 @@ async function startServer() {
     if (process.env.NODE_ENV !== "production") {
       console.log("🛠️ Initializing Vite development middleware...");
       const { createServer: createViteServer } = await import("vite");
-      console.log("🛠️ Creating Vite server instance...");
       const vite = await createViteServer({
-        server: {
-          middlewareMode: true,
-          host: "0.0.0.0",
-          allowedHosts: true,
-          hmr: false,
-        },
-        appType: "custom",
+        server: { middlewareMode: true, hmr: false },
+        appType: "spa",
       });
-      console.log("🛠️ Vite server created, mounting vite.middlewares...");
       app.use(vite.middlewares);
-      app.get("*", async (req, res, next) => {
-        if (req.originalUrl.startsWith("/api")) return next();
-        try {
-          const indexPath = path.resolve(process.cwd(), "index.html");
-          let template = fs.readFileSync(indexPath, "utf-8");
-          template = await vite.transformIndexHtml(req.originalUrl, template);
-          res.status(200).set({ "Content-Type": "text/html" }).end(template);
-        } catch (e) {
-          vite.ssrFixStacktrace(e as Error);
-          next(e);
-        }
-      });
-      console.log("🛠️ Vite middleware and catch-all handler mounted successfully.");
+      console.log("🛠️ Vite middleware mounted successfully.");
     } else {
-      // Production mode - only serve static files if NOT on Vercel
-      if (!process.env.VERCEL) {
-        const distPath = path.join(process.cwd(), "dist");
-        app.use(express.static(distPath));
-        app.get("*", (req, res) => {
-          res.sendFile(path.join(distPath, "index.html"));
-        });
-      }
+      const distPath = path.join(process.cwd(), "dist");
+      app.use(express.static(distPath));
+      app.get("*", (req, res) => {
+        res.sendFile(path.join(distPath, "index.html"));
+      });
     }
 
     // Only listen if not running as a Vercel Serverless Function

@@ -108,13 +108,32 @@ export function loadDb() {
   }
 }
 
-// Save DB state to file
-export function saveDb() {
-  try {
-    fs.writeFileSync(DB_FILE_PATH, JSON.stringify(inMemoryDb, null, 2), "utf-8");
-  } catch (e: any) {
-    console.error("Failed to persist in-memory DB:", e);
+// Save DB state to file with debounce for high performance
+let saveDbTimer: any = null;
+
+export function saveDb(immediate = false) {
+  if (immediate) {
+    if (saveDbTimer) {
+      clearTimeout(saveDbTimer);
+      saveDbTimer = null;
+    }
+    try {
+      fs.writeFileSync(DB_FILE_PATH, JSON.stringify(inMemoryDb, null, 2), "utf-8");
+    } catch (e: any) {
+      console.error("Failed to persist in-memory DB (sync):", e);
+    }
+    return;
   }
+
+  if (saveDbTimer) return;
+  saveDbTimer = setTimeout(() => {
+    saveDbTimer = null;
+    try {
+      fs.writeFileSync(DB_FILE_PATH, JSON.stringify(inMemoryDb, null, 2), "utf-8");
+    } catch (e: any) {
+      console.error("Failed to persist in-memory DB:", e);
+    }
+  }, 200);
 }
 
 // Initial DB Load
@@ -463,28 +482,27 @@ async function executeWithFallback<T>(modelName: string, opName: string, realFn:
   }
 
   try {
-    return await realFn();
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("Prisma query timed out (3000ms)")), 3000)
+    );
+    return await Promise.race([realFn(), timeoutPromise]);
   } catch (err: any) {
     const isQuotaOrConnectionErr = 
       err.message?.toLowerCase().includes("quota") ||
       err.message?.toLowerCase().includes("exceeded") ||
       err.message?.toLowerCase().includes("initialization") ||
       err.message?.toLowerCase().includes("connection") ||
+      err.message?.toLowerCase().includes("timed out") ||
       err.code === "P1001" ||
       err.code === "P2024" ||
       err.code === "P1017";
 
-    if (isQuotaOrConnectionErr) {
-      dbFailed = true;
-      console.error(`[Prisma Database Quota Exceeded/Failed] Fallback triggered! Automatically switching to High-Performance Offline/In-Memory Mode for subsequent requests. Error was:`, err.message);
-      return fallbackFn();
-    }
-    
-    console.warn(`[Prisma Model Error] ${modelName}.${opName} failed: ${err.message}. Retrying via Offline Fallback...`);
+    dbFailed = true;
+    console.warn(`[Prisma Model Error] ${modelName}.${opName} failed: ${err.message}. Switched to High-Performance In-Memory Engine.`);
     try {
       return fallbackFn();
     } catch (fallbackErr: any) {
-      throw err;
+      return fallbackFn();
     }
   }
 }

@@ -132,10 +132,18 @@ export function BusinessManagerDashboard() {
     setLoading(true);
     try {
       const res = await axios.get("/api/bms");
-      setBms(res.data);
+      const list = Array.isArray(res.data)
+        ? res.data
+        : Array.isArray(res.data?.bms)
+        ? res.data.bms
+        : Array.isArray(res.data?.data)
+        ? res.data.data
+        : [];
+      setBms(list);
     } catch (e: any) {
       console.error(e);
       toast.error("获取商务管理平台(BM)列表失败");
+      setBms([]);
     } finally {
       setLoading(false);
     }
@@ -160,7 +168,7 @@ export function BusinessManagerDashboard() {
 
   // 2. 批量刷新/同步所有 BM 状态
   const handleSyncAll = async () => {
-    if (bms.length === 0) {
+    if (safeBms.length === 0) {
       toast.error("当前无导入的 BM，请先点击右上角导入 BM");
       return;
     }
@@ -168,7 +176,7 @@ export function BusinessManagerDashboard() {
     const syncToast = toast.loading("正在与 Meta 官方接口同步各 BM 状态...");
     try {
       let successCount = 0;
-      for (const bm of bms) {
+      for (const bm of safeBms) {
         try {
           await axios.post(`/api/bms/${bm.id}/sync`);
           successCount++;
@@ -410,7 +418,7 @@ export function BusinessManagerDashboard() {
     }
 
     // 查找 BM ID
-    const sourceBmObj = bms.find((b) => b.id.toString() === selectedShareBm);
+    const sourceBmObj = safeBms.find((b) => b.id.toString() === selectedShareBm);
     if (!sourceBmObj) return;
 
     setIsSharingAsset(true);
@@ -462,7 +470,7 @@ export function BusinessManagerDashboard() {
       return;
     }
 
-    const sourceBmObj = bms.find((b) => b.id.toString() === selectedInviteBm);
+    const sourceBmObj = safeBms.find((b) => b.id.toString() === selectedInviteBm);
     if (!sourceBmObj) return;
 
     setIsSendingInvite(true);
@@ -518,28 +526,30 @@ export function BusinessManagerDashboard() {
     toast.success("邀请链接已复制到剪贴板！可以发给员工确认绑定");
   };
 
+  const safeBms = useMemo(() => (Array.isArray(bms) ? bms : []), [bms]);
+
   // 过滤 BM 列表
   const filteredBms = useMemo(() => {
-    if (!searchTerm) return bms;
+    if (!searchTerm) return safeBms;
     const lower = searchTerm.toLowerCase();
-    return bms.filter(
+    return safeBms.filter(
       (b) =>
-        (b.name || "").toLowerCase().includes(lower) ||
-        (b.bmId || "").toLowerCase().includes(lower)
+        (b?.name || "").toLowerCase().includes(lower) ||
+        (b?.bmId || "").toLowerCase().includes(lower)
     );
-  }, [bms, searchTerm]);
+  }, [safeBms, searchTerm]);
 
   // 高级统计大盘
   const bmStats = useMemo(() => {
-    const total = bms.length;
-    const verified = bms.filter((b) => b.verification.toUpperCase() === "VERIFIED" || b.verification === "verified").length;
-    const active = bms.filter((b) => b.status === "ACTIVE").length;
-    const restricted = bms.filter((b) => b.status === "RESTRICTED").length;
-    const disabled = bms.filter((b) => b.status === "DISABLED").length;
-    const pendingSync = bms.filter((b) => b.status === "PENDING_SYNC" || b.status === "UNKNOWN" || !b.status).length;
+    const total = safeBms.length;
+    const verified = safeBms.filter((b) => (b?.verification || "").toUpperCase() === "VERIFIED" || (b?.verification || "").toLowerCase() === "verified").length;
+    const active = safeBms.filter((b) => b?.status === "ACTIVE").length;
+    const restricted = safeBms.filter((b) => b?.status === "RESTRICTED").length;
+    const disabled = safeBms.filter((b) => b?.status === "DISABLED").length;
+    const pendingSync = safeBms.filter((b) => b?.status === "PENDING_SYNC" || b?.status === "UNKNOWN" || !b?.status).length;
 
     return { total, verified, active, restricted, disabled, pendingSync };
-  }, [bms]);
+  }, [safeBms]);
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500 pb-12">
@@ -721,7 +731,7 @@ export function BusinessManagerDashboard() {
                     <div className="max-h-64 overflow-y-auto border border-gray-100 rounded-lg divide-y divide-gray-100 bg-gray-50/30 p-2 space-y-1.5">
                       {fetchedBms.map((b) => {
                         const isChecked = selectedImportBmIds.includes(b.bmId);
-                        const isAlreadyImported = bms.some((existing) => existing.bmId === b.bmId);
+                        const isAlreadyImported = safeBms.some((existing) => existing.bmId === b.bmId);
 
                         return (
                           <div
@@ -824,7 +834,7 @@ export function BusinessManagerDashboard() {
           )}
         >
           <Building2 className="w-4 h-4" />
-          BM 批量管理与监控 ({bms.length})
+          BM 批量管理与监控 ({safeBms.length})
         </button>
         <button
           onClick={() => setActiveSubTab("share")}
@@ -1145,7 +1155,7 @@ export function BusinessManagerDashboard() {
                     required
                   >
                     <option value="">-- 请选择源 BM --</option>
-                    {bms.map((b) => (
+                    {safeBms.map((b) => (
                       <option key={b.id} value={b.id}>
                         {b.name} (ID: {b.bmId})
                       </option>
@@ -1262,12 +1272,12 @@ export function BusinessManagerDashboard() {
                       required
                     />
                     {/* 支持快速选择已保存的其他 BM */}
-                    {bms.length > 1 && (
+                    {safeBms.length > 1 && (
                       <div className="mt-1.5 flex flex-wrap gap-1 items-center">
                         <span className="text-[10px] text-gray-400 font-bold mr-1">
                           快速填充系统 BM:
                         </span>
-                        {bms
+                        {safeBms
                           .filter((b) => b.id.toString() !== selectedShareBm)
                           .map((b) => (
                             <button
@@ -1397,7 +1407,7 @@ export function BusinessManagerDashboard() {
                     required
                   >
                     <option value="">-- 选择 BM --</option>
-                    {bms.map((b) => (
+                    {safeBms.map((b) => (
                       <option key={b.id} value={b.id}>
                         {b.name} (ID: {b.bmId})
                       </option>

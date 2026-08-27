@@ -356,18 +356,20 @@ router.get("/", async (req: any, res) => {
       return res.json([]);
     }
 
+    const isSuperAdmin = req.user?.role === "SUPER_ADMIN" || req.user?.role === "admin";
+
     // Check if the user has an active Facebook token
     const hasFbToken = await isUserFacebookConnected(userId);
 
-    if (!hasFbToken) {
+    if (!hasFbToken && !isSuperAdmin) {
       return res.json([]);
     }
 
     const bms = await prisma.facebookBusinessManager.findMany({
-      where: { userId },
+      where: isSuperAdmin ? {} : { OR: [{ userId }, { userId: null }] },
       orderBy: { createdAt: "desc" },
     });
-    return res.json(bms);
+    return res.json(Array.isArray(bms) ? bms : []);
   } catch (error: any) {
     console.error("Fetch BM list error:", error);
     return res.json([]);
@@ -626,8 +628,9 @@ router.delete("/:id", async (req: any, res) => {
     return res.status(401).json({ error: "用户未登录或会话已过期" });
   }
   try {
+    const isSuperAdmin = req.user?.role === "SUPER_ADMIN" || req.user?.role === "admin";
     const bm = await prisma.facebookBusinessManager.findFirst({
-      where: { id: parseInt(id), userId }
+      where: isSuperAdmin ? { id: parseInt(id) } : { id: parseInt(id), OR: [{ userId: Number(userId) }, { userId: null }] }
     });
     if (!bm) {
       return res.status(404).json({ error: "未找到指定的 BM 或无权操作" });
@@ -651,8 +654,9 @@ router.post("/:id/sync", async (req: any, res) => {
   }
 
   try {
+    const isSuperAdmin = req.user?.role === "SUPER_ADMIN" || req.user?.role === "admin";
     const bm = await prisma.facebookBusinessManager.findFirst({
-      where: { id: parseInt(id), userId },
+      where: isSuperAdmin ? { id: parseInt(id) } : { id: parseInt(id), OR: [{ userId: Number(userId) }, { userId: null }] },
     });
 
     if (!bm) {
@@ -675,8 +679,9 @@ router.get("/:id/diagnose", async (req: any, res) => {
     return res.status(401).json({ error: "用户未登录或会话已过期" });
   }
   try {
+    const isSuperAdmin = req.user?.role === "SUPER_ADMIN" || req.user?.role === "admin";
     const bm = await prisma.facebookBusinessManager.findFirst({
-      where: { id: parseInt(id), userId },
+      where: isSuperAdmin ? { id: parseInt(id) } : { id: parseInt(id), OR: [{ userId: Number(userId) }, { userId: null }] },
     });
 
     if (!bm) {
@@ -751,8 +756,9 @@ router.post("/:id/manual-update", async (req: any, res) => {
   }
 
   try {
+    const isSuperAdmin = req.user?.role === "SUPER_ADMIN" || req.user?.role === "admin";
     const existingBm = await prisma.facebookBusinessManager.findFirst({
-      where: { id: parseInt(id), userId }
+      where: isSuperAdmin ? { id: parseInt(id) } : { id: parseInt(id), OR: [{ userId: Number(userId) }, { userId: null }] }
     });
 
     if (!existingBm) {
@@ -792,8 +798,9 @@ router.get("/:id/assets", async (req: any, res) => {
   }
 
   try {
+    const isSuperAdmin = req.user?.role === "SUPER_ADMIN" || req.user?.role === "admin";
     const bm = await prisma.facebookBusinessManager.findFirst({
-      where: { id: parseInt(id), userId },
+      where: isSuperAdmin ? { id: parseInt(id) } : { id: parseInt(id), OR: [{ userId: Number(userId) }, { userId: null }] },
     });
 
     if (!bm) {
