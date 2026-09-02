@@ -113,7 +113,7 @@ test("the overview endpoint rejects authenticated cohort A users", async () => {
   }
 });
 
-test("cohort B receives a read-only skeleton with every write capability disabled", async () => {
+test("cohort B keeps page writes disabled while exposing the Stage 3 OAuth connection", async () => {
   const { server, baseUrl } = await startRouter(
     {
       PAGE_CENTER_V2_ENABLED: "true",
@@ -131,7 +131,9 @@ test("cohort B receives a read-only skeleton with every write capability disable
     assert.equal(body.data.readOnly, true);
     assert.equal(body.data.cohort, "B");
     assert.equal(body.data.sections.length, 3);
-    assert.equal(Object.values(body.data.capabilities).some(Boolean), false);
+    assert.equal(body.data.capabilities.connectOAuth, true);
+    assert.equal(body.data.capabilities.publishPosts, false);
+    assert.equal(body.data.capabilities.manageComments, false);
   } finally {
     await stopServer(server);
   }

@@ -12,6 +12,8 @@ import {
   type McpAuthDecision,
 } from "./security/mcp-auth.js";
 import axios from "axios";
+import mcpOAuthRouter from "./features/mcp-oauth/oauth.routes.js";
+import mcpOAuthResourceRouter from "./features/mcp-oauth/resource.routes.js";
 
 // Active SSE Transports Map
 const sseTransports = new Map<string, { transport: SSEServerTransport; server: McpServer }>();
@@ -282,6 +284,10 @@ export function createUnifiedMcpServer(options: UnifiedMcpServerOptions = {}): M
 }
 
 export const mcpRouter = Router();
+
+// Page Center V2 OAuth routes are registered before legacy discovery and MCP routes.
+mcpRouter.use(mcpOAuthRouter);
+mcpRouter.use(mcpOAuthResourceRouter);
 
 // 1. RFC 8414 OAuth Authorization Server Discovery & Metadata
 mcpRouter.get("/.well-known/oauth-authorization-server", (req: Request, res: Response) => {
