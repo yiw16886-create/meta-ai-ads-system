@@ -12,6 +12,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "diagnostic:report": "tsx scripts/diagnostic-report.ts",
+    "test:stage1": "node --import tsx --test tests/stage1/*.test.ts",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
