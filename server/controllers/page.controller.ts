@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import axios from 'axios';
 import prisma from '../../db/index.js';
-import { getMetaToken } from '../utils.js';
+import { getMetaToken, extractMetaErrorDetails } from '../utils.js';
 
 export const createPagePost = async (req: Request, res: Response) => {
   try {
@@ -101,11 +101,13 @@ export const createPagePost = async (req: Request, res: Response) => {
     });
   } catch (error: any) {
     console.error('发布主页贴文失败:', error.response?.data || error.message);
-    const metaErrorMsg = error.response?.data?.error?.message || error.message;
+    const errorDetails = extractMetaErrorDetails(error);
     return res.status(error.response?.status || 500).json({
       success: false,
-      message: '发布失败: ' + metaErrorMsg,
-      error: metaErrorMsg,
+      message: errorDetails.message,
+      error: errorDetails.message,
+      isRestricted: errorDetails.isRestricted,
+      isTokenExpired: errorDetails.isTokenExpired,
       details: error.response?.data?.error
     });
   }
@@ -155,8 +157,15 @@ export const createPostComment = async (req: Request, res: Response) => {
     return res.json({ success: true, message: '成功回复并同步评论到 Meta 平台！', comment: newComment });
   } catch (error: any) {
     console.error('回复主页贴文评论失败:', error.response?.data || error.message);
-    const metaErrorMsg = error.response?.data?.error?.message || error.message;
-    return res.status(error.response?.status || 500).json({ success: false, message: metaErrorMsg, error: metaErrorMsg });
+    const errorDetails = extractMetaErrorDetails(error);
+    return res.status(error.response?.status || 500).json({ 
+      success: false, 
+      message: errorDetails.message, 
+      error: errorDetails.message,
+      isRestricted: errorDetails.isRestricted,
+      isTokenExpired: errorDetails.isTokenExpired,
+      details: error.response?.data?.error
+    });
   }
 };
 
@@ -180,7 +189,8 @@ export const deletePagePost = async (req: Request, res: Response) => {
           }
         });
       } catch (metaError: any) {
-        deleteError = metaError.response?.data?.error?.message || metaError.message;
+        const parsed = extractMetaErrorDetails(metaError);
+        deleteError = parsed.message;
         console.warn(`Meta 帖子删除失败或已被删除:`, metaError.response?.data || metaError.message);
       }
     }
@@ -197,8 +207,14 @@ export const deletePagePost = async (req: Request, res: Response) => {
     });
   } catch (error: any) {
     console.error('删除主页贴文失败:', error.response?.data || error.message);
-    const metaErrorMsg = error.response?.data?.error?.message || error.message;
-    return res.status(error.response?.status || 500).json({ success: false, message: '下架同步失败: ' + metaErrorMsg, error: metaErrorMsg });
+    const errorDetails = extractMetaErrorDetails(error);
+    return res.status(error.response?.status || 500).json({ 
+      success: false, 
+      message: '下架同步失败: ' + errorDetails.message, 
+      error: errorDetails.message,
+      isRestricted: errorDetails.isRestricted,
+      isTokenExpired: errorDetails.isTokenExpired 
+    });
   }
 };
 

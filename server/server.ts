@@ -320,6 +320,10 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok" });
 });
 
+// MCP (Model Context Protocol) & OAuth Discovery Endpoints
+import { mcpRouter } from "./mcp.js";
+app.use(mcpRouter);
+
 // All endpoints are now securely and individually protected via authenticateJWT middleware
 
 import routes from "./routes/index.js";

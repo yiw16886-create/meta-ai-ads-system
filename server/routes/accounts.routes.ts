@@ -85,6 +85,25 @@ router.get("", async (req: any, res) => {
   return res.status(502).json({ success: false, message: "Meta Graph API 請求受限，請重新授權" });
 });
 
+function isMetaRateLimitError(err: any): boolean {
+  const errCode = Number(err?.response?.data?.error?.code);
+  const errSubCode = Number(err?.response?.data?.error?.error_subcode);
+  const errMsg = String(err?.response?.data?.error?.message || err?.message || "").toLowerCase();
+  
+  return (
+    errCode === 4 ||
+    errCode === 17 ||
+    errCode === 32 ||
+    errCode === 613 ||
+    errCode === 80004 ||
+    errSubCode === 1504022 ||
+    errMsg.includes("request limit reached") ||
+    errMsg.includes("calls to this api have exceeded") ||
+    errMsg.includes("rate limit") ||
+    errMsg.includes("user request limit")
+  );
+}
+
 async function fetchMetaDetailsWithRetry(
   cleanAccId: string,
   targetLevel: string,
@@ -102,14 +121,74 @@ async function fetchMetaDetailsWithRetry(
     }
   ]);
 
-  // Try 1: Limit 250 with filtering and full nested insights
+  const lightFields = `name,status,effective_status,daily_budget,lifetime_budget${extraFields}`;
+
+  // Helper for lightweight base query
+  const fetchLightweightItems = async () => {
+    const baseRes = await axios.get(
+      `https://graph.facebook.com/v20.0/act_${cleanAccId}/${targetLevel}`,
+      {
+        params: {
+          fields: lightFields,
+          limit: 150,
+          access_token: token,
+        },
+        timeout: 45000,
+      }
+    );
+
+    const items = baseRes.data?.data || [];
+    if (items.length === 0) {
+      return { data: [], paging: baseRes.data?.paging };
+    }
+
+    // Try separate insights query with safe fallback
+    try {
+      const timeRangeObj = JSON.parse(timeRange);
+      const insightsRes = await axios.get(
+        `https://graph.facebook.com/v20.0/act_${cleanAccId}/insights`,
+        {
+          params: {
+            level: targetLevel === "campaigns" ? "campaign" : targetLevel === "adsets" ? "adset" : "ad",
+            time_range: JSON.stringify(timeRangeObj),
+            fields: `campaign_id,adset_id,ad_id,${insightsFields}`,
+            limit: 150,
+            access_token: token
+          },
+          timeout: 45000
+        }
+      );
+
+      const insightsMap = new Map<string, any>();
+      for (const ins of insightsRes.data?.data || []) {
+        const key = ins.ad_id || ins.adset_id || ins.campaign_id;
+        if (key) insightsMap.set(key, ins);
+      }
+
+      const merged = items.map((item: any) => {
+        const foundIns = insightsMap.get(item.id);
+        return {
+          ...item,
+          insights: foundIns ? { data: [foundIns] } : undefined
+        };
+      });
+
+      return { data: merged, paging: baseRes.data?.paging };
+    } catch (insErr: any) {
+      // Safe fallback when insights rate-limited or unavailable
+      console.warn(`[Meta API Handler] Insights query skipped (${insErr?.response?.data?.error?.message || insErr.message}), returning base items.`);
+      return { data: items, paging: baseRes.data?.paging };
+    }
+  };
+
+  // Try 1: Limit 150 with filtering and full nested insights
   try {
     const res = await axios.get(
-      `https://graph.facebook.com/v19.0/act_${cleanAccId}/${targetLevel}`,
+      `https://graph.facebook.com/v20.0/act_${cleanAccId}/${targetLevel}`,
       {
         params: {
           fields,
-          limit: 250,
+          limit: 150,
           access_token: token,
           filtering: filteringParam
         },
@@ -124,13 +203,23 @@ async function fetchMetaDetailsWithRetry(
     const errCode = err1.response?.data?.error?.code;
     const errSubCode = err1.response?.data?.error?.error_subcode;
     const errMsg = err1.response?.data?.error?.message || err1.message;
+    const isRateLimit = isMetaRateLimitError(err1);
+
+    if (isRateLimit) {
+      console.warn(
+        `[Meta API Rate Limit] ${targetLevel} reached Insights quota (Code ${errCode}/Sub ${errSubCode}). Directly switching to lightweight query...`
+      );
+      // Directly fetch lightweight items to avoid burning more quota
+      return await fetchLightweightItems();
+    }
+
     console.warn(`[Meta API Retry] Attempt 1 for ${targetLevel} failed (Code ${errCode}/Sub ${errSubCode}: ${errMsg}). Retrying without filtering...`);
-    await new Promise((r) => setTimeout(r, 300));
+    await new Promise((r) => setTimeout(r, 400));
 
     // Try 2: Limit 100 with full nested insights but no filtering param
     try {
       const res = await axios.get(
-        `https://graph.facebook.com/v19.0/act_${cleanAccId}/${targetLevel}`,
+        `https://graph.facebook.com/v20.0/act_${cleanAccId}/${targetLevel}`,
         {
           params: {
             fields,
@@ -146,63 +235,10 @@ async function fetchMetaDetailsWithRetry(
       };
     } catch (err2: any) {
       console.warn(`[Meta API Retry] Attempt 2 for ${targetLevel} failed. Retrying with lightweight query...`);
-      await new Promise((r) => setTimeout(r, 400));
+      await new Promise((r) => setTimeout(r, 500));
 
-      // Try 3: Fetch base items without nested insights (Meta Graph API lightweight query)
-      const lightFields = `name,status,effective_status,daily_budget,lifetime_budget${extraFields}`;
-      const baseRes = await axios.get(
-        `https://graph.facebook.com/v19.0/act_${cleanAccId}/${targetLevel}`,
-        {
-          params: {
-            fields: lightFields,
-            limit: 200,
-            access_token: token,
-          },
-          timeout: 45000,
-        }
-      );
-
-      const items = baseRes.data?.data || [];
-      if (items.length === 0) {
-        return { data: [], paging: baseRes.data?.paging };
-      }
-
-      // Query level insights separately if possible
-      try {
-        const timeRangeObj = JSON.parse(timeRange);
-        const insightsRes = await axios.get(
-          `https://graph.facebook.com/v19.0/act_${cleanAccId}/insights`,
-          {
-            params: {
-              level: targetLevel === "campaigns" ? "campaign" : targetLevel === "adsets" ? "adset" : "ad",
-              time_range: JSON.stringify(timeRangeObj),
-              fields: `campaign_id,adset_id,ad_id,${insightsFields}`,
-              limit: 200,
-              access_token: token
-            },
-            timeout: 45000
-          }
-        );
-
-        const insightsMap = new Map<string, any>();
-        for (const ins of insightsRes.data?.data || []) {
-          const key = ins.ad_id || ins.adset_id || ins.campaign_id;
-          if (key) insightsMap.set(key, ins);
-        }
-
-        const merged = items.map((item: any) => {
-          const foundIns = insightsMap.get(item.id);
-          return {
-            ...item,
-            insights: foundIns ? { data: [foundIns] } : undefined
-          };
-        });
-
-        return { data: merged, paging: baseRes.data?.paging };
-      } catch (insErr: any) {
-        console.warn(`[Meta API Retry] Fetching separate insights failed (${insErr.message}), returning base items.`);
-        return { data: items, paging: baseRes.data?.paging };
-      }
+      // Try 3: Lightweight query
+      return await fetchLightweightItems();
     }
   }
 }

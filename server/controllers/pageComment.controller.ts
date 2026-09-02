@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import axios from 'axios';
 import prisma from '../../db/index.js';
+import { extractMetaErrorDetails } from '../utils.js';
 
 export class PageCommentController {
   
@@ -26,7 +27,7 @@ export class PageCommentController {
       });
 
       if (!comment || !comment.post?.page?.access_token) {
-        return res.status(404).json({ error: "Comment, post, or page access token not found" });
+        return res.status(404).json({ error: "找不到对应评论或公共主页授权 Token" });
       }
 
       const url = `https://graph.facebook.com/v20.0/${commentId}`;
@@ -46,17 +47,22 @@ export class PageCommentController {
         });
         return res.json({ success: true, is_hidden });
       } else {
-        return res.status(400).json({ error: "Meta API returned unsuccessful response", message: "Meta API returned unsuccessful response" });
+        return res.status(400).json({ error: "Meta API 返回操作未成功", message: "Meta API 返回操作未成功" });
       }
 
     } catch (error: any) {
       console.error("[toggleHideComment error]", error?.response?.data || error);
-      const metaErrorMsg = error.response?.data?.error?.message;
-      const finalError = metaErrorMsg || error.message || "Failed to toggle hide comment";
-      if (error.response?.status === 401) {
-         return res.status(401).json({ error: "401 Page Access Token Expired", message: "401 Page Access Token Expired" });
+      const parsed = extractMetaErrorDetails(error);
+      if (parsed.isTokenExpired) {
+         return res.status(401).json({ error: "401 Page Access Token Expired", message: parsed.message });
       }
-      return res.status(error.response?.status || 500).json({ error: finalError, message: finalError });
+      return res.status(error.response?.status || 500).json({ 
+        error: parsed.message, 
+        message: parsed.message,
+        isRestricted: parsed.isRestricted,
+        isTokenExpired: parsed.isTokenExpired,
+        details: error.response?.data?.error
+      });
     }
   }
 
@@ -77,7 +83,7 @@ export class PageCommentController {
       });
 
       if (!comment || !comment.post?.page?.access_token) {
-        return res.status(404).json({ error: "Comment, post, or page access token not found", message: "Comment, post, or page access token not found" });
+        return res.status(404).json({ error: "找不到对应评论或公共主页授权 Token", message: "找不到对应评论或公共主页授权 Token" });
       }
 
       const url = `https://graph.facebook.com/v20.0/${commentId}`;
@@ -95,17 +101,22 @@ export class PageCommentController {
         });
         return res.json({ success: true });
       } else {
-        return res.status(400).json({ error: "Meta API returned unsuccessful response", message: "Meta API returned unsuccessful response" });
+        return res.status(400).json({ error: "Meta API 返回操作未成功", message: "Meta API 返回操作未成功" });
       }
 
     } catch (error: any) {
       console.error("[deleteComment error]", error?.response?.data || error);
-      const metaErrorMsg = error.response?.data?.error?.message;
-      const finalError = metaErrorMsg || error.message || "Failed to delete comment";
-      if (error.response?.status === 401) {
-         return res.status(401).json({ error: "401 Page Access Token Expired", message: "401 Page Access Token Expired" });
+      const parsed = extractMetaErrorDetails(error);
+      if (parsed.isTokenExpired) {
+         return res.status(401).json({ error: "401 Page Access Token Expired", message: parsed.message });
       }
-      return res.status(error.response?.status || 500).json({ error: finalError, message: finalError });
+      return res.status(error.response?.status || 500).json({ 
+        error: parsed.message, 
+        message: parsed.message,
+        isRestricted: parsed.isRestricted,
+        isTokenExpired: parsed.isTokenExpired,
+        details: error.response?.data?.error 
+      });
     }
   }
 }

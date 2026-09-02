@@ -65,44 +65,66 @@ router.get("/accounts", async (req: any, res) => {
       });
     }
 
-    // 2. If user specifically requested a force refresh, attempt Meta API sync with timeout protection
+    // 2. If user specifically requested a force refresh, attempt Meta API sync with paginated fetching
+    let syncWarning: string | null = null;
+    let syncedCount = 0;
     if (refresh === "true") {
       const token = await getMetaToken(userId);
       if (token) {
         try {
-          console.log("🔄 Force refreshing Meta Account Monitoring data from Meta API...");
-          const accountsRes = await axios.get(`https://graph.facebook.com/v19.0/me/adaccounts`, {
-            params: {
-              fields: "name,account_id,account_status,spend_cap,amount_spent,balance,currency,timezone_name",
-              limit: 500,
-              access_token: token,
-            },
-            timeout: 8000,
-          });
+          console.log("🔄 Starting paginated Meta Account Monitoring & Balance sync...");
+          let url: string | null = "https://graph.facebook.com/v19.0/me/adaccounts";
+          let params: any = {
+            fields: "name,account_id,account_status,spend_cap,amount_spent,balance,currency,timezone_name",
+            limit: 100,
+            access_token: token,
+          };
 
-          const rawAccounts = accountsRes.data?.data || [];
+          const rawAccounts: any[] = [];
+          while (url) {
+            const accountsRes: any = await axios.get(url, {
+              params,
+              timeout: 25000,
+            });
+
+            const pageList = accountsRes.data?.data || [];
+            rawAccounts.push(...pageList);
+
+            if (accountsRes.data?.paging?.next) {
+              url = accountsRes.data.paging.next;
+              params = undefined; // URL already includes query params
+            } else {
+              url = null;
+            }
+          }
+
+          syncedCount = rawAccounts.length;
+          console.log(`✅ Successfully fetched ${syncedCount} ad accounts from Meta Graph API. Persisting to monitoring cache...`);
+
           if (rawAccounts.length > 0) {
             for (const acc of rawAccounts) {
+              const cleanAccId = String(acc.account_id || "").replace(/^act_/, "").trim();
+              if (!cleanAccId) continue;
               await prisma.metaAccountMonitoring.upsert({
-                where: { accountId: acc.account_id },
+                where: { accountId: cleanAccId },
                 update: {
-                  accountName: acc.name,
+                  accountName: acc.name || cleanAccId,
                   status: acc.account_status,
                   spendCap: acc.spend_cap ? parseInt(acc.spend_cap, 10) / 100 : 0,
                   amountSpent: acc.amount_spent ? parseInt(acc.amount_spent, 10) / 100 : 0,
                   balance: acc.balance ? parseInt(acc.balance, 10) / 100 : 0,
-                  currency: acc.currency,
-                  timezone: acc.timezone_name,
+                  currency: acc.currency || "USD",
+                  timezone: acc.timezone_name || "America/Los_Angeles",
                 },
                 create: {
-                  accountId: acc.account_id,
-                  accountName: acc.name,
+                  accountId: cleanAccId,
+                  accountName: acc.name || cleanAccId,
                   status: acc.account_status,
                   spendCap: acc.spend_cap ? parseInt(acc.spend_cap, 10) / 100 : 0,
                   amountSpent: acc.amount_spent ? parseInt(acc.amount_spent, 10) / 100 : 0,
                   balance: acc.balance ? parseInt(acc.balance, 10) / 100 : 0,
-                  currency: acc.currency,
-                  timezone: acc.timezone_name,
+                  currency: acc.currency || "USD",
+                  timezone: acc.timezone_name || "America/Los_Angeles",
                 }
               });
             }
@@ -118,7 +140,11 @@ router.get("/accounts", async (req: any, res) => {
             }
           }
         } catch (apiErr: any) {
-          console.warn("⚠️ Meta API refresh failed or timed out, returning cached database state:", apiErr.message);
+          const isTimeout = apiErr.code === "ECONNABORTED" || apiErr.message?.includes("timeout");
+          syncWarning = isTimeout
+            ? "Meta API 连接超时，已自动返回数据库缓存数据"
+            : `Meta API 同步异常 (${apiErr.message})，已返回数据库缓存数据`;
+          console.warn("⚠️ Meta API refresh status:", syncWarning);
         }
       }
     }
@@ -305,6 +331,8 @@ router.get("/accounts", async (req: any, res) => {
     // Provide structured JSON with accounts and stats
     res.json({
       accounts: filteredMonitoringData,
+      warning: syncWarning,
+      syncedCount,
       stats: {
         total: filteredMonitoringData.length,
         active: filteredMonitoringData.filter(a => a.accountStatus === 1).length,

@@ -144,6 +144,85 @@ export async function performFullUnbindAndPurge(userId: number | string) {
   }
 }
 
+export function extractMetaErrorDetails(error: any): { 
+  message: string; 
+  subcode?: number; 
+  code?: number; 
+  userTitle?: string; 
+  userMsg?: string;
+  isRestricted?: boolean;
+  isTokenExpired?: boolean;
+} {
+  const metaErr = error.response?.data?.error;
+  if (!metaErr) {
+    const defaultMsg = error.response?.data?.message || error.message || '未知异常';
+    return { message: defaultMsg };
+  }
+
+  const subcode = Number(metaErr.error_subcode);
+  const code = Number(metaErr.code);
+  const userTitle = metaErr.error_user_title || '';
+  const userMsg = metaErr.error_user_msg || '';
+  const rawMsg = metaErr.message || '';
+
+  // 1. Account / Page Action Restriction (e.g. 2424009)
+  const isRestricted = subcode === 2424009 || userTitle.includes('限制') || userMsg.includes('限制') || rawMsg.includes('restricted');
+  if (isRestricted) {
+    const formattedTitle = userTitle || 'Meta 账户/主页当前被限制执行此操作';
+    const formattedMsg = userMsg || '你的 Facebook 账户或主页当前受 Meta 官方风控限制，无法发布或互动。如果你认为这是误判，请前往 Facebook「账户状态」页面提出申诉。';
+    return {
+      message: `${formattedTitle}：${formattedMsg}`,
+      subcode,
+      code,
+      userTitle: formattedTitle,
+      userMsg: formattedMsg,
+      isRestricted: true
+    };
+  }
+
+  // 2. Token Expired / Invalid Session (code 190, 401)
+  const isTokenExpired = code === 190 || error.response?.status === 401 || rawMsg.includes('Session has expired') || rawMsg.includes('Error validating access token') || rawMsg.includes('Session is invalid');
+  if (isTokenExpired) {
+    return {
+      message: 'Facebook 授权 Token 已过期或失效，请在系统设置中重新授权',
+      subcode,
+      code,
+      userTitle,
+      userMsg,
+      isTokenExpired: true
+    };
+  }
+
+  // 3. User friendly message if provided
+  if (userMsg && userTitle) {
+    return {
+      message: `${userTitle}: ${userMsg}`,
+      subcode,
+      code,
+      userTitle,
+      userMsg
+    };
+  }
+
+  if (userMsg) {
+    return {
+      message: userMsg,
+      subcode,
+      code,
+      userTitle,
+      userMsg
+    };
+  }
+
+  return {
+    message: rawMsg || 'Meta API 接口调用失败',
+    subcode,
+    code,
+    userTitle,
+    userMsg
+  };
+}
+
 export async function getMetaToken(userId?: number | string): Promise<string | null> {
   if (userId) {
     const numUserId = Number(userId);

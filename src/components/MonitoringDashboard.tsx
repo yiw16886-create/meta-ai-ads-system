@@ -45,12 +45,15 @@ export function MonitoringDashboard() {
     setCurrentPage(1);
   }, [searchTerm, statusFilter, hideInactive, sortConfig]);
 
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
   const fetchData = async (forceRefresh = false) => {
     setLoading(true);
+    if (forceRefresh) setIsRefreshing(true);
     setError(null);
     try {
       const res = await axios.get(`/api/monitoring/accounts${forceRefresh ? "?refresh=true" : ""}`, {
-        timeout: 15000
+        timeout: forceRefresh ? 60000 : 15000
       });
       if (typeof res.data === 'string' && res.data.trim().toLowerCase().startsWith('<!doctype html>')) {
         toast.error("系统正在启动或重启，请稍候...");
@@ -69,7 +72,12 @@ export function MonitoringDashboard() {
         hasSpend: uniqueData.filter((a: any) => a.hasSpendLast30Days).length
       });
       if (forceRefresh) {
-        toast.success("同步完成: 已获取 Meta 实时数据并更新数据库");
+        if (res.data?.warning) {
+          toast.warning(res.data.warning);
+        } else {
+          const count = res.data?.syncedCount || uniqueData.length;
+          toast.success(`同步完成: 已成功从 Meta 获取 ${count} 个账户的实时限额与余额`);
+        }
       }
     } catch (e: any) {
       console.error("[Monitoring UI Error]:", e);
@@ -78,6 +86,7 @@ export function MonitoringDashboard() {
       toast.error(errMsg);
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -220,8 +229,8 @@ export function MonitoringDashboard() {
             disabled={loading}
             className="gap-2 border-gray-200 h-10 px-4 font-bold active:scale-95 transition-transform"
           >
-            <RefreshCcw className={cn("w-4 h-4", loading && "animate-spin")} />
-            更新 Meta 实时限额
+            <RefreshCcw className={cn("w-4 h-4", isRefreshing && "animate-spin")} />
+            {isRefreshing ? "正在同步 Meta 实时数据..." : "更新 Meta 实时余额/限额"}
           </Button>
         </div>
       </div>

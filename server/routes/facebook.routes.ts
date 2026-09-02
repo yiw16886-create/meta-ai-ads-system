@@ -40,7 +40,24 @@ router.get("/auth-url", authenticateJWT as any, async (req: AuthenticatedRequest
       { expiresIn: "10m" }
     );
 
-    let authUrl = `https://www.facebook.com/v20.0/dialog/oauth?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=business_management,ads_management,email,public_profile&state=${encodeURIComponent(stateToken)}`;
+    const requestedScopes = [
+      "business_management",
+      "ads_management",
+      "ads_read",
+      "read_insights",
+      "pages_show_list",
+      "pages_read_engagement",
+      "pages_manage_posts",
+      "pages_manage_metadata",
+      "pages_read_user_content",
+      "pages_manage_ads",
+      "pages_manage_engagement",
+      "leads_retrieval",
+      "email",
+      "public_profile"
+    ].join(",");
+
+    let authUrl = `https://www.facebook.com/v20.0/dialog/oauth?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=${requestedScopes}&state=${encodeURIComponent(stateToken)}`;
     if (configId) {
       authUrl += `&config_id=${configId}`;
     }

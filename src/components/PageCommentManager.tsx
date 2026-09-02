@@ -5,7 +5,8 @@ import {
   RefreshCw, Shield, EyeOff, Eye, Trash2, Clock, 
   FileWarning, Search, Image as ImageIcon, 
   Plus, X, Send, MessageSquare, AlertCircle, Sparkles,
-  ThumbsUp, Share2, Smile, Camera
+  ThumbsUp, Share2, Smile, Camera, CheckCircle2, ShieldCheck,
+  ChevronDown, ChevronUp, KeyRound, ExternalLink
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -34,6 +35,19 @@ interface AdPostComment {
   created_time: string;
 }
 
+interface PermissionsStatus {
+  connected: boolean;
+  message?: string;
+  permissions?: Array<{ permission: string; status: string }>;
+  grantedPermissions?: string[];
+  hasPagesShowList?: boolean;
+  hasPagesReadEngagement?: boolean;
+  hasPagesManagePosts?: boolean;
+  pagePermissionsGranted?: boolean;
+  pageCount?: number;
+  samplePages?: string[];
+}
+
 export const PageCommentManager = () => {
   const navigate = useNavigate();
   const [pages, setPages] = useState<FacebookPage[]>([]);
@@ -52,6 +66,11 @@ export const PageCommentManager = () => {
 
   const [authError, setAuthError] = useState(false);
   const [commentActionLoading, setCommentActionLoading] = useState<string | null>(null);
+  
+  // Permissions status inspection
+  const [permStatus, setPermStatus] = useState<PermissionsStatus | null>(null);
+  const [loadingPerms, setLoadingPerms] = useState(false);
+  const [showPermDetails, setShowPermDetails] = useState(false);
 
   // Custom confirmation modal states for running reliably within sandboxed iframes
   const [deleteConfirmPostId, setDeleteConfirmPostId] = useState<string | null>(null);
@@ -67,25 +86,58 @@ export const PageCommentManager = () => {
   const [replyMessage, setReplyMessage] = useState('');
   const [submittingReply, setSubmittingReply] = useState(false);
 
-  const checkOAuthError = (err: any) => {
-    const responseData = err.response?.data;
-    const errorDetail = responseData?.error;
-    const errorMsg = errorDetail?.message || responseData?.message || err.message || '';
-    const errorType = errorDetail?.type || '';
+  // Meta 官方账户/主页受限弹窗 State (Subcode 2424009 / Account Quality 限制)
+  const [metaRestrictionInfo, setMetaRestrictionInfo] = useState<{ title: string; message: string } | null>(null);
 
-    const isOAuth = 
+  const handleApiError = (err: any, actionName = '操作') => {
+    const data = err.response?.data;
+    const errorDetail = data?.details || (typeof data?.error === 'object' ? data.error : null);
+    const subcode = Number(errorDetail?.error_subcode || errorDetail?.code || data?.subcode);
+    const userTitle = errorDetail?.error_user_title || data?.userTitle || '';
+    const userMsg = errorDetail?.error_user_msg || data?.userMsg || '';
+    const mainMsg = data?.message || (typeof data?.error === 'string' ? data.error : '') || err.message || '';
+
+    // 1. Meta 账户或主页操作受限 (Subcode 2424009 / 账户风控)
+    const isRestricted = 
+      data?.isRestricted || 
+      subcode === 2424009 || 
+      userTitle.includes('限制') || 
+      userMsg.includes('限制') || 
+      mainMsg.includes('受限') || 
+      mainMsg.includes('限制');
+
+    if (isRestricted) {
+      const title = userTitle || '你的 Meta 账户或公共主页被限制执行此操作';
+      const msg = userMsg || mainMsg || '你的 Facebook 账户当前受 Meta 官方限制，无法完成此项发布或互动操作。如果你认为这是误判，可通过 Facebook 账户状态页面提出申诉。';
+      setMetaRestrictionInfo({ title, message: msg });
+      toast.error(`⚠️ ${title}`, {
+        description: msg,
+        duration: 8000
+      });
+      return true;
+    }
+
+    // 2. Token 过期 / 授权失效 (Code 190 / 401)
+    const isTokenExpired = 
+      data?.isTokenExpired || 
       err.response?.status === 401 || 
-      errorType === 'OAuthException' || 
-      errorMsg.includes('OAuthException') || 
-      errorMsg.includes('OAuth Exception') ||
-      JSON.stringify(responseData).includes('OAuthException') ||
-      errorMsg.includes('190');
+      subcode === 190 || 
+      mainMsg.includes('Token Expired') || 
+      mainMsg.includes('Session has expired') ||
+      mainMsg.includes('Error validating access token');
 
-    if (isOAuth) {
+    if (isTokenExpired) {
       setAuthError(true);
       return true;
     }
+
+    // 3. 普通错误正常 Toast 提示
+    toast.error(`${actionName}失败: ${mainMsg || '未知异常'}`);
     return false;
+  };
+
+  const checkOAuthError = (err: any) => {
+    return handleApiError(err, '请求');
   };
 
   // 一键物理删除并同步下架 Meta 帖子 (问题二)
@@ -139,10 +191,26 @@ export const PageCommentManager = () => {
     }
   };
 
-  // Fetch Pages
+  // Fetch Pages & Permissions
   useEffect(() => {
     fetchPages();
+    fetchPermissionsStatus();
   }, []);
+
+  const fetchPermissionsStatus = async () => {
+    setLoadingPerms(true);
+    try {
+      const { data } = await axios.get('/api/pages/permissions-status');
+      setPermStatus(data);
+      if (data.connected && data.pagePermissionsGranted) {
+        setAuthError(false);
+      }
+    } catch (e: any) {
+      console.warn('Failed to fetch permissions status:', e);
+    } finally {
+      setLoadingPerms(false);
+    }
+  };
 
   const fetchPages = async () => {
     try {
@@ -174,8 +242,9 @@ export const PageCommentManager = () => {
     try {
       const { data } = await axios.post('/api/pages/sync');
       if (data.success) {
-        toast.success('Facebook 公共主页列表同步完成');
+        toast.success(`Facebook 公共主页同步完成，共抓取 ${data.count || 0} 个主页`);
         await fetchPages();
+        await fetchPermissionsStatus();
       }
     } catch (e: any) {
       if (!checkOAuthError(e)) {
@@ -214,19 +283,19 @@ export const PageCommentManager = () => {
     setSyncingPosts(true);
     setAuthError(false);
     try {
-      const { data } = await axios.post(`/api/pages/${selectedPageId}/fetch-ads`);
+      const { data } = await axios.post(`/api/pages/${selectedPageId}/fetch-posts`);
       if (data.warnings && data.warnings.length > 0) {
-        toast('⚠️ 仅抓取到时间线帖子', {
-          description: `Token 缺少 ads_read 权限，无法获取全量广告帖文。若需获取广告帖，请在系统设置中重新授权。(${data.warnings[0]})`,
-          duration: 8000
+        toast('⚠️ 抓取提示', {
+          description: data.warnings[0],
+          duration: 5000
         });
       } else {
-        toast.success('抓取广告贴完成');
+        toast.success('抓取主页普通贴文完成');
       }
       await fetchPosts(selectedPageId);
     } catch (e: any) {
       if (!checkOAuthError(e)) {
-        toast.error('同步广告贴失败: ' + (e.response?.data?.error || e.message));
+        toast.error('同步主页贴文失败: ' + (e.response?.data?.error || e.message));
       }
     } finally {
       setSyncingPosts(false);
@@ -396,6 +465,44 @@ export const PageCommentManager = () => {
         </div>
       )}
 
+      {/* Meta Account / Page Restriction Modal (Subcode 2424009 / Account Quality 限制) */}
+      {metaRestrictionInfo && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-gray-900/40 backdrop-blur-sm animate-fade-in p-4">
+          <div className="bg-white border border-amber-200 p-7 rounded-2xl shadow-2xl text-center max-w-lg w-full border-t-4 border-t-amber-500 animate-slide-up">
+            <div className="w-14 h-14 rounded-full bg-amber-50 flex items-center justify-center mx-auto mb-4 border border-amber-200">
+              <AlertCircle className="w-7 h-7 text-amber-600" />
+            </div>
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-100/80 text-amber-800 text-[10px] font-bold mb-2">
+              <span>META 官方风控提示 (Subcode 2424009)</span>
+            </div>
+            <h2 className="text-base font-bold text-gray-900 mb-2 tracking-tight">
+              {metaRestrictionInfo.title}
+            </h2>
+            <p className="text-gray-600 text-xs mb-6 leading-relaxed bg-amber-50/50 p-3 rounded-xl border border-amber-150/60 text-left font-sans">
+              {metaRestrictionInfo.message}
+            </p>
+            <div className="flex items-center justify-center gap-3">
+              <button
+                type="button"
+                onClick={() => setMetaRestrictionInfo(null)}
+                className="bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-xs px-4 py-2.5 rounded-lg transition-all active:scale-95 cursor-pointer"
+              >
+                我知道了
+              </button>
+              <a
+                href="https://business.facebook.com/accountquality"
+                target="_blank"
+                rel="noreferrer"
+                className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs px-5 py-2.5 rounded-lg transition-all shadow-md shadow-amber-600/15 active:scale-95 cursor-pointer flex items-center gap-1.5"
+              >
+                <span>前往 Meta 账户状态与申诉中心</span>
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Main Header */}
       <div className="flex-none px-6 py-4.5 border-b border-gray-200 bg-gray-50/75 flex items-center justify-between shadow-sm relative z-10">
         <div className="flex items-center gap-3">
@@ -407,10 +514,114 @@ export const PageCommentManager = () => {
               公共主页管理
               <span className="text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded border border-blue-100 font-mono font-bold">META Cloud API</span>
             </h2>
-            <p className="text-[11px] text-gray-500 mt-0.5">即时监控主页广告帖文并对恶意、负面或灌水评论进行秒级防御与自动审计</p>
+            <p className="text-[11px] text-gray-500 mt-0.5">即时同步公共主页普通贴文与动态，对评论进行秒级防御与自动审计</p>
           </div>
         </div>
+
         <div className="flex items-center gap-3">
+          {/* OAuth Permissions Status Badge */}
+          {permStatus && (
+            <div className="relative">
+              <button
+                onClick={() => setShowPermDetails(!showPermDetails)}
+                className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border font-medium transition-all ${
+                  permStatus.pagePermissionsGranted
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100'
+                    : permStatus.connected
+                    ? 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100'
+                    : 'bg-red-50 border-red-200 text-red-700 hover:bg-red-100'
+                }`}
+                title="点击查看 Meta OAuth 权限详情"
+              >
+                {permStatus.pagePermissionsGranted ? (
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                ) : (
+                  <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
+                )}
+                <span>
+                  {permStatus.pagePermissionsGranted
+                    ? `OAuth 权限已获取 (${permStatus.grantedPermissions?.length || 0}项生效)`
+                    : permStatus.connected
+                    ? '主页权限部分缺失'
+                    : '未绑定 Meta 授权'}
+                </span>
+                {showPermDetails ? (
+                  <ChevronUp className="w-3 h-3 opacity-60" />
+                ) : (
+                  <ChevronDown className="w-3 h-3 opacity-60" />
+                )}
+              </button>
+
+              {/* Permissions Dropdown Details Popover */}
+              {showPermDetails && (
+                <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-xl shadow-xl border border-gray-200 p-4 z-50 animate-in fade-in zoom-in-95 duration-150">
+                  <div className="flex items-center justify-between pb-2 mb-2 border-b border-gray-100">
+                    <span className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
+                      <KeyRound className="w-3.5 h-3.5 text-blue-600" />
+                      Meta OAuth 权限检查清单
+                    </span>
+                    <button
+                      onClick={() => setShowPermDetails(false)}
+                      className="text-gray-400 hover:text-gray-600 text-xs"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  <div className="space-y-1.5 max-h-60 overflow-y-auto custom-scrollbar text-xs">
+                    {[
+                      { key: 'pages_show_list', label: '读取公共主页列表 (pages_show_list)' },
+                      { key: 'pages_read_engagement', label: '读取主页互动及评论 (pages_read_engagement)' },
+                      { key: 'pages_manage_posts', label: '管理主页帖子 (pages_manage_posts)' },
+                      { key: 'pages_manage_metadata', label: '主页元数据管理 (pages_manage_metadata)' },
+                      { key: 'pages_read_user_content', label: '读取用户发帖与评论 (pages_read_user_content)' },
+                      { key: 'pages_manage_ads', label: '管理主页广告 (pages_manage_ads)' },
+                      { key: 'pages_manage_engagement', label: '主页控评互动 (pages_manage_engagement)' },
+                      { key: 'business_management', label: 'Business Manager 管理' },
+                      { key: 'ads_management', label: '广告系列与投放管理' },
+                      { key: 'ads_read', label: '广告数据读取' },
+                      { key: 'read_insights', label: '成效分析与报表读取' }
+                    ].map((p) => {
+                      const isGranted = permStatus.grantedPermissions?.includes(p.key);
+                      return (
+                        <div
+                          key={p.key}
+                          className={`flex items-center justify-between px-2.5 py-1.5 rounded-md ${
+                            isGranted ? 'bg-emerald-50/60 text-emerald-800' : 'bg-gray-50 text-gray-400'
+                          }`}
+                        >
+                          <span className="text-[11px] font-medium truncate">{p.label}</span>
+                          <span
+                            className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                              isGranted
+                                ? 'bg-emerald-100 text-emerald-700'
+                                : 'bg-gray-200 text-gray-500'
+                            }`}
+                          >
+                            {isGranted ? '已授权' : '未授权'}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="mt-3 pt-2 border-t border-gray-100 flex items-center justify-between text-[11px] text-gray-500">
+                    <span>Meta 识别主页数: <strong className="text-gray-800">{permStatus.pageCount || pages.length}</strong> 个</span>
+                    <button
+                      onClick={() => {
+                        setShowPermDetails(false);
+                        navigate('/?tab=settings');
+                      }}
+                      className="text-blue-600 hover:text-blue-700 font-medium flex items-center gap-0.5"
+                    >
+                      重新授权 <ExternalLink className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           <button
             onClick={handleSyncPages}
             disabled={syncingPages}
