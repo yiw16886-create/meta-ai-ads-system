@@ -145,6 +145,60 @@ model DataDeletionRequest {
   @@index([fbUserId, requestedAt])
 }
 
+model McpOAuthAuthorizationRequest {
+  id            String    @id @default(uuid())
+  clientId      String
+  clientName    String?
+  redirectUri   String
+  resource      String
+  scope         String
+  state         String?
+  codeChallenge String
+  expiresAt     DateTime
+  consumedAt    DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([expiresAt])
+}
+
+model McpOAuthAuthorizationCode {
+  id            String    @id @default(uuid())
+  codeHash      String    @unique
+  clientId      String
+  redirectUri   String
+  resource      String
+  scope         String
+  codeChallenge String
+  userId        Int
+  orgId         String?
+  expiresAt     DateTime
+  consumedAt    DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([expiresAt])
+  @@index([userId, createdAt])
+}
+
+model McpOAuthToken {
+  id         String    @id @default(uuid())
+  tokenHash  String    @unique
+  tokenType  String
+  familyId   String
+  clientId   String
+  resource   String
+  scope      String
+  userId     Int
+  orgId      String?
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  replacedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([familyId])
+  @@index([userId, createdAt])
+  @@index([expiresAt])
+}
+
 model Invitation {
   id        Int      @id @default(autoincrement())
   email     String   @unique

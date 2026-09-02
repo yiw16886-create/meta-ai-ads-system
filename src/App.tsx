@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { lazy, Suspense, useState, useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { Dashboard } from "./components/Dashboard";
 import { LoginPage } from "./components/LoginPage";
@@ -11,6 +11,8 @@ import { DataDeletionPage } from "./components/DataDeletionPage";
 import { DeletionStatusPage } from "./components/DeletionStatusPage";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Toaster } from "sonner";
+
+const McpOAuthConsentPage = lazy(() => import("./features/page-center-v2/McpOAuthConsentPage"));
 
 function AppContent({ isAuthenticated, setIsAuthenticated, checking, setChecking, handleLogin, handleLogout }: any) {
   const location = useLocation();
@@ -67,6 +69,7 @@ function AppContent({ isAuthenticated, setIsAuthenticated, checking, setChecking
                 <Route path="/account/:accountId" element={<AccountDetailsPage onLogout={handleLogout} />} />
                 <Route path="/store/new" element={<StoreDetailsPage onLogout={handleLogout} isNew={true} />} />
                 <Route path="/store/:storeId" element={<StoreDetailsPage onLogout={handleLogout} />} />
+                <Route path="/mcp/authorize" element={<Suspense fallback={<div className="p-8">正在加载授权页面…</div>}><McpOAuthConsentPage /></Suspense>} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
               <FloatingAIChat />

@@ -5,6 +5,11 @@ import {
   type PageCenterV2AccessDecision,
   type PageCenterV2Environment,
 } from "./access.js";
+import { getMcpOAuthIssuer } from "../mcp-oauth/config.js";
+import {
+  decideAuthorizationRequest,
+  getAuthorizationRequest,
+} from "../mcp-oauth/oauth-service.js";
 
 type PageCenterV2Request = AuthenticatedRequest & {
   pageCenterV2Access?: PageCenterV2AccessDecision;
@@ -17,7 +22,7 @@ function noStore(res: Response) {
   res.setHeader("Cache-Control", "private, no-store");
 }
 
-function requirePageCenterV2(environment: PageCenterV2Environment) {
+export function requirePageCenterV2(environment: PageCenterV2Environment) {
   return (req: PageCenterV2Request, res: Response, next: NextFunction) => {
     noStore(res);
 
@@ -96,9 +101,9 @@ export function createPageCenterV2Router(
           {
             id: "oauth",
             title: "OAuth 连接",
-            description: "网站用户与 MCP 身份连接将在阶段 3 接入。",
+            description: "网站用户可通过 OAuth 2.1 + PKCE 授权 MCP 客户端。",
             phase: 3,
-            status: "planned",
+            status: "ready",
           },
           {
             id: "pages",
@@ -116,7 +121,7 @@ export function createPageCenterV2Router(
           },
         ],
         capabilities: {
-          connectOAuth: false,
+          connectOAuth: true,
           listPages: false,
           readPosts: false,
           publishPosts: false,
@@ -124,6 +129,49 @@ export function createPageCenterV2Router(
         },
       },
     });
+  });
+
+  router.get("/oauth/requests/:id", requirePageCenterV2(environment), async (req: PageCenterV2Request, res) => {
+    try {
+      const request = await getAuthorizationRequest(req.params.id);
+      return res.json({
+        success: true,
+        data: {
+          id: request.id,
+          clientName: request.clientName,
+          scope: String(request.scope).split(/\s+/).filter(Boolean),
+          resource: request.resource,
+          expiresAt: request.expiresAt,
+        },
+      });
+    } catch {
+      return res.status(404).json({
+        success: false,
+        code: "MCP_OAUTH_REQUEST_NOT_FOUND",
+        message: "授权请求不存在、已过期或已处理。",
+      });
+    }
+  });
+
+  router.post("/oauth/requests/:id/decision", requirePageCenterV2(environment), async (req: PageCenterV2Request, res) => {
+    if (typeof req.body?.approved !== "boolean") {
+      return res.status(400).json({ success: false, code: "MCP_OAUTH_INVALID_DECISION" });
+    }
+    try {
+      const redirectUrl = await decideAuthorizationRequest(
+        req.params.id,
+        req.user!,
+        req.body.approved,
+        getMcpOAuthIssuer(req, environment),
+      );
+      return res.json({ success: true, data: { redirectUrl } });
+    } catch {
+      return res.status(409).json({
+        success: false,
+        code: "MCP_OAUTH_REQUEST_ALREADY_HANDLED",
+        message: "授权请求已过期或已处理，请从客户端重新发起连接。",
+      });
+    }
   });
 
   return router;
