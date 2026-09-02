@@ -6,12 +6,39 @@ import { z } from "zod";
 import prisma from "../db/index.js";
 import { getMetaToken } from "./utils.js";
 import { MetaPageManagerService } from "./services/metaPageManager.service.js";
+import {
+  legacyMcpWritesEnabled,
+  validateMcpAuthHeaders,
+  type McpAuthDecision,
+} from "./security/mcp-auth.js";
 import axios from "axios";
 
 // Active SSE Transports Map
 const sseTransports = new Map<string, { transport: SSEServerTransport; server: McpServer }>();
 
-export function createUnifiedMcpServer(): McpServer {
+type UnifiedMcpServerOptions = {
+  legacyWritesEnabled?: boolean;
+};
+
+function legacyWriteBlocked(toolName: string) {
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: false,
+          code: "LEGACY_MCP_WRITES_DISABLED",
+          message: `旧版 MCP 写操作 ${toolName} 在迁移期间已停用，请改用 Page Center V2。`,
+        }),
+      },
+    ],
+    isError: true,
+  };
+}
+
+export function createUnifiedMcpServer(options: UnifiedMcpServerOptions = {}): McpServer {
+  const allowLegacyWrites =
+    options.legacyWritesEnabled ?? legacyMcpWritesEnabled();
   const server = new McpServer({
     name: "meta-ads-and-page-manager",
     version: "3.0.0",
@@ -103,6 +130,10 @@ export function createUnifiedMcpServer(): McpServer {
       imageUrl: z.string().optional().describe("可选的图片公网 URL 地址"),
     },
     async ({ pageId, message, imageUrl }) => {
+      if (!allowLegacyWrites) {
+        return legacyWriteBlocked("publish_page_post");
+      }
+
       try {
         const page = await prisma.facebookPage.findUnique({ where: { id: pageId } });
         if (!page || !page.access_token) {
@@ -205,6 +236,10 @@ export function createUnifiedMcpServer(): McpServer {
       isHidden: z.boolean().describe("true 为隐藏，false 为显示"),
     },
     async ({ commentId, isHidden }) => {
+      if (!allowLegacyWrites) {
+        return legacyWriteBlocked("toggle_hide_comment");
+      }
+
       try {
         const comment = await prisma.adPostComment.findUnique({
           where: { id: commentId },
@@ -296,31 +331,32 @@ mcpRouter.get("/.well-known/openid-configuration", (req: Request, res: Response)
   });
 });
 
-// 2. Open API Key / Auth Validator Helper
-function validateMcpAuth(req: Request): boolean {
-  const mcpKey = process.env.MCP_API_KEY;
-  if (!mcpKey || mcpKey.trim() === "") {
-    // If no MCP_API_KEY configured in server env, allow connection
-    return true;
-  }
-  const authHeader = req.headers.authorization || "";
-  const customHeader = req.headers["x-api-key"] as string || "";
-  const token = authHeader.startsWith("Bearer ") ? authHeader.substring(7).trim() : authHeader.trim();
+// 2. Stage-1 service authentication for the legacy MCP endpoint.
+function rejectMcpAuth(res: Response, decision: McpAuthDecision, requestId: unknown) {
+  if (!("reason" in decision)) return false;
 
-  if (token === mcpKey || customHeader === mcpKey) {
-    return true;
-  }
-  return true; // Allow seamless connection by default for user convenience
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("WWW-Authenticate", 'Bearer realm="meta-ads-and-page-manager"');
+
+  const missingConfiguration = decision.reason === "missing_configuration";
+  res.status(missingConfiguration ? 503 : 401).json({
+    jsonrpc: "2.0",
+    error: {
+      code: missingConfiguration ? -32002 : -32001,
+      message: missingConfiguration
+        ? "MCP authentication is not configured"
+        : "Unauthorized: valid MCP credentials are required",
+    },
+    id: requestId ?? null,
+  });
+  return true;
 }
 
 // 3. MCP Streamable HTTP Endpoint (POST /mcp or POST /api/mcp)
 const handleStreamableMcp = async (req: Request, res: Response) => {
-  if (!validateMcpAuth(req)) {
-    return res.status(401).json({
-      jsonrpc: "2.0",
-      error: { code: -32000, message: "Unauthorized: Invalid API Key" },
-      id: null,
-    });
+  const authDecision = validateMcpAuthHeaders(req.headers);
+  if (rejectMcpAuth(res, authDecision, req.body?.id)) {
+    return;
   }
 
   // If body is empty or not JSON-RPC (e.g., simple GET or empty POST)
@@ -381,8 +417,9 @@ const handleSseMcp = async (req: Request, res: Response) => {
     });
   }
 
-  if (!validateMcpAuth(req)) {
-    return res.status(401).send("Unauthorized");
+  const authDecision = validateMcpAuthHeaders(req.headers);
+  if (rejectMcpAuth(res, authDecision, null)) {
+    return;
   }
 
   try {
@@ -408,6 +445,11 @@ const handleSseMcp = async (req: Request, res: Response) => {
 
 // 5. MCP Message POST for SSE
 const handleSseMessage = async (req: Request, res: Response) => {
+  const authDecision = validateMcpAuthHeaders(req.headers);
+  if (rejectMcpAuth(res, authDecision, req.body?.id)) {
+    return;
+  }
+
   const sessionId = req.query.sessionId as string;
   const session = sseTransports.get(sessionId);
 
