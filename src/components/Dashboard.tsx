@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { lazy, Suspense, useState, useEffect, useMemo } from "react";
 import { format, subDays } from "date-fns";
 import axios from "axios";
 import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
@@ -34,7 +34,8 @@ import {
   ChevronDown,
   Building2,
   Edit3,
-  Megaphone
+  Megaphone,
+  PanelsTopLeft,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
@@ -75,6 +76,35 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Calendar } from "@/components/ui/calendar";
 import { cn } from "@/lib/utils";
+import { usePageCenterV2Access } from "../features/page-center-v2/usePageCenterV2Access";
+
+const PageCenterV2 = lazy(() => import("../features/page-center-v2/PageCenterV2"));
+
+function PageCenterV2Loading() {
+  return (
+    <div
+      aria-label="正在加载公共主页中心"
+      className="flex h-full items-center justify-center"
+      role="status"
+    >
+      <div className="h-10 w-10 animate-spin rounded-full border-4 border-blue-100 border-t-meta-blue" />
+    </div>
+  );
+}
+
+function PageCenterV2Unavailable() {
+  return (
+    <div className="flex h-full items-center justify-center p-6">
+      <div className="max-w-md rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-sm">
+        <Flag aria-hidden="true" className="mx-auto h-8 w-8 text-slate-400" />
+        <h1 className="mt-3 text-lg font-semibold text-slate-900">公共主页中心未向当前用户开放</h1>
+        <p className="mt-2 text-sm leading-6 text-slate-500">
+          当前用户保持在 A 组，可继续使用原有公共主页管理功能。
+        </p>
+      </div>
+    </div>
+  );
+}
 
 export interface AdInsight {
   id: number;
@@ -138,16 +168,18 @@ export function Dashboard({ onLogout }: DashboardProps) {
     | "product_intelligence"
     | "creative_intelligence"
     | "pages"
+    | "page_center_v2"
     | "bms"
     | "ad_operations"
     || "overview";
 
   const [currentTab, setCurrentTab] = useState<
-    "dashboard" | "campaign_structure" | "audience_analysis" | "creative_analysis" | "store_data" | "settings" | "category" | "accounts" | "stores" | "users" | "monitoring" | "overview" | "product_intelligence" | "creative_intelligence" | "pages" | "bms" | "ad_operations"
+    "dashboard" | "campaign_structure" | "audience_analysis" | "creative_analysis" | "store_data" | "settings" | "category" | "accounts" | "stores" | "users" | "monitoring" | "overview" | "product_intelligence" | "creative_intelligence" | "pages" | "page_center_v2" | "bms" | "ad_operations"
   >(initialTab);
 
   const currentUser = JSON.parse(localStorage.getItem("user") || "{}");
   const isAdmin = currentUser.role === "admin" || currentUser.role === "SUPER_ADMIN";
+  const pageCenterV2Access = usePageCenterV2Access();
   
   const [settingsExpanded, setSettingsExpanded] = useState<boolean>(
     initialTab === "settings" || initialTab === "users"
@@ -633,7 +665,10 @@ export function Dashboard({ onLogout }: DashboardProps) {
             { id: "bms", icon: Building2, label: "BM 批量管理" },
             { id: "stores", icon: Store, label: "店铺管理" },
             { id: "pages", icon: Flag, label: "公共主页管理" },
-          ].filter(Boolean).map((item: any) => (
+            ...(pageCenterV2Access.available
+              ? [{ id: "page_center_v2", icon: PanelsTopLeft, label: "公共主页中心 Beta" }]
+              : []),
+          ].map((item: any) => (
             <button
               key={item.id}
               onClick={() => navigate(`/?tab=${item.id}&from=${format(startDate, "yyyy-MM-dd")}&to=${format(endDate, "yyyy-MM-dd")}`)}
@@ -1145,6 +1180,16 @@ export function Dashboard({ onLogout }: DashboardProps) {
           <BusinessManagerDashboard />
         ) : currentTab === "pages" ? (
           <PageCommentManager />
+        ) : currentTab === "page_center_v2" ? (
+          pageCenterV2Access.isLoading ? (
+            <PageCenterV2Loading />
+          ) : pageCenterV2Access.available ? (
+            <Suspense fallback={<PageCenterV2Loading />}>
+              <PageCenterV2 />
+            </Suspense>
+          ) : (
+            <PageCenterV2Unavailable />
+          )
         ) : currentTab === "monitoring" ? (
           <MonitoringDashboard />
         ) : currentTab === "accounts" ? (

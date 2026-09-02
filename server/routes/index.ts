@@ -19,6 +19,7 @@ import metaRoutes from "./meta.routes.js";
 import dashboardRoutes from "./dashboard.routes.js";
 import adOperationsRoutes from "./adOperations.routes.js";
 import webhookRoutes from "./webhook.routes.js";
+import pageCenterV2Routes from "../features/page-center-v2/page-center-v2.routes.js";
 
 const routes = Router();
 
@@ -89,6 +90,7 @@ routes.use("/settings", settingsRoutes);
 routes.use("/mappings", mappingsRoutes);
 routes.use("/monitoring", monitoringRoutes);
 routes.use("/pages", pageManageRoutes);
+routes.use("/page-center-v2", pageCenterV2Routes);
 routes.use("/facebook", facebookRoutes);
 routes.use("/admin/settings", adminSettingsRoutes);
 routes.use("/meta", metaRoutes);
