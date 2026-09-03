@@ -64,10 +64,14 @@ routes.use((req, res, next) => {
   const isPublicDeletionStatus =
     reqPath.startsWith("/auth/facebook/deletion-status/") ||
     cleanOriginalUrl.startsWith("/api/auth/facebook/deletion-status/");
+  const isPublicPageCenterMetaCallback =
+    reqPath === "/page-center-v2/meta/callback" ||
+    cleanOriginalUrl === "/api/page-center-v2/meta/callback";
 
   if (
     isPublicDeletionCallback ||
     isPublicDeletionStatus ||
+    isPublicPageCenterMetaCallback ||
     publicPaths.some(path => reqPath.startsWith(path) || originalUrl.startsWith(path))
   ) {
     return next();
