@@ -113,7 +113,7 @@ test("the overview endpoint rejects authenticated cohort A users", async () => {
   }
 });
 
-test("cohort B keeps page writes disabled while exposing the Stage 3 OAuth connection", async () => {
+test("cohort B reports the current staged capabilities without changing its isolated route", async () => {
   const { server, baseUrl } = await startRouter(
     {
       PAGE_CENTER_V2_ENABLED: "true",
@@ -128,12 +128,12 @@ test("cohort B keeps page writes disabled while exposing the Stage 3 OAuth conne
 
     assert.equal(response.status, 200);
     assert.equal(body.data.module, "page-center-v2");
-    assert.equal(body.data.readOnly, true);
+    assert.equal(body.data.readOnly, false);
     assert.equal(body.data.cohort, "B");
     assert.equal(body.data.sections.length, 3);
     assert.equal(body.data.capabilities.connectOAuth, true);
-    assert.equal(body.data.capabilities.publishPosts, false);
-    assert.equal(body.data.capabilities.manageComments, false);
+    assert.equal(body.data.capabilities.publishPosts, true);
+    assert.equal(body.data.capabilities.manageComments, true);
   } finally {
     await stopServer(server);
   }

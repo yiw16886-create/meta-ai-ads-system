@@ -253,6 +253,25 @@ model PageCenterAuthorizedPage {
   @@index([orgId])
 }
 
+model PageCenterActionReceipt {
+  id             String   @id @default(uuid())
+  userId         Int
+  orgId          String?
+  action         String
+  pageId         String
+  idempotencyKey String
+  requestHash    String
+  status         String   @default("PENDING")
+  resultJson     Json?
+  errorMessage   String?  @db.Text
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([userId, action, idempotencyKey])
+  @@index([userId, createdAt])
+  @@index([orgId, createdAt])
+}
+
 model Invitation {
   id        Int      @id @default(autoincrement())
   email     String   @unique
