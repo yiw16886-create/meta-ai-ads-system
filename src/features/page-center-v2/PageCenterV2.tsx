@@ -1,18 +1,26 @@
+import { useEffect, useState } from "react";
 import useSWR from "swr";
 import {
   CheckCircle2,
+  ExternalLink,
   Flag,
   KeyRound,
   LockKeyhole,
   MessageSquare,
   ShieldCheck,
+  Unplug,
 } from "lucide-react";
 import {
+  createPageCenterMetaConnection,
+  disconnectPageCenterMetaConnection,
+  fetchPageCenterMetaStatus,
   fetchPageCenterV2Overview,
+  verifyPageCenterMetaConnection,
   type PageCenterV2Section,
 } from "./api";
 
 const OVERVIEW_KEY = "/api/page-center-v2/overview";
+const META_STATUS_KEY = "/api/page-center-v2/meta/status";
 
 const SECTION_ICONS = {
   oauth: KeyRound,
@@ -71,7 +79,17 @@ function ErrorState() {
   );
 }
 
+function PermissionBadge({ allowed, children }: { allowed: boolean; children: string }) {
+  return (
+    <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${allowed ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>
+      {allowed ? "已授权" : "未授权"} · {children}
+    </span>
+  );
+}
+
 export default function PageCenterV2() {
+  const [action, setAction] = useState<"connect" | "verify" | "disconnect" | null>(null);
+  const [actionError, setActionError] = useState("");
   const { data, error, isLoading } = useSWR(
     OVERVIEW_KEY,
     fetchPageCenterV2Overview,
@@ -80,6 +98,69 @@ export default function PageCenterV2() {
       shouldRetryOnError: false,
     },
   );
+  const {
+    data: metaStatus,
+    mutate: mutateMetaStatus,
+    isLoading: isMetaStatusLoading,
+  } = useSWR(META_STATUS_KEY, fetchPageCenterMetaStatus, {
+    revalidateOnFocus: false,
+    shouldRetryOnError: false,
+  });
+
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.type === "PAGE_CENTER_META_CONNECTED") {
+        setActionError("");
+        void mutateMetaStatus();
+      } else if (event.data?.type === "PAGE_CENTER_META_ERROR") {
+        setActionError("Meta 授权未完成，请重新尝试。");
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [mutateMetaStatus]);
+
+  async function connectMeta() {
+    setAction("connect");
+    setActionError("");
+    try {
+      const url = await createPageCenterMetaConnection();
+      const popup = window.open(url, "page-center-meta-oauth", "popup,width=640,height=760");
+      if (!popup) setActionError("浏览器阻止了授权窗口，请允许本站弹窗后重试。");
+    } catch {
+      setActionError("无法启动 Meta 授权，请检查服务端配置。");
+    } finally {
+      setAction(null);
+    }
+  }
+
+  async function verifyMeta() {
+    setAction("verify");
+    setActionError("");
+    try {
+      await verifyPageCenterMetaConnection();
+      await mutateMetaStatus();
+    } catch {
+      setActionError("权限校验失败或授权已失效，请重新授权。");
+    } finally {
+      setAction(null);
+    }
+  }
+
+  async function disconnectMeta() {
+    if (!window.confirm("仅断开 Page Center V2 的 Meta 授权，是否继续？")) return;
+    setAction("disconnect");
+    setActionError("");
+    try {
+      await disconnectPageCenterMetaConnection();
+      await mutateMetaStatus();
+    } catch {
+      setActionError("断开失败，请稍后重试。");
+    } finally {
+      setAction(null);
+    }
+  }
 
   if (isLoading) return <LoadingState />;
   if (error || !data?.data) return <ErrorState />;
@@ -103,8 +184,8 @@ export default function PageCenterV2() {
               公共主页中心
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300 sm:text-base">
-              当前为只读模块骨架。OAuth、主页授权和 MCP 工具将按阶段独立接入，
-              不复用旧页面的写操作入口。
+              Meta OAuth 与用户级主页授权已独立接入；当前只展示授权结果，
+              发帖与评论写操作仍保持关闭。
             </p>
           </div>
           <div className="rounded-2xl border border-white/10 bg-white/5 px-5 py-4 backdrop-blur-sm">
@@ -117,6 +198,62 @@ export default function PageCenterV2() {
             </div>
           </div>
         </div>
+      </section>
+
+      <section aria-labelledby="meta-connection" className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+          <div>
+            <h2 id="meta-connection" className="text-lg font-semibold text-slate-900">Meta 主页授权</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              {isMetaStatusLoading
+                ? "正在读取独立授权状态…"
+                : metaStatus?.connected
+                  ? `已连接${metaStatus.facebookUserName ? ` · ${metaStatus.facebookUserName}` : ""}`
+                  : "尚未连接 Meta 个人账号"}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              className="inline-flex items-center gap-2 rounded-xl bg-meta-blue px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+              disabled={action !== null}
+              onClick={() => void connectMeta()}
+              type="button"
+            >
+              <ExternalLink aria-hidden="true" className="h-4 w-4" />
+              {metaStatus?.connected ? "重新授权" : "连接 Meta"}
+            </button>
+            {metaStatus?.connected ? (
+              <>
+                <button className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-50" disabled={action !== null} onClick={() => void verifyMeta()} type="button">
+                  重新校验
+                </button>
+                <button className="inline-flex items-center gap-2 rounded-xl border border-rose-200 px-4 py-2 text-sm font-medium text-rose-700 disabled:opacity-50" disabled={action !== null} onClick={() => void disconnectMeta()} type="button">
+                  <Unplug aria-hidden="true" className="h-4 w-4" />断开
+                </button>
+              </>
+            ) : null}
+          </div>
+        </div>
+        {actionError ? <p className="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800" role="alert">{actionError}</p> : null}
+        {metaStatus?.connected ? (
+          <div className="mt-5 grid gap-3">
+            {metaStatus.pages.length > 0 ? metaStatus.pages.map((page) => (
+              <article className="rounded-xl border border-slate-100 bg-slate-50 p-4" key={page.pageId}>
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <h3 className="font-semibold text-slate-900">{page.pageName}</h3>
+                    <p className="mt-1 text-xs text-slate-500">{page.category || "Meta 公共主页"} · ID {page.pageId}</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <PermissionBadge allowed={page.canRead}>读取</PermissionBadge>
+                    <PermissionBadge allowed={page.canPublish}>发帖</PermissionBadge>
+                    <PermissionBadge allowed={page.canManageComments}>评论</PermissionBadge>
+                  </div>
+                </div>
+              </article>
+            )) : <p className="rounded-xl bg-amber-50 p-4 text-sm text-amber-800">当前授权未返回可管理的公共主页，请检查 Meta 主页角色和 pages_show_list 权限。</p>}
+          </div>
+        ) : null}
       </section>
 
       <section aria-labelledby="page-center-roadmap" className="mt-6">

@@ -26,7 +26,7 @@ export type PageCenterV2OverviewResponse = {
     module: "page-center-v2";
     contractVersion: string;
     cohort: "B";
-    mode: "skeleton";
+    mode: "authorization";
     readOnly: true;
     sections: PageCenterV2Section[];
     capabilities: {
@@ -74,4 +74,50 @@ export async function fetchPageCenterV2Overview() {
     "/api/page-center-v2/overview",
   );
   return response.data;
+}
+
+export type PageCenterAuthorizedPage = {
+  pageId: string;
+  pageName: string;
+  category: string | null;
+  tasks: string[];
+  canRead: boolean;
+  canPublish: boolean;
+  canManageComments: boolean;
+  status: string;
+  lastVerifiedAt: string | null;
+};
+
+export type PageCenterMetaStatus = {
+  connected: boolean;
+  facebookUserName: string | null;
+  grantedScopes: string[];
+  tokenExpiresAt: string | null;
+  lastVerifiedAt: string | null;
+  pages: PageCenterAuthorizedPage[];
+};
+
+export async function fetchPageCenterMetaStatus() {
+  const response = await axios.get<{ success: true; data: PageCenterMetaStatus }>(
+    "/api/page-center-v2/meta/status",
+  );
+  return response.data.data;
+}
+
+export async function createPageCenterMetaConnection() {
+  const response = await axios.post<{ success: true; data: { url: string } }>(
+    "/api/page-center-v2/meta/connect",
+  );
+  return response.data.data.url;
+}
+
+export async function verifyPageCenterMetaConnection() {
+  const response = await axios.post<{ success: true; data: PageCenterMetaStatus }>(
+    "/api/page-center-v2/meta/verify",
+  );
+  return response.data.data;
+}
+
+export async function disconnectPageCenterMetaConnection() {
+  await axios.post("/api/page-center-v2/meta/disconnect");
 }

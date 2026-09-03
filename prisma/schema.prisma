@@ -199,6 +199,60 @@ model McpOAuthToken {
   @@index([expiresAt])
 }
 
+model PageCenterMetaOAuthState {
+  id         String    @id @default(uuid())
+  stateHash  String    @unique
+  userId     Int
+  orgId      String?
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId, createdAt])
+  @@index([expiresAt])
+}
+
+model PageCenterMetaAuthorization {
+  id                  String    @id @default(uuid())
+  userId              Int       @unique
+  orgId               String?
+  facebookUserId      String
+  facebookUserName    String?
+  userTokenCiphertext String    @db.Text
+  grantedScopes       String
+  status              String    @default("ACTIVE")
+  tokenExpiresAt      DateTime?
+  authorizedAt        DateTime  @default(now())
+  lastVerifiedAt      DateTime?
+  updatedAt           DateTime  @updatedAt
+
+  @@index([orgId])
+  @@index([status])
+}
+
+model PageCenterAuthorizedPage {
+  id                  String    @id @default(uuid())
+  userId              Int
+  orgId               String?
+  pageId              String
+  pageName            String
+  category            String?
+  tasks               String
+  pageTokenCiphertext String    @db.Text
+  canRead             Boolean   @default(false)
+  canPublish          Boolean   @default(false)
+  canManageComments   Boolean   @default(false)
+  status              String    @default("ACTIVE")
+  tokenExpiresAt      DateTime?
+  authorizedAt        DateTime  @default(now())
+  lastVerifiedAt      DateTime?
+  updatedAt           DateTime  @updatedAt
+
+  @@unique([userId, pageId])
+  @@index([userId, status])
+  @@index([orgId])
+}
+
 model Invitation {
   id        Int      @id @default(autoincrement())
   email     String   @unique
