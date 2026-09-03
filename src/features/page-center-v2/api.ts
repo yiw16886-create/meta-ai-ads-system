@@ -76,6 +76,28 @@ export async function fetchPageCenterV2Overview() {
   return response.data;
 }
 
+export type PageCenterReadiness = {
+  ready: boolean;
+  checks: Array<{
+    id: string;
+    label: string;
+    ready: boolean;
+    code: string;
+  }>;
+  externalChecks: Array<{
+    id: string;
+    label: string;
+    status: "manual";
+  }>;
+};
+
+export async function fetchPageCenterReadiness() {
+  const response = await axios.get<{ success: true; data: PageCenterReadiness }>(
+    "/api/page-center-v2/readiness",
+  );
+  return response.data.data;
+}
+
 export type PageCenterAuthorizedPage = {
   pageId: string;
   pageName: string;
