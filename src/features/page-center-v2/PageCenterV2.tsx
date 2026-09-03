@@ -46,8 +46,11 @@ function SectionCard({ section }: { section: PageCenterV2Section }) {
         {section.description}
       </p>
       <div className="mt-5 flex items-center gap-2 border-t border-slate-100 pt-4 text-xs font-medium text-slate-400">
-        <LockKeyhole aria-hidden="true" className="h-4 w-4" />
-        当前不可执行写操作
+        {section.status === "ready" ? (
+          <><CheckCircle2 aria-hidden="true" className="h-4 w-4 text-emerald-500" />阶段能力已接入</>
+        ) : (
+          <><LockKeyhole aria-hidden="true" className="h-4 w-4" />等待后续阶段</>
+        )}
       </div>
     </article>
   );
@@ -184,8 +187,8 @@ export default function PageCenterV2() {
               公共主页中心
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300 sm:text-base">
-              Meta OAuth 与用户级主页授权已独立接入；当前只展示授权结果，
-              发帖与评论写操作仍保持关闭。
+              Meta OAuth、主页读取与受控写入工具已独立接入；发布、回复、
+              控评和删除均要求 MCP 写作用域、明确确认与幂等键。
             </p>
           </div>
           <div className="rounded-2xl border border-white/10 bg-white/5 px-5 py-4 backdrop-blur-sm">
@@ -193,7 +196,7 @@ export default function PageCenterV2() {
               <ShieldCheck aria-hidden="true" className="h-8 w-8 text-emerald-300" />
               <div>
                 <p className="text-xs text-slate-400">当前模式</p>
-                <p className="mt-1 font-semibold">隔离 · 只读 · 可回滚</p>
+                <p className="mt-1 font-semibold">隔离 · 确认 · 可审计</p>
               </div>
             </div>
           </div>

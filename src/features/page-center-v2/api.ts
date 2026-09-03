@@ -26,8 +26,8 @@ export type PageCenterV2OverviewResponse = {
     module: "page-center-v2";
     contractVersion: string;
     cohort: "B";
-    mode: "authorization";
-    readOnly: true;
+    mode: "tools";
+    readOnly: false;
     sections: PageCenterV2Section[];
     capabilities: {
       connectOAuth: boolean;

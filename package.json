@@ -16,6 +16,7 @@
     "test:stage2": "node --import tsx --test tests/stage2/*.test.ts",
     "test:stage3": "node --import tsx --test tests/stage3/*.test.ts",
     "test:stage4": "node --import tsx --test tests/stage4/*.test.ts",
+    "test:stage5": "node --import tsx --test tests/stage5/*.test.ts",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

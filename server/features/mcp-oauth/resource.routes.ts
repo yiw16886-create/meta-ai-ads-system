@@ -1,8 +1,9 @@
 import { Router, type Response } from "express";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { getMcpOAuthIssuer, getMcpResource, MCP_OAUTH_SCOPES } from "./config.js";
 import { validateAccessToken } from "./oauth-service.js";
+import { createPageCenterMcpServer } from "../page-center-v2/tools/register-tools.js";
+import { requireCurrentPageCenterActor } from "../page-center-v2/tools/tool-security.js";
 
 function bearerToken(value: string | undefined) {
   return value?.startsWith("Bearer ") ? value.slice(7).trim() : "";
@@ -38,18 +39,30 @@ export function createMcpOAuthResourceRouter(environment = process.env) {
       });
     }
 
+    try {
+      await requireCurrentPageCenterActor(token, environment);
+    } catch {
+      res.setHeader("Cache-Control", "no-store");
+      return res.status(403).json({
+        jsonrpc: "2.0",
+        error: { code: -32003, message: "Page Center access is no longer available" },
+        id: req.body?.id ?? null,
+      });
+    }
+    res.setHeader("Cache-Control", "no-store");
+
     if (req.method === "GET" || !req.body?.method) {
       return res.json({
         name: "page-center-v2",
-        version: "3.0.0",
+        version: "5.0.0",
         status: "ready",
-        mode: "oauth-skeleton",
+        mode: "page-tools",
       });
     }
 
     try {
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-      const server = new McpServer({ name: "page-center-v2", version: "3.0.0" });
+      const server = createPageCenterMcpServer(token, environment);
       await server.connect(transport);
       await transport.handleRequest(req, res, req.body);
       res.on("close", () => {

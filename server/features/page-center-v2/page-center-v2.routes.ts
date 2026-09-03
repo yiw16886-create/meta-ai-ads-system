@@ -16,7 +16,7 @@ import {
 import { createPageCenterMetaRouter } from "./meta-oauth/meta.routes.js";
 
 const MODULE_ID = "page-center-v2";
-const CONTRACT_VERSION = "2026-09-03.stage-4";
+const CONTRACT_VERSION = "2026-09-03.stage-5";
 
 export function createPageCenterV2Router(
   environment: PageCenterV2Environment = process.env,
@@ -58,8 +58,8 @@ export function createPageCenterV2Router(
         module: MODULE_ID,
         contractVersion: CONTRACT_VERSION,
         cohort: req.pageCenterV2Access?.cohort || "B",
-        mode: "authorization",
-        readOnly: true,
+        mode: "tools",
+        readOnly: false,
         sections: [
           {
             id: "oauth",
@@ -78,17 +78,17 @@ export function createPageCenterV2Router(
           {
             id: "tools",
             title: "主页工具",
-            description: "读取、发帖和评论工具将在阶段 5 独立接入。",
+            description: "主页读取、发帖、评论和删除 MCP 工具已受控接入。",
             phase: 5,
-            status: "planned",
+            status: "ready",
           },
         ],
         capabilities: {
           connectOAuth: true,
           listPages: true,
-          readPosts: false,
-          publishPosts: false,
-          manageComments: false,
+          readPosts: true,
+          publishPosts: true,
+          manageComments: true,
         },
       },
     });
