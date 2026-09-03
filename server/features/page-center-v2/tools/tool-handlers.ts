@@ -1,4 +1,5 @@
 import { getMetaAuthorizationStatus } from "../meta-oauth/meta-service.js";
+import { getPageCenterGraphVersion } from "../meta-oauth/config.js";
 import { MetaPagesClient } from "./meta-pages-client.js";
 import {
   assertCommentBelongsToPage,
@@ -29,7 +30,7 @@ export function createPageCenterToolHandlers(
   } = {},
 ) {
   const clientFactory = dependencies.clientFactory || ((pageToken: string) =>
-    new MetaPagesClient(pageToken, environment.META_GRAPH_API_VERSION || "v20.0"));
+    new MetaPagesClient(pageToken, getPageCenterGraphVersion(environment)));
 
   async function actor() {
     return requireCurrentPageCenterActor(identity, environment);

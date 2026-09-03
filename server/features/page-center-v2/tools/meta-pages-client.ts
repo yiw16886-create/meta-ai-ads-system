@@ -28,7 +28,7 @@ export class PageCenterGraphError extends Error {
 export class MetaPagesClient {
   constructor(
     private readonly pageToken: string,
-    private readonly graphVersion = "v20.0",
+    private readonly graphVersion: string,
     private readonly request: typeof fetch = fetch,
   ) {}
 

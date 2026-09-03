@@ -13,6 +13,7 @@ import {
 import {
   createPageCenterMetaConnection,
   disconnectPageCenterMetaConnection,
+  fetchPageCenterReadiness,
   fetchPageCenterMetaStatus,
   fetchPageCenterV2Overview,
   verifyPageCenterMetaConnection,
@@ -21,6 +22,7 @@ import {
 
 const OVERVIEW_KEY = "/api/page-center-v2/overview";
 const META_STATUS_KEY = "/api/page-center-v2/meta/status";
+const READINESS_KEY = "/api/page-center-v2/readiness";
 
 const SECTION_ICONS = {
   oauth: KeyRound,
@@ -106,6 +108,10 @@ export default function PageCenterV2() {
     mutate: mutateMetaStatus,
     isLoading: isMetaStatusLoading,
   } = useSWR(META_STATUS_KEY, fetchPageCenterMetaStatus, {
+    revalidateOnFocus: false,
+    shouldRetryOnError: false,
+  });
+  const { data: readiness } = useSWR(READINESS_KEY, fetchPageCenterReadiness, {
     revalidateOnFocus: false,
     shouldRetryOnError: false,
   });
@@ -278,6 +284,39 @@ export default function PageCenterV2() {
             <SectionCard key={section.id} section={section} />
           ))}
         </div>
+      </section>
+
+      <section aria-labelledby="page-center-readiness" className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 id="page-center-readiness" className="text-lg font-semibold text-slate-900">阶段 6 · 配置预检</h2>
+            <p className="mt-1 text-sm text-slate-500">仅显示是否就绪，不显示任何密钥、Token 或配置值。</p>
+          </div>
+          <span className={`rounded-full px-3 py-1 text-xs font-semibold ${readiness?.ready ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+            {readiness?.ready ? "服务端配置已就绪" : "等待配置"}
+          </span>
+        </div>
+        <div className="mt-5 grid gap-3 md:grid-cols-2">
+          {readiness?.checks.map((check) => (
+            <div className="flex items-center gap-3 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3" key={check.id}>
+              {check.ready
+                ? <CheckCircle2 aria-hidden="true" className="h-5 w-5 shrink-0 text-emerald-600" />
+                : <LockKeyhole aria-hidden="true" className="h-5 w-5 shrink-0 text-amber-600" />}
+              <div>
+                <p className="text-sm font-medium text-slate-800">{check.label}</p>
+                <p className="mt-0.5 text-xs text-slate-400">{check.ready ? "已就绪" : check.code}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+        {readiness?.externalChecks.length ? (
+          <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50 p-4">
+            <p className="text-sm font-semibold text-blue-950">仍需人工验证</p>
+            <ul className="mt-2 space-y-1 text-sm text-blue-800">
+              {readiness.externalChecks.map((check) => <li key={check.id}>• {check.label}</li>)}
+            </ul>
+          </div>
+        ) : null}
       </section>
 
       <section className="mt-6 grid gap-4 lg:grid-cols-2">

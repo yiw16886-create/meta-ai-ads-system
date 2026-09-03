@@ -14,9 +14,10 @@ import {
   getAuthorizationRequest,
 } from "../mcp-oauth/oauth-service.js";
 import { createPageCenterMetaRouter } from "./meta-oauth/meta.routes.js";
+import { getPageCenterReadiness } from "./readiness.js";
 
 const MODULE_ID = "page-center-v2";
-const CONTRACT_VERSION = "2026-09-03.stage-5";
+const CONTRACT_VERSION = "2026-09-03.stage-6";
 
 export function createPageCenterV2Router(
   environment: PageCenterV2Environment = process.env,
@@ -92,6 +93,12 @@ export function createPageCenterV2Router(
         },
       },
     });
+  });
+
+  router.get("/readiness", requirePageCenterV2(environment), async (req: PageCenterV2Request, res) => {
+    noStore(res);
+    const data = await getPageCenterReadiness(req, environment as NodeJS.ProcessEnv & PageCenterV2Environment);
+    return res.json({ success: true, data });
   });
 
   router.get("/oauth/requests/:id", requirePageCenterV2(environment), async (req: PageCenterV2Request, res) => {

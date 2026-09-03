@@ -10,7 +10,11 @@ test("Page Center Meta OAuth uses its own exact callback", () => {
     "https://pages.example.com/api/page-center-v2/meta/callback",
   );
   assert.equal(
-    getPageCenterMetaRedirectUri(request, { PAGE_CENTER_META_REDIRECT_URI: "https://preview.example.com/custom/callback?ignored=1" }),
-    "https://preview.example.com/custom/callback",
+    getPageCenterMetaRedirectUri(request, { PAGE_CENTER_META_REDIRECT_URI: "https://preview.example.com/api/page-center-v2/meta/callback" }),
+    "https://preview.example.com/api/page-center-v2/meta/callback",
+  );
+  assert.throws(
+    () => getPageCenterMetaRedirectUri(request, { PAGE_CENTER_META_REDIRECT_URI: "https://preview.example.com/custom/callback?ignored=1" }),
+    /REDIRECT_URI_INVALID/,
   );
 });

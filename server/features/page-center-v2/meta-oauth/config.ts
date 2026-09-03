@@ -21,6 +21,11 @@ export type PageCenterMetaConfig = {
   redirectUri: string;
 };
 
+export type PageCenterMetaCredentials = Pick<
+  PageCenterMetaConfig,
+  "clientId" | "clientSecret" | "configId"
+>;
+
 function normalizedOrigin(raw: string) {
   const withScheme = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
   const url = new URL(withScheme);
@@ -35,9 +40,16 @@ export function getPageCenterMetaRedirectUri(
   const explicit = environment.PAGE_CENTER_META_REDIRECT_URI?.trim();
   if (explicit) {
     const url = new URL(/^https?:\/\//i.test(explicit) ? explicit : `https://${explicit}`);
-    if (!/^https?:$/.test(url.protocol)) throw new Error("PAGE_CENTER_META_REDIRECT_URI_INVALID");
-    url.search = "";
-    url.hash = "";
+    if (
+      url.protocol !== "https:" ||
+      url.username ||
+      url.password ||
+      url.pathname !== "/api/page-center-v2/meta/callback" ||
+      url.search ||
+      url.hash
+    ) {
+      throw new Error("PAGE_CENTER_META_REDIRECT_URI_INVALID");
+    }
     return url.toString().replace(/\/$/, "");
   }
 
@@ -48,26 +60,52 @@ export function getPageCenterMetaRedirectUri(
   return `${origin}/api/page-center-v2/meta/callback`;
 }
 
-export async function loadPageCenterMetaConfig(
-  req: Pick<Request, "protocol" | "get">,
+export function getPageCenterGraphVersion(
   environment: PageCenterMetaEnvironment = process.env,
-): Promise<PageCenterMetaConfig> {
+) {
+  const version = environment.META_GRAPH_API_VERSION?.trim();
+  if (!version) throw new Error("PAGE_CENTER_META_GRAPH_VERSION_MISSING");
+  if (!/^v[1-9]\d*\.\d+$/.test(version)) {
+    throw new Error("PAGE_CENTER_META_GRAPH_VERSION_INVALID");
+  }
+  return version;
+}
+
+export async function loadPageCenterMetaCredentials(
+  environment: PageCenterMetaEnvironment = process.env,
+): Promise<PageCenterMetaCredentials> {
+  const environmentClientId = environment.META_APP_ID || environment.FACEBOOK_CLIENT_ID;
+  const environmentClientSecret = environment.META_APP_SECRET || environment.FACEBOOK_CLIENT_SECRET;
+  if (environmentClientId && environmentClientSecret) {
+    return {
+      clientId: environmentClientId,
+      clientSecret: environmentClientSecret,
+      configId: environment.FACEBOOK_CONFIG_ID || undefined,
+    };
+  }
+
   const systemConfig = await (prisma as any).systemSetting.findFirst().catch(() => null);
   const settings = await (prisma as any).setting.findMany().catch(() => []);
   const settingMap = Object.fromEntries(
     settings.map((item: { key: string; value: string }) => [item.key, item.value]),
   );
-  const clientId = environment.META_APP_ID || environment.FACEBOOK_CLIENT_ID || systemConfig?.meta_client_id || settingMap.FACEBOOK_CLIENT_ID;
-  const clientSecret = environment.META_APP_SECRET || environment.FACEBOOK_CLIENT_SECRET || systemConfig?.meta_client_secret || settingMap.FACEBOOK_CLIENT_SECRET;
+  const clientId = environmentClientId || systemConfig?.meta_client_id || settingMap.FACEBOOK_CLIENT_ID;
+  const clientSecret = environmentClientSecret || systemConfig?.meta_client_secret || settingMap.FACEBOOK_CLIENT_SECRET;
   const configId = environment.FACEBOOK_CONFIG_ID || systemConfig?.meta_config_id || settingMap.META_CONFIG_ID;
 
   if (!clientId || !clientSecret) throw new Error("PAGE_CENTER_META_APP_NOT_CONFIGURED");
+  return { clientId, clientSecret, configId: configId || undefined };
+}
+
+export async function loadPageCenterMetaConfig(
+  req: Pick<Request, "protocol" | "get">,
+  environment: PageCenterMetaEnvironment = process.env,
+): Promise<PageCenterMetaConfig> {
+  const credentials = await loadPageCenterMetaCredentials(environment);
 
   return {
-    clientId,
-    clientSecret,
-    configId: configId || undefined,
-    graphVersion: environment.META_GRAPH_API_VERSION?.trim() || "v20.0",
+    ...credentials,
+    graphVersion: getPageCenterGraphVersion(environment),
     redirectUri: getPageCenterMetaRedirectUri(req, environment),
   };
 }
